@@ -82,3 +82,47 @@ def test_shape_switch_and_save_round_trip(window, tmp_path):
     assert project_io.load_project(window.path) == window.project
     window.shape_buttons[BOX].click()
     assert window.project.shape == BOX
+
+
+def test_add_hole_button_click(window):
+    """Use the real button: clicked() passes an extra argument that once crashed the app."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    window.tabs.setCurrentIndex(1)
+    QTest.mouseClick(window.add_hole_button, Qt.MouseButton.LeftButton)
+    QTest.mouseClick(window.add_hole_button, Qt.MouseButton.LeftButton)
+    window.rebuild()
+    assert [h.surface for h in window.project.holes] == [FRONT, FRONT]
+    window.undo_stack.undo()
+    window.undo_stack.redo()
+    assert len(window.project.holes) == 2
+
+
+def test_double_click_wall_adds_hole(window):
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
+    window.rebuild()
+    v = window.viewer
+    pos = QPoint(v.width() // 2, int(v.height() * 0.6))
+    QTest.mouseDClick(v, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, pos)
+    assert len(window.project.holes) == 1
+    assert window.project.holes[0].surface == FRONT
+
+
+def test_every_button_click_is_safe(window):
+    """Click each push button on the hole/lid tabs with a hole selected; nothing may raise."""
+    import sys
+    from PySide6.QtWidgets import QPushButton
+    errors = []
+    old_hook = sys.excepthook
+    sys.excepthook = lambda *exc: errors.append(exc)
+    try:
+        window.add_hole()
+        for tab in (1, 2):
+            for button in window.tabs.widget(tab).findChildren(QPushButton):
+                if button.isEnabled():
+                    button.click()
+                    window.rebuild()
+    finally:
+        sys.excepthook = old_hook
+    assert errors == []

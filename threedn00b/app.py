@@ -38,6 +38,26 @@ def check_display_libraries() -> str | None:
     return MISSING_XCB_CURSOR
 
 
+def install_error_handler() -> None:
+    """Show unexpected errors in a dialog instead of letting Qt abort the app."""
+    import traceback
+
+    def handler(exc_type, exc, tb):
+        details = "".join(traceback.format_exception(exc_type, exc, tb))
+        print(details, file=sys.stderr)
+        from PySide6.QtWidgets import QApplication, QMessageBox
+        if QApplication.instance() is None:
+            return
+        box = QMessageBox(QMessageBox.Icon.Warning, "3Dn00b",
+                          "Something went wrong. Your last change may not have been applied.\n\n"
+                          "You can keep working. Please save your project, and report this "
+                          "if it happens again.")
+        box.setDetailedText(details)
+        box.exec()
+
+    sys.excepthook = handler
+
+
 def main() -> int:
     problem = check_display_libraries()
     if problem:
@@ -50,6 +70,7 @@ def main() -> int:
     from .gui.viewer import prepare_opengl
 
     prepare_opengl()
+    install_error_handler()
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setApplicationVersion(__version__)

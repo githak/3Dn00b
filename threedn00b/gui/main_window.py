@@ -272,7 +272,8 @@ class MainWindow(QMainWindow):
                               "Tip: double-click a wall in the 3D view to put a hole right there."))
         self.add_hole_button = QPushButton("+  Add hole")
         self.add_hole_button.setMinimumHeight(34)
-        self.add_hole_button.clicked.connect(self.add_hole)
+        # A lambda, because clicked() would otherwise pass its 'checked' flag as `surface`.
+        self.add_hole_button.clicked.connect(lambda: self.add_hole())
         layout.addWidget(self.add_hole_button)
         self.hole_list = QListWidget()
         self.hole_list.setMaximumHeight(150)
