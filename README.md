@@ -34,6 +34,16 @@ print. No sketches, no constraints, no feature trees.
 You need Python 3.10 or newer and a working OpenGL driver (any normal
 desktop, including integrated graphics).
 
+First install the system packages Qt needs to open a window:
+
+```bash
+sudo apt install python3-venv libxcb-cursor0     # Debian / Ubuntu / Mint
+sudo dnf install xcb-util-cursor                 # Fedora
+sudo pacman -S xcb-util-cursor                   # Arch / Manjaro
+```
+
+Then:
+
 ```bash
 git clone https://github.com/githak/3Dn00b.git
 cd 3Dn00b
@@ -41,9 +51,6 @@ python3 -m venv .venv
 .venv/bin/pip install -e .
 .venv/bin/3dn00b                      # or: .venv/bin/3dn00b examples/screw-box.3dn00b
 ```
-
-On Debian/Ubuntu you may first need `sudo apt install python3-venv libxcb-cursor0`.
-On Fedora: `sudo dnf install python3 xcb-util-cursor`.
 
 To get a menu entry, copy `data/3dn00b.desktop` to `~/.local/share/applications/`
 and make sure `3dn00b` is on your `PATH` (for example by symlinking

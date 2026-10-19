@@ -292,3 +292,20 @@ def test_find_and_snap():
 def test_examples_open_without_problems(path):
     p = project_io.load_project(path)
     assert not validation.has_errors(validation.check(p))
+
+
+def test_missing_xcb_cursor_gives_friendly_message(monkeypatch):
+    from threedn00b import app
+    monkeypatch.setattr(app.sys, "platform", "linux")
+    monkeypatch.setattr(app.ctypes.util, "find_library", lambda name: None)
+    env = {}
+    monkeypatch.setattr(app.os, "environ", env)   # keep the real environment untouched
+    assert "sudo apt install libxcb-cursor0" in app.check_display_libraries()
+    # On Wayland the app switches to Qt's Wayland backend instead.
+    env["WAYLAND_DISPLAY"] = "wayland-0"
+    assert app.check_display_libraries() is None
+    assert env["QT_QPA_PLATFORM"] == "wayland"
+    del env["QT_QPA_PLATFORM"]
+    # With the library present nothing changes.
+    monkeypatch.setattr(app.ctypes.util, "find_library", lambda name: "libxcb-cursor.so.0")
+    assert app.check_display_libraries() is None
