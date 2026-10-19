@@ -97,6 +97,8 @@ class MainWindow(QMainWindow):
         self.project = project or default_project()
         self.path: Path | None = None
         self.selected_id: str | None = None
+        self._drag: dict | None = None
+        self._drag_count = 0
         self.parts: geometry.Parts | None = None
         self.issues: list[validation.Issue] = []
         self.undo_stack = QUndoStack(self)
@@ -107,7 +109,7 @@ class MainWindow(QMainWindow):
         self._rebuild_timer.timeout.connect(self.rebuild)
 
         self.viewer = Viewer()
-        self.viewer.surfaceClicked.connect(self._on_surface_clicked)
+        self.viewer.drag_handler = self
         self.viewer.surfaceDoubleClicked.connect(self._on_surface_double_clicked)
 
         self.tabs = QTabWidget()
@@ -411,7 +413,10 @@ class MainWindow(QMainWindow):
         if self.selected_id and not self.project.hole(self.selected_id):
             self.selected_id = None
         self.refresh_controls()
-        self._rebuild_timer.start()
+        # Throttle (not debounce) so the preview keeps up while dragging or typing.
+        if not self._rebuild_timer.isActive():
+            self._rebuild_timer.start()
+        self.viewer.set_hole_markers(self.project, self.selected_id, self._problem_holes())
         self._update_title()
 
     def _edit_hole(self, label, attr, value):
@@ -672,14 +677,57 @@ class MainWindow(QMainWindow):
         holes = self.project.holes
         self.select_hole(holes[row].id if 0 <= row < len(holes) else None)
 
-    def _on_surface_clicked(self, part, point, normal):
-        found = picking.surface_at(self.project, point, normal, part)
-        if not found:
+    # ---- dragging holes in the 3D view (called by the Viewer) ----------
+    def _hole_under(self, origin, direction, mesh_distance):
+        return picking.hole_under_ray(self.project, origin, direction, mesh_distance,
+                                      self.viewer.lid_offset, self.viewer.show_lid)
+
+    def hole_at(self, origin, direction, mesh_distance) -> bool:
+        return self._hole_under(origin, direction, mesh_distance) is not None
+
+    def drag_begin(self, origin, direction, mesh_distance) -> bool:
+        hole = self._hole_under(origin, direction, mesh_distance)
+        if hole is None:
+            return False
+        self.tabs.setCurrentIndex(1)
+        self.select_hole(hole.id)
+        hit = picking.surface_hit(self.project, hole.surface, origin, direction,
+                                  self.viewer.lid_offset)
+        if hit is None:
+            return True
+        # Remember where on the hole it was grabbed, so it doesn't jump. Each drag
+        # gets its own undo merge key, so one drag = one undo step.
+        self._drag_count += 1
+        self._drag = {"id": hole.id, "du": hole.u - hit[1], "dv": hole.v - hit[2],
+                      "key": f"drag:{self._drag_count}"}
+        return True
+
+    def drag_move(self, origin, direction):
+        drag = self._drag
+        hole = self.project.hole(drag["id"]) if drag else None
+        if hole is None:
             return
-        hole = picking.find_hole(self.project, *found)
-        if hole is not None:
-            self.tabs.setCurrentIndex(1)
-            self.select_hole(hole.id)
+        hit = picking.surface_hit(self.project, hole.surface, origin, direction,
+                                  self.viewer.lid_offset)
+        if hit is None:
+            return
+        u, v, note = picking.snap_drag(self.project, hole, hit[1] + drag["du"], hit[2] + drag["dv"])
+        moved = copy.deepcopy(hole)
+        moved.u, moved.v = u, v
+        # Keep it on the surface with a safe margin; dragging never makes a broken hole.
+        pos = clamp_hole(self.project, moved) or clamp_hole(self.project, moved, MIN_EDGE)
+        if pos is None:
+            return
+        if abs(pos[0] - u) > 0.05 or abs(pos[1] - v) > 0.05:
+            note = "kept away from the edge"
+        hole_id = hole.id
+        self.edit("Move hole", lambda p: _set_position(p.hole(hole_id), pos), merge=drag["key"])
+        name = f"Hole {self.project.holes.index(self.project.hole(hole_id)) + 1}"
+        self.statusBar().showMessage(f"{name}: {note}" if note else name, 1500)
+
+    def drag_end(self):
+        self._drag = None
+        self.rebuild()
 
     def _on_surface_double_clicked(self, part, point, normal):
         found = picking.surface_at(self.project, point, normal, part)
@@ -836,6 +884,10 @@ class MainWindow(QMainWindow):
             event.accept()
         else:
             event.ignore()
+
+
+def _set_position(hole: Hole, pos) -> None:
+    hole.u, hole.v = pos
 
 
 def release_window(window: MainWindow) -> None:

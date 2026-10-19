@@ -76,7 +76,6 @@ class Viewer(gl.GLViewWidget):
     coordinates, i.e. as if the lid were sitting on the box.
     """
 
-    surfaceClicked = Signal(str, tuple, tuple)
     surfaceDoubleClicked = Signal(str, tuple, tuple)
 
     def __init__(self, parent=None):
@@ -84,6 +83,9 @@ class Viewer(gl.GLViewWidget):
         self.setBackgroundColor(BACKGROUND)
         self.setMinimumSize(420, 360)
         self._press_pos: QPoint | None = None
+        self._dragging = False
+        self.drag_handler = None
+        self.setMouseTracking(True)
         self._solids: dict[str, object] = {}
         self._lid_offset = 0.0
         self._mesh_items: list = []
@@ -96,7 +98,7 @@ class Viewer(gl.GLViewWidget):
 
         self.hint = QLabel(
             "Drag to turn  ·  Right-drag or scroll to zoom  ·  Middle-drag to move\n"
-            "Click a hole to select it  ·  Double-click a wall to add a hole", self)
+            "Drag a hole to move it  ·  Double-click a wall to add a hole", self)
         self.hint.setStyleSheet("color: #445; background: rgba(255,255,255,170);"
                                 "padding: 4px 8px; border-radius: 4px;")
         self.hint.move(8, 8)
@@ -168,19 +170,84 @@ class Viewer(gl.GLViewWidget):
                                elevation=28, azimuth=-62)
 
     # ---- picking --------------------------------------------------------
+    # ---- mouse: drag holes, otherwise turn the view ------------------------
+    # `drag_handler` (the main window) decides what can be dragged. It provides:
+    #   hole_at(origin, direction, mesh_distance) -> bool
+    #   drag_begin(origin, direction, mesh_distance) -> bool
+    #   drag_move(origin, direction), drag_end()
     def mousePressEvent(self, ev):
         self._press_pos = ev.position().toPoint()
+        if ev.button() == Qt.MouseButton.LeftButton and self.drag_handler is not None:
+            ray = self.mouse_ray(ev)
+            if ray and self.drag_handler.drag_begin(*ray, self.mesh_distance(*ray)):
+                self._dragging = True
+                self.setCursor(Qt.CursorShape.ClosedHandCursor)
+                ev.accept()
+                return
         super().mousePressEvent(ev)
 
+    def mouseMoveEvent(self, ev):
+        if self._dragging:
+            ray = self.mouse_ray(ev)
+            if ray:
+                self.drag_handler.drag_move(*ray)
+            ev.accept()
+            return
+        if ev.buttons() == Qt.MouseButton.NoButton and self.drag_handler is not None:
+            ray = self.mouse_ray(ev)
+            over = bool(ray) and self.drag_handler.hole_at(*ray, self.mesh_distance(*ray))
+            if over:
+                self.setCursor(Qt.CursorShape.OpenHandCursor)
+            else:
+                self.unsetCursor()
+        super().mouseMoveEvent(ev)
+
     def mouseReleaseEvent(self, ev):
+        if self._dragging:
+            self._dragging = False
+            self.setCursor(Qt.CursorShape.OpenHandCursor)
+            self.drag_handler.drag_end()
+            ev.accept()
+            return
         super().mouseReleaseEvent(ev)
-        pos = ev.position().toPoint()
-        if (ev.button() == Qt.MouseButton.LeftButton and self._press_pos is not None
-                and (pos - self._press_pos).manhattanLength() < 5):
-            hit = self.pick(pos.x(), pos.y())
-            if hit:
-                self.surfaceClicked.emit(*hit)
         self._press_pos = None
+
+    def mouse_ray(self, ev):
+        """Normalised (origin, direction) of the ray under the mouse."""
+        pos = ev.position()
+        ray = self.ray(pos.x(), pos.y())
+        if ray is None:
+            return None
+        origin, end = ray
+        direction = end - origin
+        length = np.linalg.norm(direction)
+        if length == 0:
+            return None
+        return origin, direction / length
+
+    def mesh_distance(self, origin, direction):
+        """Distance along a ray to the first visible part of the model, or None."""
+        best = None
+        far = origin + direction * 1e5
+        for part, solid in self._solids.items():
+            shift = np.array([0, 0, self._lid_offset if part == "lid" else 0.0])
+            hits = solid.ray_cast(list(origin - shift), list(far - shift))
+            if hits:
+                d = float(np.linalg.norm(np.array(hits[0].position) - (origin - shift)))
+                best = d if best is None else min(best, d)
+        return best
+
+    def project_point(self, point):
+        """Widget pixel position of a 3D point (used by tests)."""
+        viewport = self.getViewport()
+        mvp = self.projectionMatrix(viewport, viewport) * self.viewMatrix()
+        p = mvp.map(QVector4D(float(point[0]), float(point[1]), float(point[2]), 1.0))
+        x, y = p.x() / p.w(), p.y() / p.w()
+        return (x + 1) / 2 * self.width(), (1 - y) / 2 * self.height()
+
+    @property
+    def lid_offset(self) -> float:
+        return self._lid_offset
 
     def mouseDoubleClickEvent(self, ev):
         if ev.button() == Qt.MouseButton.LeftButton:

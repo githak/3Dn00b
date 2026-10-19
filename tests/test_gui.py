@@ -128,3 +128,85 @@ def test_every_button_click_is_safe(window):
     finally:
         sys.excepthook = old_hook
     assert errors == []
+
+
+def _hole_pixel(window, hole):
+    from threedn00b.model import hole_center_3d
+    center, _ = hole_center_3d(window.project, hole)
+    x, y = window.viewer.project_point(center)
+    from PySide6.QtCore import QPoint
+    return QPoint(round(x), round(y))
+
+
+def _drag(widget, start, end, steps=8):
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
+    QTest.mousePress(widget, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, start)
+    for i in range(1, steps + 1):
+        QTest.mouseMove(widget, QPoint(start.x() + (end.x() - start.x()) * i // steps,
+                                       start.y() + (end.y() - start.y()) * i // steps))
+    QTest.mouseRelease(widget, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, end)
+
+
+def test_drag_hole_along_wall_is_one_undo_step(window):
+    from PySide6.QtCore import QPoint
+    window.add_hole()
+    window.rebuild()
+    hole = window.project.holes[0]
+    window.select_hole(None)
+    camera = dict(window.viewer.opts)
+    start = _hole_pixel(window, hole)
+    steps_before = window.undo_stack.count()
+    _drag(window.viewer, start, start + QPoint(-60, 25))
+    moved = window.project.holes[0]
+    assert window.selected_id == moved.id
+    assert moved.u < -5 and moved.v < -2            # moved left and down on the front wall
+    assert window.viewer.opts["azimuth"] == camera["azimuth"]   # the view did not turn
+    assert window.undo_stack.count() == steps_before + 1
+    window.undo_stack.undo()
+    assert (window.project.holes[0].u, window.project.holes[0].v) == (hole.u, hole.v)
+
+
+def test_drag_keeps_hole_on_the_wall(window):
+    from PySide6.QtCore import QPoint
+    window.add_hole()
+    window.rebuild()
+    start = _hole_pixel(window, window.project.holes[0])
+    _drag(window.viewer, start, start + QPoint(-2000, 0))
+    window.rebuild()
+    assert not any(i.hole_id for i in window.issues if i.level != "info")
+
+
+def test_drag_on_empty_space_turns_the_view(window):
+    from PySide6.QtCore import QPoint
+    window.rebuild()
+    azimuth = window.viewer.opts["azimuth"]
+    _drag(window.viewer, QPoint(30, 30), QPoint(130, 30))
+    assert window.viewer.opts["azimuth"] != azimuth
+
+
+def test_drag_on_round_wall_changes_angle(window):
+    from PySide6.QtCore import QPoint
+    window.shape_buttons[CYLINDER].click()
+    window.add_hole()
+    window.rebuild()
+    window.viewer.reset_view(window.project)
+    hole = window.project.holes[0]
+    start = _hole_pixel(window, hole)
+    _drag(window.viewer, start, start + QPoint(40, 0))
+    assert window.project.holes[0].u > hole.u + 5      # moved round towards the right
+
+
+def test_drag_hole_on_lid(window):
+    from PySide6.QtCore import QPoint
+    from threedn00b.model import LID, hole_center_3d
+    window.lid_check.setChecked(True)
+    window.add_hole(LID)
+    window.rebuild()
+    hole = window.project.holes[0]
+    center, _ = hole_center_3d(window.project, hole)
+    x, y = window.viewer.project_point((center[0], center[1], center[2] + window.viewer.lid_offset))
+    start = QPoint(round(x), round(y))
+    _drag(window.viewer, start, start + QPoint(50, 0))
+    assert window.project.holes[0].surface == LID
+    assert window.project.holes[0].u > 5

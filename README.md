@@ -15,8 +15,10 @@ print. No sketches, no constraints, no feature trees.
   The other measurement is always shown.
 - Wall and bottom thickness.
 - **Round holes** on any wall, the bottom or the lid. Double-click a wall
-  in the 3D view to put a hole there, or use **Add hole**. Common sizes are
-  built in (M3/M4 screws, cables).
+  in the 3D view to put a hole there, or use **Add hole**. **Drag a hole** to
+  move it: it slides along its own wall, snaps to the centre lines and lines up
+  with other holes, and always keeps a safe distance from the edges. Common
+  sizes are built in (M3/M4 screws, cables).
 - A **push-on lid** with a lip and a Tight / Normal / Loose fit (or a custom
   gap). It resizes itself with the box.
 - **Checks in plain language**, for example a hole running off the edge of a
@@ -66,8 +68,9 @@ and make sure `3dn00b` is on your `PATH` (for example by symlinking
 4. **Check & Export**: read the checks, fix anything marked ✖ and click
    **Export for printing**.
 
-In the 3D view: drag to turn, scroll or right-drag to zoom, middle-drag to move,
-click a hole to select it.
+In the 3D view: drag a hole to move it, drag anywhere else to turn the view,
+scroll or right-drag to zoom, middle-drag to pan, and double-click a wall to
+add a hole. Each drag is one step for Undo.
 
 ## Examples
 
@@ -82,6 +85,10 @@ enclosure with air holes in the lid.
 xvfb-run -a .venv/bin/python -m pytest  # also runs the GUI tests without a screen
 ```
 
+If PrusaSlicer is installed (`sudo apt install prusa-slicer`), the tests also
+slice every example to G-code to make sure the exported files work in a real
+slicer.
+
 The code is split so each part can be tested on its own:
 
 | Module | Job |
@@ -90,7 +97,7 @@ The code is split so each part can be tested on its own:
 | `threedn00b/geometry.py` | Turns the design into solid parts (via [Manifold](https://github.com/elalish/manifold)) |
 | `threedn00b/validation.py` | Plain-language checks and suggested fixes |
 | `threedn00b/project_io.py` | Project files (versioned JSON) and STL export |
-| `threedn00b/picking.py` | Works out which wall was clicked in the 3D view, and where |
+| `threedn00b/picking.py` | Works out which wall or hole is under the mouse, and where a dragged hole goes |
 | `threedn00b/gui/` | The Qt (PySide6) window and the 3D preview (pyqtgraph) |
 
 See [docs/PRODUCT.md](docs/PRODUCT.md) for the product scope, the decisions

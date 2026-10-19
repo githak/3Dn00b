@@ -16,7 +16,7 @@ FreeCAD, Blender, Fusion or Onshape.
 | First lid type | **Push-on (friction-fit) lid** with a lip and a fit setting (Tight 0.15 / Normal 0.25 / Loose 0.40 mm per side, or custom) |
 | Outside or inside sizes | **A simple switch, outside size by default.** The other measurement is always shown, and switching never changes the object |
 | How holes stay put when the object is resized | **Offset from the centre of their surface.** A centred hole stays centred; a hole that no longer fits is flagged with a fix |
-| How holes are placed | **Choose a surface (or double-click it in 3D) and set the position with numbers.** Position ranges are limited to valid values, and dragging in 3D is postponed |
+| How holes are placed | **Choose a surface (or double-click it in 3D) and set the position with numbers, or drag the hole in 3D** (added in 0.2). Position ranges are limited to valid values |
 
 Defaults I chose myself, which are easy to change:
 
@@ -25,11 +25,13 @@ Defaults I chose myself, which are easy to change:
   Closer than 0.4 mm is an error, and anything in between is a warning.
 - Common hole sizes are offered: M3 and M4 screw clearance, and cables.
 
-## Must-haves in 0.1 (done)
+## Must-haves (done)
 
 - Box (with rounded corners) and round container, with outside or inside sizes,
   wall and bottom thickness.
-- Live 3D preview: rotate, zoom, click to select holes, double-click to add one.
+- Live 3D preview: rotate, zoom, double-click a wall to add a hole.
+- Drag holes in 3D along their own surface, with snapping to centre lines and
+  to other holes, and a safe margin from the edges. Each drag is one undo step.
 - Round holes on walls, the bottom and the lid: add, edit, remove, centre.
 - Push-on lid that follows the box size, with fit presets.
 - Plain-language checks covering impossible sizes, thin walls, holes off the
@@ -48,14 +50,13 @@ STL import and editing.
 
 ## Postponed (candidates for later, in rough priority order)
 
-1. Drag holes directly in the 3D view, with snapping.
-2. Rectangular cutouts (USB ports, switches, displays).
-3. Ventilation slot patterns.
-4. Dividers and compartments, and a shallow tray preset.
-5. Screw-mounting bosses, and a screw-fastened lid.
-6. Snap-fit and sliding lids. A threaded lid for round containers may come later.
-7. 3MF export, if users need it. STEP is unlikely, since the geometry engine is mesh-based.
-8. A packaged app (Flatpak or AppImage).
+1. Rectangular cutouts (USB ports, switches, displays).
+2. Ventilation slot patterns.
+3. Dividers and compartments, and a shallow tray preset.
+4. Screw-mounting bosses, and a screw-fastened lid.
+5. Snap-fit and sliding lids. A threaded lid for round containers may come later.
+6. 3MF export, if users need it. STEP is unlikely, since the geometry engine is mesh-based.
+7. A packaged app (Flatpak or AppImage).
 
 Each addition must pass the brief's test: does it make a common beginner task
 much easier, without CAD vocabulary, and without making the interface busier?

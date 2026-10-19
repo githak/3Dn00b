@@ -309,3 +309,45 @@ def test_missing_xcb_cursor_gives_friendly_message(monkeypatch):
     # With the library present nothing changes.
     monkeypatch.setattr(app.ctypes.util, "find_library", lambda name: "libxcb-cursor.so.0")
     assert app.check_display_libraries() is None
+
+
+# ---- dragging ------------------------------------------------------------
+
+def test_ray_meets_front_wall():
+    p = default_project(BOX)   # front wall at y = -30, height 40
+    t, u, v, exact = picking.surface_hit(p, FRONT, (5, -100, 25), (0, 1, 0))
+    assert exact and t == pytest.approx(70) and (u, v) == pytest.approx((5, 5))
+    assert picking.surface_hit(p, FRONT, (5, -100, 25), (0, -1, 0)) is None   # behind
+
+
+def test_ray_meets_round_wall_and_handles_misses():
+    p = default_project(CYLINDER)   # radius 30
+    t, u, v, exact = picking.surface_hit(p, SIDE, (100, 0, 40), (-1, 0, 0))
+    assert exact and t == pytest.approx(70) and u == pytest.approx(90)
+    *_, exact = picking.surface_hit(p, SIDE, (100, 50, 40), (-1, 0, 0))
+    assert not exact      # missed, but still gives a usable position for dragging
+
+
+def test_hole_under_ray_ignores_hidden_holes():
+    p = default_project(BOX)
+    front, back = Hole(FRONT, 8, 0, 0), Hole(BACK, 8, 0, 0)
+    p.holes = [back, front]
+    origin, direction = (0, -100, 20), (0, 1, 0)
+    assert picking.hole_under_ray(p, origin, direction, mesh_distance=None) is front
+    p.holes = [back]
+    # The ray hits the front wall 70 mm away; the back hole is hidden behind it.
+    assert picking.hole_under_ray(p, origin, direction, mesh_distance=70.0) is None
+    assert picking.hole_under_ray(p, (30, -100, 20), direction, None) is None   # off to the side
+
+
+def test_drag_snaps_to_centre_and_other_holes():
+    p = default_project(BOX)
+    a, b = Hole(FRONT, 6, -20, 5), Hole(FRONT, 6, 10, 0)
+    p.holes = [a, b]
+    u, v, note = picking.snap_drag(p, b, 1.5, 4.0)
+    assert (u, v) == (0.0, 5.0) and "centre" in note and "Hole 1" in note
+    assert picking.snap_drag(p, b, 12.0, -10.0)[:2] == (12.0, -10.0)
+    side = default_project(CYLINDER)
+    h = Hole(SIDE, 6, 0, 0)
+    side.holes = [h]
+    assert abs(picking.snap_drag(side, h, 178.0, 20.0)[0]) == 180.0   # straight at the back
