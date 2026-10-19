@@ -1,0 +1,32 @@
+{
+  "format": "3dn00b-project",
+  "version": 1,
+  "project": {
+    "shape": "box",
+    "size_mode": "outside",
+    "width": 90,
+    "depth": 60,
+    "diameter": 60.0,
+    "height": 35,
+    "wall": 2.0,
+    "bottom": 2.0,
+    "corner_radius": 5,
+    "lid": {
+      "enabled": true,
+      "fit": "normal",
+      "custom_gap": 0.25,
+      "thickness": 2.0,
+      "lip_height": 4
+    },
+    "holes": [
+      {
+        "surface": "front",
+        "diameter": 6,
+        "u": 0,
+        "v": -3,
+        "id": "ae12dba4"
+      }
+    ],
+    "name": "Screw box"
+  }
+}

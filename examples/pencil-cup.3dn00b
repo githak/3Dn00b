@@ -1,0 +1,32 @@
+{
+  "format": "3dn00b-project",
+  "version": 1,
+  "project": {
+    "shape": "cylinder",
+    "size_mode": "outside",
+    "width": 80.0,
+    "depth": 60.0,
+    "diameter": 75,
+    "height": 100,
+    "wall": 2.0,
+    "bottom": 2.0,
+    "corner_radius": 4.0,
+    "lid": {
+      "enabled": false,
+      "fit": "normal",
+      "custom_gap": 0.25,
+      "thickness": 2.0,
+      "lip_height": 5.0
+    },
+    "holes": [
+      {
+        "surface": "bottom",
+        "diameter": 4,
+        "u": 0,
+        "v": 0,
+        "id": "3ce42cdd"
+      }
+    ],
+    "name": "Pencil cup"
+  }
+}

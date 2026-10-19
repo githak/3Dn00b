@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=3Dn00b
+GenericName=Simple 3D print designer
+Comment=Make simple boxes and containers for 3D printing
+Exec=3dn00b %f
+Icon=applications-graphics
+Terminal=false
+Categories=Graphics;3DGraphics;Engineering;
+Keywords=3D;printing;STL;box;enclosure;
