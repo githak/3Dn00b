@@ -1,0 +1,364 @@
+"""Parametric object model.
+
+Everything a project *means* lives here: the base shape, its measurements,
+the holes the user added (with where they sit), and the lid. This module has
+no knowledge of meshes, Qt or files, so it is easy to test.
+
+Coordinate system (millimetres): X = width (left -> right), Y = depth
+(front -> back), Z = up. The origin is the centre of the bottom face.
+"""
+
+from __future__ import annotations
+
+import math
+import uuid
+from dataclasses import dataclass, field
+
+BOX = "box"
+CYLINDER = "cylinder"
+SHAPES = (BOX, CYLINDER)
+
+OUTSIDE = "outside"
+INSIDE = "inside"
+
+# Surfaces a hole can sit on. "side" is the round wall of a cylinder.
+FRONT, BACK, LEFT, RIGHT, SIDE, BOTTOM, LID = (
+    "front", "back", "left", "right", "side", "bottom", "lid")
+BOX_SURFACES = (FRONT, BACK, LEFT, RIGHT, BOTTOM, LID)
+CYLINDER_SURFACES = (SIDE, BOTTOM, LID)
+SURFACE_LABELS = {
+    FRONT: "Front wall", BACK: "Back wall", LEFT: "Left wall",
+    RIGHT: "Right wall", SIDE: "Round wall", BOTTOM: "Bottom", LID: "Lid",
+}
+
+# Lid fit presets: gap between the lid's lip and the box wall, per side.
+FIT_PRESETS = {"tight": 0.15, "normal": 0.25, "loose": 0.40}
+FIT_LABELS = {"tight": "Tight", "normal": "Normal", "loose": "Loose",
+              "custom": "Custom"}
+
+# Allowed input ranges (also used by the GUI spin boxes).
+SIZE_RANGE = (10.0, 300.0)
+WALL_RANGE = (0.8, 10.0)
+HOLE_DIAMETER_RANGE = (1.0, 100.0)
+# Hard minimum of material kept between a hole and the edge of its surface.
+# Closer than this is not allowed at all; the validator also warns when the
+# margin is below the comfortable value returned by comfortable_margin().
+MIN_EDGE = 0.4
+
+
+@dataclass
+class Hole:
+    surface: str = FRONT
+    diameter: float = 8.0
+    # Position measured from the centre of the surface:
+    #  walls:          u = left/right (as seen from outside), v = up/down
+    #  round wall:     u = angle in degrees (0 = front, 90 = right), v = up/down
+    #  bottom and lid: u = left/right, v = towards the back (as seen from above)
+    u: float = 0.0
+    v: float = 0.0
+    id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
+
+
+@dataclass
+class Lid:
+    enabled: bool = False
+    fit: str = "normal"            # key of FIT_PRESETS, or "custom"
+    custom_gap: float = 0.25       # used when fit == "custom"
+    thickness: float = 2.0         # thickness of the flat top
+    lip_height: float = 5.0        # how far the lip reaches down into the box
+
+    @property
+    def gap(self) -> float:
+        if self.fit in FIT_PRESETS:
+            return FIT_PRESETS[self.fit]
+        return self.custom_gap
+
+
+@dataclass
+class Project:
+    shape: str = BOX
+    size_mode: str = OUTSIDE       # do the numbers below describe outside or inside?
+    width: float = 80.0            # box only
+    depth: float = 60.0            # box only
+    diameter: float = 60.0         # cylinder only
+    height: float = 40.0           # height of the body, without the lid
+    wall: float = 2.0
+    bottom: float = 2.0
+    corner_radius: float = 4.0     # box only, outside corners (seen from above)
+    lid: Lid = field(default_factory=Lid)
+    holes: list[Hole] = field(default_factory=list)
+    name: str = "My box"
+
+    # ---- derived measurements -------------------------------------------
+    def _to_outer(self, value: float, walls: float) -> float:
+        return value + walls if self.size_mode == INSIDE else value
+
+    @property
+    def outer_width(self) -> float:
+        if self.shape == CYLINDER:
+            return self.outer_diameter
+        return self._to_outer(self.width, 2 * self.wall)
+
+    @property
+    def outer_depth(self) -> float:
+        if self.shape == CYLINDER:
+            return self.outer_diameter
+        return self._to_outer(self.depth, 2 * self.wall)
+
+    @property
+    def outer_diameter(self) -> float:
+        return self._to_outer(self.diameter, 2 * self.wall)
+
+    @property
+    def outer_height(self) -> float:
+        return self._to_outer(self.height, self.bottom)
+
+    @property
+    def inner_width(self) -> float:
+        return self.outer_width - 2 * self.wall
+
+    @property
+    def inner_depth(self) -> float:
+        return self.outer_depth - 2 * self.wall
+
+    @property
+    def inner_height(self) -> float:
+        return self.outer_height - self.bottom
+
+    @property
+    def outer_corner_radius(self) -> float:
+        if self.shape == CYLINDER:
+            return self.outer_diameter / 2
+        return max(0.0, min(self.corner_radius,
+                            self.outer_width / 2, self.outer_depth / 2))
+
+    @property
+    def inner_corner_radius(self) -> float:
+        return max(0.0, self.outer_corner_radius - self.wall)
+
+    @property
+    def closed_height(self) -> float:
+        """Total height with the lid on."""
+        return self.outer_height + (self.lid.thickness if self.lid.enabled else 0.0)
+
+    def surfaces(self) -> tuple[str, ...]:
+        surfaces = BOX_SURFACES if self.shape == BOX else CYLINDER_SURFACES
+        if not self.lid.enabled:
+            surfaces = tuple(s for s in surfaces if s != LID)
+        return surfaces
+
+    def hole(self, hole_id: str) -> Hole | None:
+        return next((h for h in self.holes if h.id == hole_id), None)
+
+    def set_shape(self, shape: str) -> None:
+        """Change the base shape, moving wall holes to the matching wall."""
+        if shape == self.shape:
+            return
+        angles = {FRONT: 0.0, RIGHT: 90.0, BACK: 180.0, LEFT: -90.0}
+        if shape == CYLINDER:
+            # Keep the overall footprint similar.
+            self.diameter = round(min(self.width, self.depth), 2)
+            self.shape = shape
+            radius = self.outer_diameter / 2
+            for hole in self.holes:
+                if hole.surface in angles:
+                    # Turn a sideways offset (mm) into the matching angle.
+                    a = angles[hole.surface] + math.degrees(hole.u / radius)
+                    hole.surface, hole.u = SIDE, round((a + 180.0) % 360.0 - 180.0, 1)
+        else:
+            radius = self.outer_diameter / 2
+            self.width = self.depth = self.diameter
+            self.shape = shape
+            for hole in self.holes:
+                if hole.surface == SIDE:
+                    a = (hole.u + 180.0) % 360.0 - 180.0
+                    hole.surface = (FRONT if -45 <= a < 45 else RIGHT if 45 <= a < 135
+                                    else LEFT if -135 <= a < -45 else BACK)
+                    offset = (a - angles[hole.surface] + 180.0) % 360.0 - 180.0
+                    hole.u = round(math.radians(offset) * radius, 1)
+
+    def set_size_mode(self, mode: str) -> None:
+        """Switch between outside/inside numbers without changing the object."""
+        if mode == self.size_mode:
+            return
+        w, d, dia, h = (self.outer_width, self.outer_depth,
+                        self.outer_diameter, self.outer_height)
+        if mode == INSIDE:
+            w, d, dia, h = (w - 2 * self.wall, d - 2 * self.wall,
+                            dia - 2 * self.wall, h - self.bottom)
+        self.size_mode = mode
+        self.width, self.depth, self.diameter, self.height = (
+            round(w, 2), round(d, 2), round(dia, 2), round(h, 2))
+
+
+# ---------------------------------------------------------------------------
+# Placement helpers shared by geometry, validation and the GUI.
+# ---------------------------------------------------------------------------
+
+def comfortable_margin(project: Project) -> float:
+    """Material we would like to keep around a hole."""
+    return max(1.5, project.wall)
+
+
+def lip_outer_offset(project: Project) -> float:
+    """Inward offset from the box's inner wall to the outside of the lid lip."""
+    return project.lid.gap
+
+
+def lip_wall(project: Project) -> float:
+    return max(1.2, project.wall)
+
+
+def surface_frame(project: Project, surface: str):
+    """Return (center, normal, right, up) vectors for a flat surface.
+
+    `center` is on the outside face of the surface. For the round wall the
+    frame depends on the angle, see side_frame().
+    """
+    w, d, h = project.outer_width, project.outer_depth, project.outer_height
+    zc = h / 2
+    frames = {
+        FRONT: ((0, -d / 2, zc), (0, -1, 0), (1, 0, 0), (0, 0, 1)),
+        BACK: ((0, d / 2, zc), (0, 1, 0), (-1, 0, 0), (0, 0, 1)),
+        LEFT: ((-w / 2, 0, zc), (-1, 0, 0), (0, -1, 0), (0, 0, 1)),
+        RIGHT: ((w / 2, 0, zc), (1, 0, 0), (0, 1, 0), (0, 0, 1)),
+        BOTTOM: ((0, 0, 0), (0, 0, -1), (1, 0, 0), (0, 1, 0)),
+        LID: ((0, 0, h + project.lid.thickness), (0, 0, 1), (1, 0, 0), (0, 1, 0)),
+    }
+    return frames[surface]
+
+
+def side_frame(project: Project, angle_deg: float):
+    r = project.outer_diameter / 2
+    a = math.radians(angle_deg)
+    n = (math.sin(a), -math.cos(a), 0.0)
+    right = (math.cos(a), math.sin(a), 0.0)
+    return ((n[0] * r, n[1] * r, project.outer_height / 2), n, right, (0, 0, 1))
+
+
+def hole_center_3d(project: Project, hole: Hole) -> tuple:
+    """Centre of the hole on the outside face, plus that face's normal."""
+    if hole.surface == SIDE:
+        c, n, right, up = side_frame(project, hole.u)
+        return (c[0], c[1], c[2] + hole.v), n
+    c, n, right, up = surface_frame(project, hole.surface)
+    p = tuple(c[i] + right[i] * hole.u + up[i] * hole.v for i in range(3))
+    return p, n
+
+
+def wall_limits(project: Project, surface: str, diameter: float,
+                margin: float = MIN_EDGE):
+    """Allowed (u_min, u_max, v_min, v_max) for a hole centre on a surface.
+
+    Returns None when the hole cannot fit on that surface at all.
+    For bottom/lid surfaces this is the bounding rectangle; the rounded
+    corners are checked separately by flat_point_ok().
+    """
+    r = diameter / 2
+    if surface in (FRONT, BACK, LEFT, RIGHT, SIDE):
+        z_lo = project.bottom + r + margin
+        z_hi = project.outer_height - r - margin
+        if project.lid.enabled:
+            # The lid's lip covers the top of the wall on the inside.
+            z_hi -= project.lid.lip_height
+        v_lo, v_hi = z_lo - project.outer_height / 2, z_hi - project.outer_height / 2
+        if surface == SIDE:
+            u_lo, u_hi = -180.0, 180.0
+        else:
+            span = project.inner_width if surface in (FRONT, BACK) else project.inner_depth
+            half = span / 2 - project.inner_corner_radius - r - margin
+            u_lo, u_hi = -half, half
+    else:
+        hw, hd = _flat_half_extents(project, surface)
+        u_lo, u_hi = -(hw - r - margin), hw - r - margin
+        v_lo, v_hi = -(hd - r - margin), hd - r - margin
+    if u_lo > u_hi + 1e-9 or v_lo > v_hi + 1e-9:
+        return None
+    return u_lo, u_hi, v_lo, v_hi
+
+
+def _flat_half_extents(project: Project, surface: str):
+    """Half width/depth of the usable flat area of the bottom or lid."""
+    hw, hd = project.inner_width / 2, project.inner_depth / 2
+    if surface == LID:
+        inset = lip_outer_offset(project) + lip_wall(project)
+        hw, hd = hw - inset, hd - inset
+    return hw, hd
+
+
+def _flat_corner_radius(project: Project, surface: str) -> float:
+    if project.shape == CYLINDER:
+        hw, _ = _flat_half_extents(project, surface)
+        return max(hw, 0.0)
+    rad = project.inner_corner_radius
+    if surface == LID:
+        rad = max(0.0, rad - lip_outer_offset(project) - lip_wall(project))
+    return rad
+
+
+def flat_clearance(project: Project, surface: str, u: float, v: float) -> float:
+    """Distance from a point to the edge of the usable bottom/lid area.
+
+    Positive = inside. Uses a rounded-rectangle distance so it is exact for
+    both boxes with rounded corners and round containers.
+    """
+    hw, hd = _flat_half_extents(project, surface)
+    rad = min(_flat_corner_radius(project, surface), hw, hd)
+    qx = abs(u) - (hw - rad)
+    qy = abs(v) - (hd - rad)
+    outside = math.hypot(max(qx, 0.0), max(qy, 0.0))
+    inside = min(max(qx, qy), 0.0)
+    return -(outside + inside - rad)
+
+
+def hole_edge_clearance(project: Project, hole: Hole) -> float:
+    """Smallest amount of material between the hole and the end of its surface."""
+    r = hole.diameter / 2
+    if hole.surface in (BOTTOM, LID):
+        return flat_clearance(project, hole.surface, hole.u, hole.v) - r
+    z = project.outer_height / 2 + hole.v
+    z_lo = project.bottom
+    z_hi = project.outer_height - (project.lid.lip_height if project.lid.enabled else 0.0)
+    clear = min(z - r - z_lo, z_hi - (z + r))
+    if hole.surface != SIDE:
+        span = project.inner_width if hole.surface in (FRONT, BACK) else project.inner_depth
+        half = span / 2 - project.inner_corner_radius
+        clear = min(clear, half - abs(hole.u) - r)
+    return clear
+
+
+def clamp_hole(project: Project, hole: Hole, margin: float | None = None) -> tuple[float, float] | None:
+    """Nearest position to the hole's current one that keeps `margin` of material.
+
+    Returns None if the hole cannot fit on its surface with that margin.
+    """
+    if margin is None:
+        margin = comfortable_margin(project)
+    limits = wall_limits(project, hole.surface, hole.diameter, margin)
+    if limits is None:
+        return None
+    u_lo, u_hi, v_lo, v_hi = limits
+    if hole.surface == SIDE:
+        u = ((hole.u + 180.0) % 360.0) - 180.0
+    else:
+        u = min(max(hole.u, u_lo), u_hi)
+    v = min(max(hole.v, v_lo), v_hi)
+    if hole.surface in (BOTTOM, LID):
+        # Pull the point towards the centre until it clears rounded corners.
+        need = hole.diameter / 2 + margin
+        for _ in range(60):
+            if flat_clearance(project, hole.surface, u, v) >= need - 1e-6:
+                break
+            u *= 0.97
+            v *= 0.97
+        else:
+            return None
+    return round(u, 2), round(v, 2)
+
+
+def default_project(shape: str = BOX) -> Project:
+    p = Project(shape=shape)
+    if shape == CYLINDER:
+        p.name = "My container"
+        p.height = 80.0
+    return p

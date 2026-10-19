@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "threedn00b"
+dynamic = ["version"]
+description = "A beginner-first editor for simple 3D-printable boxes and containers"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+dependencies = [
+    "PySide6-Essentials>=6.5",
+    "pyqtgraph>=0.13.7",
+    "PyOpenGL>=3.1.7",
+    "numpy>=1.24",
+    "manifold3d>=3.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[project.scripts]
+3dn00b = "threedn00b.app:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "threedn00b.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["threedn00b*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

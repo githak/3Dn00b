@@ -1,0 +1,67 @@
+{
+  "format": "3dn00b-project",
+  "version": 1,
+  "project": {
+    "shape": "box",
+    "size_mode": "inside",
+    "width": 60,
+    "depth": 40,
+    "diameter": 60.0,
+    "height": 25,
+    "wall": 2,
+    "bottom": 2.0,
+    "corner_radius": 3,
+    "lid": {
+      "enabled": true,
+      "fit": "normal",
+      "custom_gap": 0.25,
+      "thickness": 2.0,
+      "lip_height": 5.0
+    },
+    "holes": [
+      {
+        "surface": "left",
+        "diameter": 5,
+        "u": 0,
+        "v": -4,
+        "id": "0775202f"
+      },
+      {
+        "surface": "lid",
+        "diameter": 3,
+        "u": -12,
+        "v": 0,
+        "id": "0c53343a"
+      },
+      {
+        "surface": "lid",
+        "diameter": 3,
+        "u": -6,
+        "v": 0,
+        "id": "72c3b5b4"
+      },
+      {
+        "surface": "lid",
+        "diameter": 3,
+        "u": 0,
+        "v": 0,
+        "id": "8eb8eff9"
+      },
+      {
+        "surface": "lid",
+        "diameter": 3,
+        "u": 6,
+        "v": 0,
+        "id": "fec31117"
+      },
+      {
+        "surface": "lid",
+        "diameter": 3,
+        "u": 12,
+        "v": 0,
+        "id": "4d0179e5"
+      }
+    ],
+    "name": "Sensor enclosure"
+  }
+}
