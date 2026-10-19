@@ -27,6 +27,8 @@ def window(tmp_path, monkeypatch):
     yield w
     w.undo_stack.setClean()
     w.close()
+    from threedn00b.gui.main_window import release_window
+    release_window(w)
 
 
 def test_edit_undo_redo(window):

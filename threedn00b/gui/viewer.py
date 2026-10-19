@@ -124,6 +124,10 @@ class Viewer(gl.GLViewWidget):
             self.reset_view(project)
         self._fitted_size = key
 
+    def release_geometry(self):
+        """Forget the solids used for click picking (see release_window)."""
+        self._solids.clear()
+
     def _add_mesh(self, solid, color, z_offset):
         verts, tris = geometry.mesh_arrays(solid)
         if len(tris) == 0:

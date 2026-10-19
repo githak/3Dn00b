@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import gc
 from pathlib import Path
 
 from PySide6.QtCore import QSettings, Qt, QTimer
@@ -837,10 +838,28 @@ class MainWindow(QMainWindow):
             event.ignore()
 
 
+def release_window(window: MainWindow) -> None:
+    """Drop the window's geometry before Python shuts down.
+
+    Qt may keep the window alive until the very end; if Manifold solids are
+    still referenced then, the geometry library prints scary (but harmless)
+    "leaked instance" warnings in the terminal.
+    """
+    window._rebuild_timer.stop()
+    window.parts = None
+    window.viewer.release_geometry()
+    window.undo_stack.clear()
+    window.deleteLater()
+
+
 def main_window_app(argv) -> int:
     app = QApplication.instance() or QApplication(argv)
     window = MainWindow()
     if len(argv) > 1:
         window.open_path(Path(argv[1]))
     window.show()
-    return app.exec()
+    code = app.exec()
+    release_window(window)
+    del window
+    gc.collect()
+    return code
