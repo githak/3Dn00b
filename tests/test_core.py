@@ -364,3 +364,87 @@ def test_broken_pyside_version_is_reported(monkeypatch):
     monkeypatch.setattr(app.sys, "version_info", (3, 13, 0))
     monkeypatch.setattr(PySide6, "__version__", "6.12.0")
     assert app.check_pyside_version() is None
+
+
+# ---- rectangular holes -----------------------------------------------------
+
+from threedn00b.model import RECT, opening_gap, surface_frame  # noqa: E402
+
+
+def _wall_is_open(solid, project, surface, u, v):
+    """Shoot a ray straight at the surface at (u, v); True if it passes through that wall."""
+    c, n, right, up = surface_frame(project, surface)
+    p = np.array(c) + np.array(right) * u + np.array(up) * v
+    hits = solid.ray_cast(list(p + np.array(n) * 5), list(p - np.array(n) * 0.5))
+    return not hits
+
+
+@pytest.mark.parametrize("surface", [FRONT, BACK, LEFT, RIGHT, BOTTOM, LID])
+def test_rectangle_is_oriented_along_its_surface(surface):
+    p = box_with_lid(corner_radius=0)
+    hole = Hole(surface, kind=RECT, width=20, height=6, u=4, v=-2)
+    p.holes = [hole]
+    parts = geometry.build_parts(p)
+    solid = parts.lid if surface == LID else parts.body
+    assert _wall_is_open(solid, p, surface, 4 + 9, -2)        # near the end of the long side
+    assert _wall_is_open(solid, p, surface, 4 - 9, -2 + 2.5)
+    assert not _wall_is_open(solid, p, surface, 4, -2 + 4)    # just past the short side
+    assert not _wall_is_open(solid, p, surface, 4 + 11, -2)   # just past the long side
+    assert geometry.piece_count(solid) == 1 and _edges_shared_twice(solid)
+
+
+def test_rectangle_on_round_wall():
+    p = default_project(CYLINDER)
+    p.holes = [Hole(SIDE, kind=RECT, width=12, height=5, u=90, v=0)]
+    body = geometry.build_body(p)
+    assert body.ray_cast([60, 0, 40], [-60, 0, 40])[0].position[0] < 0   # passes into the far wall
+    assert body.ray_cast([60, 0, 44], [-60, 0, 44])[0].position[0] > 0   # above the slot: solid
+    assert not validation.has_errors(validation.check(p))
+
+
+def test_rectangle_limits_and_clamp():
+    p = default_project(BOX)    # inner 76 wide, 38 tall walls
+    hole = Hole(FRONT, kind=RECT, width=30, height=10, u=40, v=0)
+    p.holes = [hole]
+    issues = validation.check(p)
+    assert validation.has_errors(issues)
+    fix = next(i.fix for i in issues if i.fix)
+    hole.u, hole.v = fix
+    assert not validation.has_errors(validation.check(p))
+    assert hole.u + 15 <= 76 / 2 - 2 + 1e-6      # keeps the comfortable margin
+    p.holes = [Hole(FRONT, kind=RECT, width=80, height=5)]
+    assert any("too big" in i.message for i in validation.check(p))
+
+
+def test_rectangle_in_rounded_corner_of_bottom_is_detected():
+    p = Project(corner_radius=20)                 # inner corner radius 18
+    hole = Hole(BOTTOM, kind=RECT, width=10, height=10, u=31, v=21)
+    p.holes = [hole]
+    assert validation.has_errors(validation.check(p))
+
+
+def test_gaps_between_mixed_shapes():
+    p = default_project(BOX)
+    rect = Hole(FRONT, kind=RECT, width=10, height=4, u=0, v=0)
+    near = Hole(FRONT, diameter=4, u=9, v=0)        # circle edge 2 mm from the rectangle
+    corner = Hole(FRONT, diameter=2, u=8, v=5)     # diagonal from the corner
+    other = Hole(FRONT, kind=RECT, width=4, height=4, u=0, v=6)
+    assert opening_gap(p, rect, near) == pytest.approx(2.0)
+    assert opening_gap(p, rect, corner) == pytest.approx(math.hypot(3, 3) - 1)
+    assert opening_gap(p, rect, other) == pytest.approx(2.0)
+    assert opening_gap(p, rect, Hole(FRONT, diameter=2, u=1, v=1)) < 0
+
+
+def test_rectangle_round_trip_and_old_files(tmp_path):
+    p = box_with_lid()
+    p.holes = [Hole(LEFT, kind=RECT, width=9.5, height=3.6, u=2, v=-4)]
+    path = tmp_path / "usb.3dn00b"
+    project_io.save_project(p, path)
+    assert project_io.load_project(path) == p
+    data = project_io.to_dict(p)
+    assert data["version"] == 2
+    data["version"] = 1                        # files from 0.1/0.2 have no "kind"
+    for h in data["project"]["holes"]:
+        for key in ("kind", "width", "height"):
+            del h[key]
+    assert project_io.from_dict(data).holes[0].kind == "round"

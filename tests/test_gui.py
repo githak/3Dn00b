@@ -233,3 +233,49 @@ def test_long_drags_do_not_corrupt_reference_counts(window):
         window.viewer.repaint()
         QApplication.processEvents()
     assert sys.getrefcount(None) - before > -50
+
+
+def test_rectangular_hole_from_button_and_presets(window):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from threedn00b.model import RECT
+    QTest.mouseClick(window.add_rect_button, Qt.MouseButton.LeftButton)
+    window.rebuild()
+    hole = window.project.holes[0]
+    assert hole.kind == RECT and (hole.width, hole.height) == (12, 6)
+    assert window.hole_width.isVisible() and not window.hole_diameter.isVisible()
+    usb_a = window.common_sizes.findText("USB-A plug (16 × 8.5 mm)")
+    window.common_sizes.activated.emit(usb_a)
+    assert (window.project.holes[0].width, window.project.holes[0].height) == (16, 8.5)
+    window.hole_width.setValue(20)
+    assert window.project.holes[0].width == 20
+    assert "20 × 8.5 mm" in window.hole_list.item(0).text()
+    assert not validation_errors(window)
+
+
+def test_switching_hole_shape_keeps_it_valid(window):
+    from threedn00b.model import RECT, ROUND
+    window.add_hole()
+    window.select_hole(window.project.holes[0].id)
+    window.hole_v.setValue(window.hole_v.minimum())          # as low as a round hole can go
+    window.kind_combo.setCurrentIndex(window.kind_combo.findData(RECT))
+    window.kind_combo.activated.emit(window.kind_combo.currentIndex())
+    assert window.project.holes[0].kind == RECT
+    assert not validation_errors(window)
+    window.undo_stack.undo()
+    assert window.project.holes[0].kind == ROUND
+
+
+def test_drag_rectangular_hole(window):
+    from PySide6.QtCore import QPoint
+    window.add_hole(kind="rect")
+    window.rebuild()
+    hole = window.project.holes[0]
+    start = _hole_pixel(window, hole) + QPoint(15, 0)      # grab near its right end
+    _drag(window.viewer, start, start + QPoint(-50, 0))
+    assert window.project.holes[0].u < hole.u - 5
+
+
+def validation_errors(window):
+    window.rebuild()
+    return [i.message for i in window.issues if i.level == "error"]

@@ -13,7 +13,7 @@ from PySide6.QtGui import QSurfaceFormat, QVector4D
 from PySide6.QtWidgets import QLabel
 
 from .. import geometry
-from ..model import BOTTOM, LID, SIDE, Project, hole_center_3d, surface_frame
+from ..model import BOTTOM, LID, RECT, SIDE, Project, hole_center_3d, surface_frame
 
 # Soft two-sided lighting: a light near the camera plus a fill light and ambient,
 # so the inside of the box and faces turned away are still readable.
@@ -289,21 +289,34 @@ class Viewer(gl.GLViewWidget):
         return part, tuple(float(c) for c in hit.position), tuple(float(c) for c in hit.normal)
 
 
+def _outline(hole, steps: int = 48):
+    """Outline of an opening as (du, dv) offsets in mm, a little larger than the opening."""
+    if hole.kind == RECT:
+        hu, hv = hole.width / 2 + 0.6, hole.height / 2 + 0.6
+        return (np.array([-hu, hu, hu, -hu, -hu]), np.array([-hv, -hv, hv, hv, -hv]))
+    r = hole.diameter / 2 + 0.6
+    t = np.linspace(0, 2 * np.pi, steps + 1)
+    return r * np.cos(t), r * np.sin(t)
+
+
 def _hole_rings(project: Project, hole) -> list[np.ndarray]:
     """Outline(s) of a hole, drawn just outside the surface it is on."""
-    r = hole.diameter / 2 + 0.6
-    t = np.linspace(0, 2 * np.pi, 49)
+    du, dv = _outline(hole)
     rings = []
     if hole.surface == SIDE:
         big_r = project.outer_diameter / 2 + 0.3
-        angles = np.radians(hole.u) + (r * np.cos(t)) / big_r
-        z = project.outer_height / 2 + hole.v + r * np.sin(t)
+        if hole.kind == RECT:
+            # Add points along the long edges so they follow the curve.
+            du = np.concatenate([np.linspace(a, b, 12, endpoint=False) for a, b in zip(du[:-1], du[1:])] + [du[-1:]])
+            dv = np.concatenate([np.linspace(a, b, 12, endpoint=False) for a, b in zip(dv[:-1], dv[1:])] + [dv[-1:]])
+        angles = np.radians(hole.u) + du / big_r
+        z = project.outer_height / 2 + hole.v + dv
         rings.append(np.column_stack([np.sin(angles) * big_r, -np.cos(angles) * big_r, z]))
         return rings
     center, _ = hole_center_3d(project, hole)
     _, n, right, up = surface_frame(project, hole.surface)
     c = np.array(center) + np.array(n) * 0.3
-    ring = c + np.outer(np.cos(t) * r, right) + np.outer(np.sin(t) * r, up)
+    ring = c + np.outer(du, right) + np.outer(dv, up)
     rings.append(ring)
     if hole.surface == BOTTOM:
         # Also show it on the inside floor, which is what you usually see.

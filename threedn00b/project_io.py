@@ -14,7 +14,7 @@ from . import geometry
 from .model import SHAPES, Hole, Lid, Project
 
 FORMAT_NAME = "3dn00b-project"
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2   # 2: rectangular holes (kind, width, height)
 PROJECT_SUFFIX = ".3dn00b"
 
 

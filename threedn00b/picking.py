@@ -8,7 +8,8 @@ from __future__ import annotations
 import math
 
 from .model import (BACK, BOTTOM, BOX, FRONT, LEFT, LID, RIGHT, SIDE, Hole,
-                    Project, surface_frame, wall_limits)
+                    Project, extent_limits, point_near_opening, surface_frame,
+                    surface_offset_mm, wall_limits)
 
 SNAP_MM = 3.0
 SNAP_DEG = 5.0
@@ -51,11 +52,8 @@ def find_hole(project: Project, surface: str, u: float, v: float) -> Hole | None
     for hole in project.holes:
         if hole.surface != surface:
             continue
-        du = hole.u - u
-        if surface == SIDE:
-            du = math.radians((du + 180.0) % 360.0 - 180.0) * project.outer_diameter / 2
-        dist = math.hypot(du, hole.v - v)
-        if dist <= hole.diameter / 2 + 2.0 and (best_dist is None or dist < best_dist):
+        dist = math.hypot(*surface_offset_mm(project, surface, hole.u - u, hole.v - v))
+        if point_near_opening(project, hole, u, v, 2.0) and (best_dist is None or dist < best_dist):
             best, best_dist = hole, dist
     return best
 
@@ -79,6 +77,14 @@ def fitting_diameter(project: Project, surface: str, preferred: float = 8.0) -> 
     for d in (preferred, 6.0, 5.0, 4.0, 3.0):
         if d <= preferred and wall_limits(project, surface, d) is not None:
             return d
+    return None
+
+
+def fitting_rect(project: Project, surface: str) -> tuple[float, float] | None:
+    """A friendly starting size for a rectangular hole that fits on a surface."""
+    for w, h in ((12.0, 6.0), (10.0, 5.0), (8.0, 4.0), (6.0, 3.0)):
+        if extent_limits(project, surface, w / 2, h / 2) is not None:
+            return w, h
     return None
 
 
@@ -133,12 +139,6 @@ def surface_hit(project: Project, surface: str, origin, direction, lid_offset: f
     return t, u, v, True
 
 
-def _distance_on_surface(project: Project, surface: str, du: float, dv: float) -> float:
-    if surface == SIDE:
-        du = math.radians((du + 180.0) % 360.0 - 180.0) * project.outer_diameter / 2
-    return math.hypot(du, dv)
-
-
 def hole_under_ray(project: Project, origin, direction, mesh_distance: float | None,
                    lid_offset: float = 0.0, lid_visible: bool = True) -> Hole | None:
     """The hole the mouse is pointing at, if any.
@@ -157,7 +157,7 @@ def hole_under_ray(project: Project, origin, direction, mesh_distance: float | N
         depth = project.bottom if hole.surface == BOTTOM else project.wall
         if mesh_distance is not None and t > mesh_distance + depth + 1.5:
             continue
-        if _distance_on_surface(project, hole.surface, hole.u - u, hole.v - v) > hole.diameter / 2 + 1.5:
+        if not point_near_opening(project, hole, u, v, 1.5):
             continue
         if best_t is None or t < best_t:
             best, best_t = hole, t

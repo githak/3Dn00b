@@ -19,7 +19,8 @@ from .. import APP_NAME, geometry, picking, project_io, validation
 from ..model import (BOTTOM, BOX, CYLINDER, FIT_LABELS, FIT_PRESETS, FRONT,
                      HOLE_DIAMETER_RANGE, INSIDE, LID, MIN_EDGE, OUTSIDE, SIDE,
                      SIZE_RANGE, SURFACE_LABELS, WALL_RANGE, Hole, Project,
-                     clamp_hole, default_project, wall_limits)
+                     HOLE_KIND_LABELS, RECT, ROUND, clamp_hole, default_project,
+                     hole_limits)
 from .viewer import Viewer
 
 COMMON_HOLES = [
@@ -30,6 +31,16 @@ COMMON_HOLES = [
     ("Cable with plug (8 mm)", 8.0),
     ("Thick cable / grommet (12 mm)", 12.0),
 ]
+# Typical sizes; real parts vary, which the panel tells the user.
+COMMON_RECTS = [
+    ("Common sizes…", None),
+    ("USB-C plug (12.5 × 7 mm)", (12.5, 7.0)),
+    ("Micro-USB plug (11 × 8 mm)", (11.0, 8.0)),
+    ("USB-A plug (16 × 8.5 mm)", (16.0, 8.5)),
+    ("Slide switch (9 × 4 mm)", (9.0, 4.0)),
+    ("Rocker switch (19 × 13 mm)", (19.0, 13.0)),
+]
+RECT_SIZE_RANGE = (1.0, 150.0)
 
 
 class SnapshotCommand(QUndoCommand):
@@ -271,33 +282,53 @@ class MainWindow(QMainWindow):
     def _build_holes_tab(self):
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.addWidget(hint("Holes for cables, screws, buttons or air.\n"
-                              "Tip: double-click a wall in the 3D view to put a hole right there."))
-        self.add_hole_button = QPushButton("+  Add hole")
-        self.add_hole_button.setMinimumHeight(34)
-        # A lambda, because clicked() would otherwise pass its 'checked' flag as `surface`.
+        layout.addWidget(hint("Holes for cables, screws, USB ports, switches or air.\n"
+                              "Tip: double-click a wall in the 3D view to put a hole right there, "
+                              "and drag holes to move them."))
+        row = QHBoxLayout()
+        self.add_hole_button = QPushButton("+  Round hole")
+        self.add_rect_button = QPushButton("+  Rectangular hole")
+        for button in (self.add_hole_button, self.add_rect_button):
+            button.setMinimumHeight(34)
+            row.addWidget(button)
+        # Lambdas, because clicked() would otherwise pass its 'checked' flag as `surface`.
         self.add_hole_button.clicked.connect(lambda: self.add_hole())
-        layout.addWidget(self.add_hole_button)
+        self.add_rect_button.clicked.connect(lambda: self.add_hole(kind=RECT))
+        layout.addLayout(row)
         self.hole_list = QListWidget()
         self.hole_list.setMaximumHeight(150)
         self.hole_list.currentRowChanged.connect(self._on_hole_row_changed)
         layout.addWidget(self.hole_list)
 
         self.hole_box = QWidget()
-        form = QFormLayout(self.hole_box)
+        form = self.hole_form = QFormLayout(self.hole_box)
         form.setContentsMargins(0, 0, 0, 0)
         self.surface_combo = QComboBox()
         self.surface_combo.activated.connect(self._on_surface_changed)
         form.addRow("Where", self.surface_combo)
+        self.kind_combo = QComboBox()
+        for kind, label in HOLE_KIND_LABELS.items():
+            self.kind_combo.addItem(label, kind)
+        self.kind_combo.activated.connect(self._on_kind_changed)
+        form.addRow("Shape", self.kind_combo)
         self.hole_diameter = spin(*HOLE_DIAMETER_RANGE, step=0.5)
         self.hole_diameter.valueChanged.connect(
             lambda v: self._edit_hole("Change hole size", "diameter", v))
         form.addRow("Diameter", self.hole_diameter)
+        self.hole_width = spin(*RECT_SIZE_RANGE, step=0.5)
+        self.hole_height = spin(*RECT_SIZE_RANGE, step=0.5)
+        self.hole_width.valueChanged.connect(lambda v: self._edit_hole("Change hole size", "width", v))
+        self.hole_height.valueChanged.connect(lambda v: self._edit_hole("Change hole size", "height", v))
+        self.hole_width.setToolTip("Left to right (around, on a round wall)")
+        self.hole_height.setToolTip("Up and down (front to back, on the bottom or lid)")
+        form.addRow("Width", self.hole_width)
+        form.addRow("Height", self.hole_height)
         self.common_sizes = QComboBox()
-        for text, value in COMMON_HOLES:
-            self.common_sizes.addItem(text, value)
         self.common_sizes.activated.connect(self._on_common_size)
+        self._common_kind = None
         form.addRow("", self.common_sizes)
+        self.measure_hint = hint("Plugs and switches vary: measure yours and add a little room.")
+        form.addRow("", self.measure_hint)
         self.u_label, self.v_label = QLabel(), QLabel()
         self.hole_u = spin(-500, 500, step=1.0)
         self.hole_v = spin(-500, 500, step=1.0)
@@ -479,7 +510,7 @@ class MainWindow(QMainWindow):
         for i, hole in enumerate(p.holes):
             where = SURFACE_LABELS.get(hole.surface, hole.surface)
             mark = "⚠ " if hole.id in problems else ""
-            item = QListWidgetItem(f"{mark}Hole {i + 1} · {where} · {hole.diameter:g} mm")
+            item = QListWidgetItem(f"{mark}Hole {i + 1} · {where} · {hole.size_label}")
             self.hole_list.addItem(item)
             if hole.id == self.selected_id:
                 current = i
@@ -502,7 +533,21 @@ class MainWindow(QMainWindow):
             self.hole_problem.setText("")
             return
         set_quietly(self.surface_combo, hole.surface)
+        set_quietly(self.kind_combo, hole.kind)
+        is_rect = hole.kind == RECT
         set_quietly(self.hole_diameter, hole.diameter)
+        set_quietly(self.hole_width, hole.width)
+        set_quietly(self.hole_height, hole.height)
+        self.hole_form.setRowVisible(self.hole_diameter, not is_rect)
+        self.hole_form.setRowVisible(self.hole_width, is_rect)
+        self.hole_form.setRowVisible(self.hole_height, is_rect)
+        self.hole_form.setRowVisible(self.measure_hint, is_rect)
+        self.hole_height.setToolTip("Front to back" if hole.surface in (BOTTOM, LID) else "Up and down")
+        if self._common_kind != hole.kind:
+            self._common_kind = hole.kind
+            self.common_sizes.clear()
+            for text, value in (COMMON_RECTS if is_rect else COMMON_HOLES):
+                self.common_sizes.addItem(text, value)
         if hole.surface == SIDE:
             self.u_label.setText("Around")
             self.hole_u.setSuffix("°")
@@ -510,7 +555,7 @@ class MainWindow(QMainWindow):
             self.u_label.setText("Left / right")
             self.hole_u.setSuffix(" mm")
         self.v_label.setText("Front / back" if hole.surface in (BOTTOM, LID) else "Up / down")
-        limits = wall_limits(p, hole.surface, hole.diameter, MIN_EDGE)
+        limits = hole_limits(p, hole, MIN_EDGE)
         if limits is None:
             u_lo, u_hi, v_lo, v_hi = -1.0, 1.0, -1.0, 1.0
         else:
@@ -610,17 +655,24 @@ class MainWindow(QMainWindow):
         self.refresh_holes()
         self.viewer.set_hole_markers(self.project, self.selected_id, self._problem_holes())
 
-    def add_hole(self, surface: str | None = None, u: float = 0.0, v: float = 0.0):
+    def add_hole(self, surface: str | None = None, u: float = 0.0, v: float = 0.0,
+                 kind: str = ROUND):
         p = self.project
         if surface is None:
             current = p.hole(self.selected_id) if self.selected_id else None
             surface = current.surface if current else (FRONT if p.shape == BOX else SIDE)
-        diameter = picking.fitting_diameter(p, surface)
-        if diameter is None:
+        if kind == RECT:
+            size = picking.fitting_rect(p, surface)
+            hole = Hole(surface=surface, kind=RECT, u=u, v=v)
+            if size:
+                hole.width, hole.height = size
+        else:
+            size = picking.fitting_diameter(p, surface)
+            hole = Hole(surface=surface, diameter=size or 0.0, u=u, v=v)
+        if size is None:
             self.statusBar().showMessage(f"There's no room for a hole on the "
                                          f"{SURFACE_LABELS[surface].lower()}.", 5000)
             return
-        hole = Hole(surface=surface, diameter=diameter, u=u, v=v)
         # Start somewhere valid: keep the clicked spot if it is safe, else the nearest safe one.
         pos = clamp_hole(p, hole) or clamp_hole(p, hole, MIN_EDGE)
         if pos:
@@ -670,8 +722,31 @@ class MainWindow(QMainWindow):
     def _on_common_size(self, index):
         value = self.common_sizes.itemData(index)
         self.common_sizes.setCurrentIndex(0)
-        if value is not None:
+        hole_id = self.selected_id
+        if value is None or hole_id is None:
+            return
+        if isinstance(value, tuple):
+            def change(p):
+                p.hole(hole_id).width, p.hole(hole_id).height = value
+            self.edit("Change hole size", change)
+        else:
             self._edit_hole("Change hole size", "diameter", value)
+
+    def _on_kind_changed(self, _index):
+        hole_id, kind = self.selected_id, self.kind_combo.currentData()
+        if hole_id is None:
+            return
+
+        def change(p):
+            h = p.hole(hole_id)
+            if h.kind == kind:
+                return
+            h.kind = kind
+            # Keep it on the surface after the size changes.
+            pos = clamp_hole(p, h) or clamp_hole(p, h, MIN_EDGE)
+            if pos:
+                h.u, h.v = pos
+        self.edit("Change hole shape", change)
 
     def _on_hole_row_changed(self, row):
         holes = self.project.holes

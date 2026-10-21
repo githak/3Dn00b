@@ -7,13 +7,12 @@ broken or unprintable), "warning" is probably a mistake, "info" is advice.
 from __future__ import annotations
 
 import itertools
-import math
 from dataclasses import dataclass
 
 from . import geometry
-from .model import (BOTTOM, LID, MIN_EDGE, SIDE, SURFACE_LABELS, Hole, Project,
-                    clamp_hole, comfortable_margin, hole_edge_clearance,
-                    lip_outer_offset, lip_wall, wall_limits)
+from .model import (BOTTOM, LID, MIN_EDGE, SURFACE_LABELS, Hole, Project,
+                    clamp_hole, comfortable_margin, hole_edge_clearance, hole_limits,
+                    lip_outer_offset, lip_wall, opening_gap)
 
 ERROR, WARNING, INFO = "error", "warning", "info"
 _ORDER = {ERROR: 0, WARNING: 1, INFO: 2}
@@ -129,8 +128,8 @@ def _check_holes(p: Project) -> list[Issue]:
                 out.append(Issue(ERROR, f"{name} is on a surface this shape doesn't have.",
                                  "Move it to another surface or remove it.", hole.id))
             continue
-        if wall_limits(p, hole.surface, hole.diameter, MIN_EDGE) is None:
-            out.append(Issue(ERROR, f"{name} ({_mm(hole.diameter)}) is too big for the {where}.",
+        if hole_limits(p, hole, MIN_EDGE) is None:
+            out.append(Issue(ERROR, f"{name} ({hole.size_label}) is too big for the {where}.",
                              "Make the hole smaller or the object bigger.", hole.id))
             continue
         placed.append(hole)
@@ -147,14 +146,14 @@ def _check_holes(p: Project) -> list[Issue]:
             out.append(Issue(WARNING, f"Only {_mm(clearance)} of material is left next to {name}.",
                              f"Keep at least {_mm(margin)} so the edge doesn't break.",
                              hole.id, fix, fix_label))
-        if hole.surface not in (BOTTOM, LID) and hole.diameter > 15:
+        if hole.surface not in (BOTTOM, LID) and hole.half_extents[0] * 2 > 15:
             out.append(Issue(INFO, f"{name} is large. Its top edge may print a bit rough.",
                              "That's normal for big holes in walls and usually fine.", hole.id))
 
     for a, b in itertools.combinations(placed, 2):
         if a.surface != b.surface:
             continue
-        gap = _center_distance(p, a, b) - (a.diameter + b.diameter) / 2
+        gap = opening_gap(p, a, b)
         if gap < 0:
             out.append(Issue(WARNING, f"{hole_name(p, a)} and {hole_name(p, b)} overlap and will become one opening.",
                              "Move them apart if you wanted two holes.", b.id))
@@ -171,15 +170,7 @@ def _behind_lip(p: Project, hole: Hole) -> bool:
     if not p.lid.enabled or hole.surface in (BOTTOM, LID):
         return False
     z = p.outer_height / 2 + hole.v
-    return z + hole.diameter / 2 > p.outer_height - p.lid.lip_height
-
-
-def _center_distance(p: Project, a: Hole, b: Hole) -> float:
-    if a.surface == SIDE:
-        angle = abs((a.u - b.u + 180.0) % 360.0 - 180.0)
-        arc = math.radians(angle) * p.outer_diameter / 2
-        return math.hypot(arc, a.v - b.v)
-    return math.hypot(a.u - b.u, a.v - b.v)
+    return z + hole.half_extents[1] > p.outer_height - p.lid.lip_height
 
 
 def _check_geometry(p: Project, parts: geometry.Parts) -> list[Issue]:

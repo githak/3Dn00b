@@ -40,6 +40,9 @@ FIT_LABELS = {"tight": "Tight", "normal": "Normal", "loose": "Loose",
 SIZE_RANGE = (10.0, 300.0)
 WALL_RANGE = (0.8, 10.0)
 HOLE_DIAMETER_RANGE = (1.0, 100.0)
+
+ROUND, RECT = "round", "rect"
+HOLE_KIND_LABELS = {ROUND: "Round", RECT: "Rectangle"}
 # Hard minimum of material kept between a hole and the edge of its surface.
 # Closer than this is not allowed at all; the validator also warns when the
 # margin is below the comfortable value returned by comfortable_margin().
@@ -48,8 +51,9 @@ MIN_EDGE = 0.4
 
 @dataclass
 class Hole:
+    """A round or rectangular opening through one surface."""
     surface: str = FRONT
-    diameter: float = 8.0
+    diameter: float = 8.0          # round holes
     # Position measured from the centre of the surface:
     #  walls:          u = left/right (as seen from outside), v = up/down
     #  round wall:     u = angle in degrees (0 = front, 90 = right), v = up/down
@@ -57,6 +61,22 @@ class Hole:
     u: float = 0.0
     v: float = 0.0
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
+    kind: str = ROUND
+    width: float = 12.0            # rectangles: size along u (left/right, or around)
+    height: float = 6.0            # rectangles: size along v (up/down, or front/back)
+
+    @property
+    def half_extents(self) -> tuple[float, float]:
+        """Half the size along u and v (for a round hole: the radius twice)."""
+        if self.kind == RECT:
+            return self.width / 2, self.height / 2
+        return self.diameter / 2, self.diameter / 2
+
+    @property
+    def size_label(self) -> str:
+        if self.kind == RECT:
+            return f"{self.width:g} × {self.height:g} mm"
+        return f"{self.diameter:g} mm"
 
 
 @dataclass
@@ -248,16 +268,26 @@ def hole_center_3d(project: Project, hole: Hole) -> tuple:
 
 def wall_limits(project: Project, surface: str, diameter: float,
                 margin: float = MIN_EDGE):
-    """Allowed (u_min, u_max, v_min, v_max) for a hole centre on a surface.
+    """Allowed (u_min, u_max, v_min, v_max) for the centre of a round hole."""
+    return extent_limits(project, surface, diameter / 2, diameter / 2, margin)
 
-    Returns None when the hole cannot fit on that surface at all.
-    For bottom/lid surfaces this is the bounding rectangle; the rounded
-    corners are checked separately by flat_point_ok().
+
+def hole_limits(project: Project, hole: Hole, margin: float = MIN_EDGE):
+    """Allowed (u_min, u_max, v_min, v_max) for this hole's centre on its surface."""
+    return extent_limits(project, hole.surface, *hole.half_extents, margin)
+
+
+def extent_limits(project: Project, surface: str, half_u: float, half_v: float,
+                  margin: float = MIN_EDGE):
+    """Allowed (u_min, u_max, v_min, v_max) for the centre of an opening.
+
+    `half_u`/`half_v` are half the opening's size along u and v. Returns None
+    when it cannot fit on that surface at all. For bottom/lid surfaces this is
+    the bounding rectangle; rounded corners are checked by flat_clearance().
     """
-    r = diameter / 2
     if surface in (FRONT, BACK, LEFT, RIGHT, SIDE):
-        z_lo = project.bottom + r + margin
-        z_hi = project.outer_height - r - margin
+        z_lo = project.bottom + half_v + margin
+        z_hi = project.outer_height - half_v - margin
         if project.lid.enabled:
             # The lid's lip covers the top of the wall on the inside.
             z_hi -= project.lid.lip_height
@@ -266,12 +296,12 @@ def wall_limits(project: Project, surface: str, diameter: float,
             u_lo, u_hi = -180.0, 180.0
         else:
             span = project.inner_width if surface in (FRONT, BACK) else project.inner_depth
-            half = span / 2 - project.inner_corner_radius - r - margin
+            half = span / 2 - project.inner_corner_radius - half_u - margin
             u_lo, u_hi = -half, half
     else:
         hw, hd = _flat_half_extents(project, surface)
-        u_lo, u_hi = -(hw - r - margin), hw - r - margin
-        v_lo, v_hi = -(hd - r - margin), hd - r - margin
+        u_lo, u_hi = -(hw - half_u - margin), hw - half_u - margin
+        v_lo, v_hi = -(hd - half_v - margin), hd - half_v - margin
     if u_lo > u_hi + 1e-9 or v_lo > v_hi + 1e-9:
         return None
     return u_lo, u_hi, v_lo, v_hi
@@ -311,20 +341,69 @@ def flat_clearance(project: Project, surface: str, u: float, v: float) -> float:
     return -(outside + inside - rad)
 
 
+def _flat_hole_clearance(project: Project, hole: Hole, u: float, v: float) -> float:
+    """Material between an opening at (u, v) and the edge of the bottom or lid."""
+    hu, hv = hole.half_extents
+    if hole.kind != RECT:
+        return flat_clearance(project, hole.surface, u, v) - hu
+    # The usable area is convex, so the corners are the closest points.
+    return min(flat_clearance(project, hole.surface, u + su * hu, v + sv * hv)
+               for su in (-1, 1) for sv in (-1, 1))
+
+
 def hole_edge_clearance(project: Project, hole: Hole) -> float:
     """Smallest amount of material between the hole and the end of its surface."""
-    r = hole.diameter / 2
+    hu, hv = hole.half_extents
     if hole.surface in (BOTTOM, LID):
-        return flat_clearance(project, hole.surface, hole.u, hole.v) - r
+        return _flat_hole_clearance(project, hole, hole.u, hole.v)
     z = project.outer_height / 2 + hole.v
     z_lo = project.bottom
     z_hi = project.outer_height - (project.lid.lip_height if project.lid.enabled else 0.0)
-    clear = min(z - r - z_lo, z_hi - (z + r))
+    clear = min(z - hv - z_lo, z_hi - (z + hv))
     if hole.surface != SIDE:
         span = project.inner_width if hole.surface in (FRONT, BACK) else project.inner_depth
         half = span / 2 - project.inner_corner_radius
-        clear = min(clear, half - abs(hole.u) - r)
+        clear = min(clear, half - abs(hole.u) - hu)
     return clear
+
+
+def surface_offset_mm(project: Project, surface: str, du: float, dv: float) -> tuple[float, float]:
+    """A (u, v) difference on a surface, in mm (turns angles on the round wall into arc length)."""
+    if surface == SIDE:
+        du = math.radians((du + 180.0) % 360.0 - 180.0) * project.outer_diameter / 2
+    return du, dv
+
+
+def _shape_gap(a: Hole, b: Hole, du: float, dv: float) -> float:
+    """Gap in mm between two openings whose centres are (du, dv) mm apart.
+
+    Negative means they overlap.
+    """
+    du, dv = abs(du), abs(dv)
+    (au, av), (bu, bv) = a.half_extents, b.half_extents
+    if a.kind != RECT and b.kind != RECT:
+        return math.hypot(du, dv) - au - bu
+    if a.kind == RECT and b.kind == RECT:
+        gx, gy = du - au - bu, dv - av - bv
+        return math.hypot(gx, gy) if gx > 0 and gy > 0 else max(gx, gy)
+    rect, r = (a, bu) if a.kind == RECT else (b, au)
+    hu, hv = rect.half_extents
+    dx, dy = max(du - hu, 0.0), max(dv - hv, 0.0)
+    if dx == 0 and dy == 0:
+        return -r
+    return math.hypot(dx, dy) - r
+
+
+def opening_gap(project: Project, a: Hole, b: Hole) -> float:
+    """Material between two openings on the same surface, in mm (negative = overlap)."""
+    du, dv = surface_offset_mm(project, a.surface, a.u - b.u, a.v - b.v)
+    return _shape_gap(a, b, du, dv)
+
+
+def point_near_opening(project: Project, hole: Hole, u: float, v: float, tolerance: float) -> bool:
+    """Is the point (u, v) on the opening, or within `tolerance` mm of it?"""
+    du, dv = surface_offset_mm(project, hole.surface, hole.u - u, hole.v - v)
+    return _shape_gap(hole, Hole(kind=ROUND, diameter=0.0), du, dv) <= tolerance
 
 
 def clamp_hole(project: Project, hole: Hole, margin: float | None = None) -> tuple[float, float] | None:
@@ -334,7 +413,7 @@ def clamp_hole(project: Project, hole: Hole, margin: float | None = None) -> tup
     """
     if margin is None:
         margin = comfortable_margin(project)
-    limits = wall_limits(project, hole.surface, hole.diameter, margin)
+    limits = hole_limits(project, hole, margin)
     if limits is None:
         return None
     u_lo, u_hi, v_lo, v_hi = limits
@@ -345,9 +424,8 @@ def clamp_hole(project: Project, hole: Hole, margin: float | None = None) -> tup
     v = min(max(hole.v, v_lo), v_hi)
     if hole.surface in (BOTTOM, LID):
         # Pull the point towards the centre until it clears rounded corners.
-        need = hole.diameter / 2 + margin
         for _ in range(60):
-            if flat_clearance(project, hole.surface, u, v) >= need - 1e-6:
+            if _flat_hole_clearance(project, hole, u, v) >= margin - 1e-6:
                 break
             u *= 0.97
             v *= 0.97

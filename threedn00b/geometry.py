@@ -12,7 +12,7 @@ from dataclasses import dataclass
 import numpy as np
 from manifold3d import CrossSection, Error, JoinType, Manifold, OpType
 
-from .model import (BACK, BOTTOM, CYLINDER, FRONT, LEFT, LID, RIGHT, SIDE,
+from .model import (BACK, BOTTOM, CYLINDER, FRONT, LEFT, LID, RECT, RIGHT, SIDE,
                     Hole, Project, lip_outer_offset, lip_wall)
 
 
@@ -114,39 +114,46 @@ def build_parts(project: Project) -> Parts:
 
 
 def _hole_cutter(project: Project, hole: Hole) -> Manifold | None:
-    r = hole.diameter / 2
-    if r <= 0:
+    hu, hv = hole.half_extents
+    if hu <= 0 or hv <= 0:
         return None
-    seg = _circle_segments(r, 0.6, 24, 128)
     wall = project.wall
     zc = project.outer_height / 2 + hole.v
     w, d = project.outer_width, project.outer_depth
 
-    def rod(length: float) -> Manifold:
-        return Manifold.cylinder(length, r, -1.0, seg, True)
+    def plug(length: float) -> Manifold:
+        """The opening's shape, extruded along Z: u along X, v along Y."""
+        if hole.kind == RECT:
+            return Manifold.cube([hole.width, hole.height, length], True)
+        return Manifold.cylinder(length, hu, -1.0, _circle_segments(hu, 0.6, 24, 128), True)
+
+    def upright(length: float) -> Manifold:
+        """Plug pointing along Y, with u along X and v up (Z)."""
+        return plug(length).rotate([90.0, 0.0, 0.0])
 
     if hole.surface in (FRONT, BACK):
         y = -d / 2 + wall / 2 if hole.surface == FRONT else d / 2 - wall / 2
         x = hole.u if hole.surface == FRONT else -hole.u
-        return rod(wall + 2.0).rotate([90.0, 0.0, 0.0]).translate([x, y, zc])
+        return upright(wall + 2.0).translate([x, y, zc])
     if hole.surface in (LEFT, RIGHT):
         x = -w / 2 + wall / 2 if hole.surface == LEFT else w / 2 - wall / 2
         y = -hole.u if hole.surface == LEFT else hole.u
-        return rod(wall + 2.0).rotate([0.0, 90.0, 0.0]).translate([x, y, zc])
+        return upright(wall + 2.0).rotate([0.0, 0.0, 90.0]).translate([x, y, zc])
     if hole.surface == SIDE:
         big_r = project.outer_diameter / 2
         inner_r = big_r - wall
-        sag = inner_r - math.sqrt(max(inner_r ** 2 - r ** 2, 0.0)) if r < inner_r else inner_r
+        # The inside of a round wall curves away; cut deep enough at the opening's edges.
+        sag = inner_r - math.sqrt(max(inner_r ** 2 - hu ** 2, 0.0)) if hu < inner_r else inner_r
         length = wall + sag + 2.0
         mid = big_r + 1.0 - length / 2
         a = math.radians(hole.u)
-        return (rod(length).rotate([90.0, 0.0, 0.0]).rotate([0.0, 0.0, hole.u])
+        return (upright(length).rotate([0.0, 0.0, hole.u])
                 .translate([math.sin(a) * mid, -math.cos(a) * mid, zc]))
     if hole.surface == BOTTOM:
-        return rod(project.bottom + 2.0).translate([hole.u, hole.v, project.bottom / 2])
+        return plug(project.bottom + 2.0).translate([hole.u, hole.v, project.bottom / 2])
     if hole.surface == LID:
         t = project.lid.thickness
-        return rod(t + 2.0).translate([hole.u, hole.v, project.outer_height + t / 2])
+        return plug(t + 2.0).translate([hole.u, hole.v, project.outer_height + t / 2])
     return None
 
 
