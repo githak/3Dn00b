@@ -38,6 +38,30 @@ def check_display_libraries() -> str | None:
     return MISSING_XCB_CURSOR
 
 
+BROKEN_PYSIDE = """\
+3Dn00b can't start safely: PySide6 {version} has a bug that crashes the app on
+Python {python} (it shows up while dragging holes).
+
+Fix it by reinstalling 3Dn00b's requirements, which picks a working version:
+
+  .venv/bin/pip install -e .
+"""
+
+
+def check_pyside_version() -> str | None:
+    """PySide6 6.12.0 drops a reference to None on every OpenGL buffer upload.
+
+    Python 3.12+ never frees None, so only older Pythons crash.
+    """
+    if sys.version_info >= (3, 12):
+        return None
+    import PySide6
+    if PySide6.__version__ == "6.12.0":
+        return BROKEN_PYSIDE.format(version=PySide6.__version__,
+                                    python=".".join(map(str, sys.version_info[:2])))
+    return None
+
+
 def install_error_handler() -> None:
     """Show unexpected errors in a dialog instead of letting Qt abort the app."""
     import traceback
@@ -59,7 +83,7 @@ def install_error_handler() -> None:
 
 
 def main() -> int:
-    problem = check_display_libraries()
+    problem = check_display_libraries() or check_pyside_version()
     if problem:
         print(problem, file=sys.stderr)
         return 1

@@ -58,6 +58,12 @@ To get a menu entry, copy `data/3dn00b.desktop` to `~/.local/share/applications/
 and make sure `3dn00b` is on your `PATH` (for example by symlinking
 `.venv/bin/3dn00b` into `~/.local/bin/`).
 
+### Updating
+
+After `git pull`, run `.venv/bin/pip install -e .` again so the right library
+versions are installed. (For example, PySide6 6.12.0 has a bug that crashes the
+app on Python 3.11, and 3Dn00b now avoids that version.)
+
 ## How to use it
 
 1. **Shape**: choose Box or Round container and type the sizes.

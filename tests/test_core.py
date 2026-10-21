@@ -351,3 +351,16 @@ def test_drag_snaps_to_centre_and_other_holes():
     h = Hole(SIDE, 6, 0, 0)
     side.holes = [h]
     assert abs(picking.snap_drag(side, h, 178.0, 20.0)[0]) == 180.0   # straight at the back
+
+
+def test_broken_pyside_version_is_reported(monkeypatch):
+    import PySide6
+    from threedn00b import app
+    monkeypatch.setattr(app.sys, "version_info", (3, 11, 9))
+    monkeypatch.setattr(PySide6, "__version__", "6.12.0")
+    assert "pip install -e ." in app.check_pyside_version()
+    monkeypatch.setattr(PySide6, "__version__", "6.11.2")
+    assert app.check_pyside_version() is None
+    monkeypatch.setattr(app.sys, "version_info", (3, 13, 0))
+    monkeypatch.setattr(PySide6, "__version__", "6.12.0")
+    assert app.check_pyside_version() is None

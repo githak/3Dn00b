@@ -1,6 +1,7 @@
 """GUI smoke tests. They need a display (run under `xvfb-run` on headless machines)."""
 
 import os
+import sys
 
 import pytest
 
@@ -210,3 +211,25 @@ def test_drag_hole_on_lid(window):
     _drag(window.viewer, start, start + QPoint(50, 0))
     assert window.project.holes[0].surface == LID
     assert window.project.holes[0].u > 5
+
+
+@pytest.mark.skipif(sys.version_info >= (3, 12), reason="None is immortal on Python 3.12+")
+def test_long_drags_do_not_corrupt_reference_counts(window):
+    """PySide6 6.12.0 dropped a reference to None on every OpenGL buffer upload.
+
+    On Python 3.11 that crashed the app after a few minutes of dragging holes.
+    """
+    from PySide6.QtCore import QPoint
+    from PySide6.QtWidgets import QApplication
+    for u in (-20, 0, 20):
+        window.add_hole(FRONT, u, 0)
+    window.rebuild()
+    QApplication.processEvents()
+    before = sys.getrefcount(None)
+    hole = window.project.holes[1]
+    for i in range(10):
+        start = _hole_pixel(window, window.project.hole(hole.id))
+        _drag(window.viewer, start, start + QPoint(10 if i % 2 else -10, 8 if i % 2 else -8), steps=10)
+        window.viewer.repaint()
+        QApplication.processEvents()
+    assert sys.getrefcount(None) - before > -50
