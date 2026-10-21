@@ -442,9 +442,83 @@ def test_rectangle_round_trip_and_old_files(tmp_path):
     project_io.save_project(p, path)
     assert project_io.load_project(path) == p
     data = project_io.to_dict(p)
-    assert data["version"] == 2
+    assert data["version"] == project_io.FORMAT_VERSION
     data["version"] = 1                        # files from 0.1/0.2 have no "kind"
     for h in data["project"]["holes"]:
         for key in ("kind", "width", "height"):
             del h[key]
     assert project_io.from_dict(data).holes[0].kind == "round"
+
+
+# ---- air vents ---------------------------------------------------------------
+
+from threedn00b.model import ALONG_U, VENT  # noqa: E402
+
+
+def test_vent_fits_as_many_slots_as_possible():
+    v = Hole(kind=VENT, width=30, height=15, slot=2, gap=2)
+    assert v.slot_count == 8                      # 8 * 2 + 7 * 2 = 30
+    v.width = 29.9
+    assert v.slot_count == 7
+    offsets = [du for du, *_ in Hole(kind=VENT, width=30, height=15).slot_rects()]
+    assert offsets[0] == pytest.approx(-offsets[-1])   # centred
+    v.slot_direction = ALONG_U
+    assert v.slot_count == 4 and v.slot_rects()[0][2:] == (29.9, 2)
+
+
+@pytest.mark.parametrize("surface", [FRONT, LEFT, BOTTOM, LID])
+@pytest.mark.parametrize("direction", ["along_v", "along_u"])
+def test_vent_slots_are_cut_where_expected(surface, direction):
+    p = box_with_lid(corner_radius=0)
+    vent = Hole(surface, kind=VENT, width=20, height=12, slot=2, gap=2, u=3, v=-1,
+                slot_direction=direction)
+    p.holes = [vent]
+    parts = geometry.build_parts(p)
+    solid = parts.lid if surface == LID else parts.body
+    first, second = vent.slot_rects()[:2]
+    # Centre of a slot is open; the strip between two slots is solid.
+    assert _wall_is_open(solid, p, surface, 3 + first[0], -1 + first[1])
+    between = ((first[0] + second[0]) / 2, (first[1] + second[1]) / 2)
+    assert not _wall_is_open(solid, p, surface, 3 + between[0], -1 + between[1])
+    assert geometry.piece_count(solid) == 1 and _edges_shared_twice(solid)
+
+
+def test_vent_on_round_wall_follows_the_curve():
+    p = default_project(CYLINDER)
+    vent = Hole(SIDE, kind=VENT, width=40, height=20, u=0, v=0)
+    p.holes = [vent]
+    body = geometry.build_body(p)
+    before = geometry.build_body(default_project(CYLINDER)).volume()
+    # Every slot cuts all the way through the curved wall.
+    assert before - body.volume() == pytest.approx(vent.slot_count * 2 * 20 * p.wall, rel=0.08)
+    assert not validation.has_errors(validation.check(p))
+
+
+def test_vent_checks():
+    p = default_project(BOX)
+    p.holes = [Hole(FRONT, kind=VENT, width=20, height=10, slot=1.0, gap=1.0)]
+    messages_ = messages(validation.check(p))
+    assert "may break" in messages_ and "close up" in messages_
+    p.holes = [Hole(FRONT, kind=VENT, width=4, height=10, slot=6)]
+    assert validation.has_errors(validation.check(p))
+    p.holes = [Hole(FRONT, kind=VENT, width=80, height=10)]          # wall is 76 mm inside
+    assert any("runs off" in i.message or "too big" in i.message for i in validation.check(p))
+
+
+def test_vent_overlapping_a_hole_is_reported():
+    p = default_project(BOX)
+    p.holes = [Hole(FRONT, kind=VENT, width=30, height=15), Hole(FRONT, diameter=6, u=17, v=0)]
+    assert any("overlap" in i.message for i in validation.check(p))
+
+
+def test_vent_round_trip_and_unknown_kinds(tmp_path):
+    p = box_with_lid()
+    p.holes = [Hole(LID, kind=VENT, width=25, height=10, slot=1.6, gap=2.4,
+                    slot_direction="along_u")]
+    path = tmp_path / "vent.3dn00b"
+    project_io.save_project(p, path)
+    assert project_io.load_project(path) == p
+    data = project_io.to_dict(p)
+    data["project"]["holes"][0]["kind"] = "hexagon"
+    with pytest.raises(project_io.ProjectFileError):
+        project_io.from_dict(data)

@@ -279,3 +279,33 @@ def test_drag_rectangular_hole(window):
 def validation_errors(window):
     window.rebuild()
     return [i.message for i in window.issues if i.level == "error"]
+
+
+def test_air_vent_controls(window):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    QTest.mouseClick(window.add_vent_button, Qt.MouseButton.LeftButton)
+    window.rebuild()
+    vent = window.project.holes[0]
+    assert vent.kind == "vent" and vent.slot_count == 8
+    assert window.vent_slot.isVisible() and not window.common_sizes.isVisible()
+    assert "8 slots" in window.vent_info.text()
+    window.vent_gap.setValue(3)
+    assert window.project.holes[0].slot_count == 6
+    window.vent_direction.setCurrentIndex(1)
+    window.vent_direction.activated.emit(1)
+    assert window.project.holes[0].slot_direction == "along_u"
+    assert "print more cleanly" in window.vent_info.text()
+    assert not validation_errors(window)
+    window.undo_stack.undo()
+    assert window.project.holes[0].slot_direction == "along_v"
+
+
+def test_drag_air_vent(window):
+    from PySide6.QtCore import QPoint
+    window.add_hole(kind="vent")
+    window.rebuild()
+    vent = window.project.holes[0]
+    start = _hole_pixel(window, vent) + QPoint(3, 0)    # grab between two slots
+    _drag(window.viewer, start, start + QPoint(40, 0))
+    assert window.project.holes[0].u > vent.u + 3

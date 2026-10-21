@@ -13,7 +13,8 @@ from PySide6.QtGui import QSurfaceFormat, QVector4D
 from PySide6.QtWidgets import QLabel
 
 from .. import geometry
-from ..model import BOTTOM, LID, RECT, SIDE, Project, hole_center_3d, surface_frame
+from ..model import (BOTTOM, LID, RECT, SIDE, VENT, Hole, Project, hole_center_3d,
+                     surface_frame, vent_openings)
 
 # Soft two-sided lighting: a light near the camera plus a fill light and ambient,
 # so the inside of the box and faces turned away are still readable.
@@ -301,6 +302,16 @@ def _outline(hole, steps: int = 48):
 
 def _hole_rings(project: Project, hole) -> list[np.ndarray]:
     """Outline(s) of a hole, drawn just outside the surface it is on."""
+    if hole.kind == VENT:
+        # The vent's whole area (what you grab and move) plus each slot.
+        area = Hole(surface=hole.surface, kind=RECT, width=hole.width, height=hole.height,
+                    u=hole.u, v=hole.v)
+        rings = _hole_rings(project, area)
+        for slot in vent_openings(project, hole):
+            # Undo the outline's extra margin so slot outlines match the slots.
+            slot.width, slot.height = max(slot.width - 1.2, 0.2), max(slot.height - 1.2, 0.2)
+            rings += _hole_rings(project, slot)
+        return rings
     du, dv = _outline(hole)
     rings = []
     if hole.surface == SIDE:

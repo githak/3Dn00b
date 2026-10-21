@@ -10,7 +10,7 @@ import itertools
 from dataclasses import dataclass
 
 from . import geometry
-from .model import (BOTTOM, LID, MIN_EDGE, SURFACE_LABELS, Hole, Project,
+from .model import (ALONG_V, BOTTOM, LID, MIN_EDGE, SURFACE_LABELS, VENT, Hole, Project,
                     clamp_hole, comfortable_margin, hole_edge_clearance, hole_limits,
                     lip_outer_offset, lip_wall, opening_gap)
 
@@ -146,9 +146,14 @@ def _check_holes(p: Project) -> list[Issue]:
             out.append(Issue(WARNING, f"Only {_mm(clearance)} of material is left next to {name}.",
                              f"Keep at least {_mm(margin)} so the edge doesn't break.",
                              hole.id, fix, fix_label))
-        if hole.surface not in (BOTTOM, LID) and hole.half_extents[0] * 2 > 15:
-            out.append(Issue(INFO, f"{name} is large. Its top edge may print a bit rough.",
-                             "That's normal for big holes in walls and usually fine.", hole.id))
+        if hole.kind == VENT:
+            out += _check_vent(hole, name)
+        # The printer has to bridge across the top of an opening in a wall.
+        bridge = (hole.slot if hole.kind == VENT and hole.slot_direction == ALONG_V
+                  else hole.half_extents[0] * 2)
+        if hole.surface not in (BOTTOM, LID) and bridge > 15:
+            out.append(Issue(INFO, f"{name} is wide. Its top edge may print a bit rough.",
+                             "That's normal for big openings in walls and usually fine.", hole.id))
 
     for a, b in itertools.combinations(placed, 2):
         if a.surface != b.surface:
@@ -163,6 +168,21 @@ def _check_holes(p: Project) -> list[Issue]:
     if p.holes:
         out.append(Issue(INFO, "Printed holes often come out 0.2 to 0.4 mm smaller than designed.",
                          "For screws or cables, make the hole a little bigger than needed."))
+    return out
+
+
+def _check_vent(hole: Hole, name: str) -> list[Issue]:
+    out = []
+    across = hole.width if hole.slot_direction == ALONG_V else hole.height
+    if hole.slot > across:
+        out.append(Issue(ERROR, f"The slots of {name} are wider than the vent itself.",
+                         "Make the slots narrower or the vent bigger.", hole.id))
+    if hole.gap < 1.2:
+        out.append(Issue(WARNING, f"The strips between the slots of {name} are only {_mm(hole.gap)} "
+                         "and may break.", "A gap of 1.5 to 2 mm is stronger.", hole.id))
+    if hole.slot < 1.2:
+        out.append(Issue(WARNING, f"The slots of {name} are only {_mm(hole.slot)} wide and may "
+                         "close up when printed.", "1.5 mm or wider is more reliable.", hole.id))
     return out
 
 

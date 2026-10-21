@@ -11,10 +11,10 @@ from pathlib import Path
 import numpy as np
 
 from . import geometry
-from .model import SHAPES, Hole, Lid, Project
+from .model import HOLE_KIND_LABELS, SHAPES, Hole, Lid, Project
 
 FORMAT_NAME = "3dn00b-project"
-FORMAT_VERSION = 2   # 2: rectangular holes (kind, width, height)
+FORMAT_VERSION = 3   # 2: rectangular holes (kind, width, height); 3: air vents
 PROJECT_SUFFIX = ".3dn00b"
 
 
@@ -43,7 +43,7 @@ def from_dict(data: dict) -> Project:
         project = _build(Project, rest)
     except (TypeError, ValueError) as exc:
         raise ProjectFileError("The project file is damaged.") from exc
-    if project.shape not in SHAPES:
+    if project.shape not in SHAPES or any(h.kind not in HOLE_KIND_LABELS for h in holes):
         raise ProjectFileError("The project uses a shape this version doesn't know.")
     project.lid, project.holes = lid, holes
     return project

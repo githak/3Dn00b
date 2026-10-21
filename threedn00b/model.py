@@ -41,8 +41,10 @@ SIZE_RANGE = (10.0, 300.0)
 WALL_RANGE = (0.8, 10.0)
 HOLE_DIAMETER_RANGE = (1.0, 100.0)
 
-ROUND, RECT = "round", "rect"
-HOLE_KIND_LABELS = {ROUND: "Round", RECT: "Rectangle"}
+ROUND, RECT, VENT = "round", "rect", "vent"
+HOLE_KIND_LABELS = {ROUND: "Round", RECT: "Rectangle", VENT: "Air vent"}
+# Air vents: slots run along v ("up and down" on a wall) or along u ("sideways").
+ALONG_V, ALONG_U = "along_v", "along_u"
 # Hard minimum of material kept between a hole and the edge of its surface.
 # Closer than this is not allowed at all; the validator also warns when the
 # margin is below the comfortable value returned by comfortable_margin().
@@ -62,21 +64,46 @@ class Hole:
     v: float = 0.0
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
     kind: str = ROUND
-    width: float = 12.0            # rectangles: size along u (left/right, or around)
-    height: float = 6.0            # rectangles: size along v (up/down, or front/back)
+    width: float = 12.0            # rectangles and vents: size along u (left/right, or around)
+    height: float = 6.0            # rectangles and vents: size along v (up/down, or front/back)
+    slot: float = 2.0              # vents: width of each slot
+    gap: float = 2.0               # vents: plastic left between slots
+    slot_direction: str = ALONG_V  # vents: which way the slots run
 
     @property
     def half_extents(self) -> tuple[float, float]:
-        """Half the size along u and v (for a round hole: the radius twice)."""
-        if self.kind == RECT:
-            return self.width / 2, self.height / 2
-        return self.diameter / 2, self.diameter / 2
+        """Half the size along u and v (for a round hole: the radius twice).
+
+        For a vent this is its whole area, so every placement rule treats the
+        vent like one rectangle.
+        """
+        if self.kind == ROUND:
+            return self.diameter / 2, self.diameter / 2
+        return self.width / 2, self.height / 2
 
     @property
     def size_label(self) -> str:
+        if self.kind == VENT:
+            return f"vent {self.width:g} × {self.height:g} mm, {self.slot_count} slots"
         if self.kind == RECT:
             return f"{self.width:g} × {self.height:g} mm"
         return f"{self.diameter:g} mm"
+
+    @property
+    def slot_count(self) -> int:
+        """How many slots of a vent fit across its area (at least one)."""
+        across = self.width if self.slot_direction == ALONG_V else self.height
+        if self.slot <= 0:
+            return 1
+        return max(1, int((across + self.gap + 1e-9) // (self.slot + self.gap)))
+
+    def slot_rects(self) -> list[tuple[float, float, float, float]]:
+        """A vent's slots as (du, dv, width, height): offsets in mm from its centre."""
+        n, pitch = self.slot_count, self.slot + self.gap
+        first = -(n - 1) * pitch / 2
+        if self.slot_direction == ALONG_V:
+            return [(first + i * pitch, 0.0, self.slot, self.height) for i in range(n)]
+        return [(0.0, first + i * pitch, self.width, self.slot) for i in range(n)]
 
 
 @dataclass
@@ -344,7 +371,7 @@ def flat_clearance(project: Project, surface: str, u: float, v: float) -> float:
 def _flat_hole_clearance(project: Project, hole: Hole, u: float, v: float) -> float:
     """Material between an opening at (u, v) and the edge of the bottom or lid."""
     hu, hv = hole.half_extents
-    if hole.kind != RECT:
+    if hole.kind == ROUND:
         return flat_clearance(project, hole.surface, u, v) - hu
     # The usable area is convex, so the corners are the closest points.
     return min(flat_clearance(project, hole.surface, u + su * hu, v + sv * hv)
@@ -381,12 +408,12 @@ def _shape_gap(a: Hole, b: Hole, du: float, dv: float) -> float:
     """
     du, dv = abs(du), abs(dv)
     (au, av), (bu, bv) = a.half_extents, b.half_extents
-    if a.kind != RECT and b.kind != RECT:
+    if a.kind == ROUND and b.kind == ROUND:
         return math.hypot(du, dv) - au - bu
-    if a.kind == RECT and b.kind == RECT:
+    if a.kind != ROUND and b.kind != ROUND:
         gx, gy = du - au - bu, dv - av - bv
         return math.hypot(gx, gy) if gx > 0 and gy > 0 else max(gx, gy)
-    rect, r = (a, bu) if a.kind == RECT else (b, au)
+    rect, r = (a, bu) if a.kind != ROUND else (b, au)
     hu, hv = rect.half_extents
     dx, dy = max(du - hu, 0.0), max(dv - hv, 0.0)
     if dx == 0 and dy == 0:
@@ -404,6 +431,15 @@ def point_near_opening(project: Project, hole: Hole, u: float, v: float, toleran
     """Is the point (u, v) on the opening, or within `tolerance` mm of it?"""
     du, dv = surface_offset_mm(project, hole.surface, hole.u - u, hole.v - v)
     return _shape_gap(hole, Hole(kind=ROUND, diameter=0.0), du, dv) <= tolerance
+
+
+def vent_openings(project: Project, hole: Hole) -> list[Hole]:
+    """A vent's slots as separate rectangular openings on the same surface."""
+    out = []
+    for du, dv, w, h in hole.slot_rects():
+        u = hole.u + (math.degrees(du / (project.outer_diameter / 2)) if hole.surface == SIDE else du)
+        out.append(Hole(surface=hole.surface, kind=RECT, width=w, height=h, u=u, v=hole.v + dv))
+    return out
 
 
 def clamp_hole(project: Project, hole: Hole, margin: float | None = None) -> tuple[float, float] | None:

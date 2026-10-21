@@ -88,6 +88,14 @@ def fitting_rect(project: Project, surface: str) -> tuple[float, float] | None:
     return None
 
 
+def fitting_vent(project: Project, surface: str) -> tuple[float, float] | None:
+    """A friendly starting size for an air vent that fits on a surface."""
+    for w, h in ((30.0, 15.0), (20.0, 10.0), (12.0, 8.0), (8.0, 6.0)):
+        if extent_limits(project, surface, w / 2, h / 2) is not None:
+            return w, h
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Dragging holes: intersect the mouse ray with a hole's own surface.
 # Rays are (origin, direction) in assembled coordinates, direction normalised.

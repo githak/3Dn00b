@@ -12,8 +12,8 @@ from dataclasses import dataclass
 import numpy as np
 from manifold3d import CrossSection, Error, JoinType, Manifold, OpType
 
-from .model import (BACK, BOTTOM, CYLINDER, FRONT, LEFT, LID, RECT, RIGHT, SIDE,
-                    Hole, Project, lip_outer_offset, lip_wall)
+from .model import (BACK, BOTTOM, CYLINDER, FRONT, LEFT, LID, RECT, RIGHT, SIDE, VENT,
+                    Hole, Project, lip_outer_offset, lip_wall, vent_openings)
 
 
 @dataclass
@@ -114,6 +114,10 @@ def build_parts(project: Project) -> Parts:
 
 
 def _hole_cutter(project: Project, hole: Hole) -> Manifold | None:
+    if hole.kind == VENT:
+        slots = [c for c in (_hole_cutter(project, s) for s in vent_openings(project, hole))
+                 if c is not None]
+        return Manifold.batch_boolean(slots, OpType.Add) if slots else None
     hu, hv = hole.half_extents
     if hu <= 0 or hv <= 0:
         return None

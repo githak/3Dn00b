@@ -8,14 +8,17 @@ Software for people getting into 3D printing and want to start with something ea
 sizes in millimetres, add holes and a lid, and export files your slicer can
 print. No sketches, no constraints, no feature trees.
 
-## What it can do (version 0.3)
+## What it can do (version 0.4)
 
 - **Box** (with rounded corners) or **round container**.
 - Sizes as **outside size** or **inside space**, with a single switch.
   The other measurement is always shown.
 - Wall and bottom thickness.
 - **Round and rectangular holes** on any wall, the bottom or the lid. Rectangles
-  are for USB ports, switches and small displays, with common sizes built in. Double-click a wall
+  are for USB ports, switches and small displays, with common sizes built in.
+- **Air vents**: set the vent's size, slot width and gap, and the app fits as
+  many evenly spaced slots as possible. It warns if the strips between slots
+  are thin enough to break. Double-click a wall
   in the 3D view to put a hole there, or use **Add hole**. **Drag a hole** to
   move it: it slides along its own wall, snaps to the centre lines and lines up
   with other holes, and always keeps a safe distance from the edges. Common
@@ -68,7 +71,7 @@ app on Python 3.11, and 3Dn00b now avoids that version.)
 ## How to use it
 
 1. **Shape**: choose Box or Round container and type the sizes.
-2. **Holes**: click **Round hole** or **Rectangular hole** (or double-click a
+2. **Holes**: click **Round hole**, **Rectangle** or **Air vent** (or double-click a
    wall in the 3D view), then pick where it goes, how big it is and where on
    that surface it sits. Positions
    are measured from the middle of the surface, so `0` means centred.
@@ -83,7 +86,7 @@ add a hole. Each drag is one step for Undo.
 ## Examples
 
 The `examples/` folder has a screw box, a pencil cup and a small sensor
-enclosure with a USB-C opening and air holes in the lid.
+enclosure with a USB-C opening and an air vent in the lid.
 
 ## Development
 

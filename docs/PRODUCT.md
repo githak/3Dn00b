@@ -36,6 +36,10 @@ Defaults I chose myself, which are easy to change:
 - Rectangular holes (0.3) with the same placement rules, for USB ports and
   switches, with common sizes and a reminder to measure the real part. Sharp
   corners only; rounded corners were left out to keep the controls minimal.
+- Air vents (0.4): one feature with a size, slot width, gap and direction; the
+  app fits the slots. For placement it behaves like one rectangle, so all the
+  usual rules apply. Up-and-down slots are the default on walls because they
+  print without long bridges.
 - Push-on lid that follows the box size, with fit presets.
 - Plain-language checks covering impossible sizes, thin walls, holes off the
   edge, holes behind the lid lip, overlapping or too-close holes, a lid that
@@ -53,12 +57,11 @@ STL import and editing.
 
 ## Postponed (candidates for later, in rough priority order)
 
-1. Ventilation slot patterns.
-2. Dividers and compartments, and a shallow tray preset.
-3. Screw-mounting bosses, and a screw-fastened lid.
-4. Snap-fit and sliding lids. A threaded lid for round containers may come later.
-5. 3MF export, if users need it. STEP is unlikely, since the geometry engine is mesh-based.
-6. A packaged app (Flatpak or AppImage).
+1. Dividers and compartments, and a shallow tray preset.
+2. Screw-mounting bosses, and a screw-fastened lid.
+3. Snap-fit and sliding lids. A threaded lid for round containers may come later.
+4. 3MF export, if users need it. STEP is unlikely, since the geometry engine is mesh-based.
+5. A packaged app (Flatpak or AppImage).
 
 Each addition must pass the brief's test: does it make a common beginner task
 much easier, without CAD vocabulary, and without making the interface busier?
@@ -71,7 +74,7 @@ much easier, without CAD vocabulary, and without making the interface busier?
 | GUI | PySide6 (Qt 6), LGPL | Native-looking Linux desktop app, installs from pip |
 | 3D preview | pyqtgraph `GLViewWidget` with a custom soft-lit shader | Small, pure Python, works on integrated graphics (OpenGL 2-era shaders) |
 | Geometry | **Manifold** (`manifold3d`), Apache-2.0 | Fast, robust Boolean operations whose results are **always watertight**. That is exactly what an STL needs. It is a small pip wheel with no system dependencies |
-| Project files | Versioned JSON (`"format": "3dn00b-project", "version": 2`) | Human-readable, diffable, forward-compatible |
+| Project files | Versioned JSON (`"format": "3dn00b-project", "version": 3`) | Human-readable, diffable, forward-compatible |
 
 **Why not CadQuery or build123d (OpenCascade)?** They are excellent, but they
 bring a large binary dependency (OCP), a slower and more fragile pipeline for

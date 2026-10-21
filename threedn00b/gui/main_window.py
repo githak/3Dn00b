@@ -16,11 +16,10 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox,
                                QStyle, QTabWidget, QToolBar, QVBoxLayout, QWidget)
 
 from .. import APP_NAME, geometry, picking, project_io, validation
-from ..model import (BOTTOM, BOX, CYLINDER, FIT_LABELS, FIT_PRESETS, FRONT,
-                     HOLE_DIAMETER_RANGE, INSIDE, LID, MIN_EDGE, OUTSIDE, SIDE,
-                     SIZE_RANGE, SURFACE_LABELS, WALL_RANGE, Hole, Project,
-                     HOLE_KIND_LABELS, RECT, ROUND, clamp_hole, default_project,
-                     hole_limits)
+from ..model import (ALONG_U, ALONG_V, BOTTOM, BOX, CYLINDER, FIT_LABELS, FIT_PRESETS,
+                     FRONT, HOLE_DIAMETER_RANGE, HOLE_KIND_LABELS, INSIDE, LID, MIN_EDGE,
+                     OUTSIDE, RECT, ROUND, SIDE, SIZE_RANGE, SURFACE_LABELS, VENT,
+                     WALL_RANGE, Hole, Project, clamp_hole, default_project, hole_limits)
 from .viewer import Viewer
 
 COMMON_HOLES = [
@@ -286,14 +285,17 @@ class MainWindow(QMainWindow):
                               "Tip: double-click a wall in the 3D view to put a hole right there, "
                               "and drag holes to move them."))
         row = QHBoxLayout()
-        self.add_hole_button = QPushButton("+  Round hole")
-        self.add_rect_button = QPushButton("+  Rectangular hole")
-        for button in (self.add_hole_button, self.add_rect_button):
+        self.add_hole_button = QPushButton("+ Round hole")
+        self.add_rect_button = QPushButton("+ Rectangle")
+        self.add_vent_button = QPushButton("+ Air vent")
+        self.add_vent_button.setToolTip("A row of slots that lets air in and out")
+        for button in (self.add_hole_button, self.add_rect_button, self.add_vent_button):
             button.setMinimumHeight(34)
             row.addWidget(button)
         # Lambdas, because clicked() would otherwise pass its 'checked' flag as `surface`.
         self.add_hole_button.clicked.connect(lambda: self.add_hole())
         self.add_rect_button.clicked.connect(lambda: self.add_hole(kind=RECT))
+        self.add_vent_button.clicked.connect(lambda: self.add_hole(kind=VENT))
         layout.addLayout(row)
         self.hole_list = QListWidget()
         self.hole_list.setMaximumHeight(150)
@@ -323,6 +325,20 @@ class MainWindow(QMainWindow):
         self.hole_height.setToolTip("Up and down (front to back, on the bottom or lid)")
         form.addRow("Width", self.hole_width)
         form.addRow("Height", self.hole_height)
+        self.vent_slot = spin(0.5, 20.0, step=0.5)
+        self.vent_gap = spin(0.5, 20.0, step=0.5)
+        self.vent_slot.valueChanged.connect(lambda v: self._edit_hole("Change slot width", "slot", v))
+        self.vent_gap.valueChanged.connect(lambda v: self._edit_hole("Change gap", "gap", v))
+        self.vent_gap.setToolTip("Plastic left between two slots")
+        self.vent_direction = QComboBox()
+        self.vent_direction.activated.connect(
+            lambda _: self._edit_hole("Change slot direction", "slot_direction",
+                                      self.vent_direction.currentData()))
+        form.addRow("Slot width", self.vent_slot)
+        form.addRow("Gap", self.vent_gap)
+        form.addRow("Slots run", self.vent_direction)
+        self.vent_info = hint("")
+        form.addRow("", self.vent_info)
         self.common_sizes = QComboBox()
         self.common_sizes.activated.connect(self._on_common_size)
         self._common_kind = None
@@ -534,19 +550,36 @@ class MainWindow(QMainWindow):
             return
         set_quietly(self.surface_combo, hole.surface)
         set_quietly(self.kind_combo, hole.kind)
-        is_rect = hole.kind == RECT
+        is_round, is_vent = hole.kind == ROUND, hole.kind == VENT
+        is_rect = not is_round
         set_quietly(self.hole_diameter, hole.diameter)
         set_quietly(self.hole_width, hole.width)
         set_quietly(self.hole_height, hole.height)
-        self.hole_form.setRowVisible(self.hole_diameter, not is_rect)
+        set_quietly(self.vent_slot, hole.slot)
+        set_quietly(self.vent_gap, hole.gap)
+        flat = hole.surface in (BOTTOM, LID)
+        self.vent_direction.blockSignals(True)
+        self.vent_direction.clear()
+        self.vent_direction.addItem("Front to back" if flat else "Up and down", ALONG_V)
+        self.vent_direction.addItem("Left to right" if flat else "Sideways", ALONG_U)
+        self.vent_direction.blockSignals(False)
+        set_quietly(self.vent_direction, hole.slot_direction)
+        if is_vent:
+            tip = "" if flat or hole.slot_direction == ALONG_V else (
+                " Up-and-down slots print more cleanly in walls.")
+            self.vent_info.setText(f"{hole.slot_count} slots fit in this vent.{tip}")
+        self.hole_form.setRowVisible(self.hole_diameter, is_round)
         self.hole_form.setRowVisible(self.hole_width, is_rect)
         self.hole_form.setRowVisible(self.hole_height, is_rect)
-        self.hole_form.setRowVisible(self.measure_hint, is_rect)
+        for widget in (self.vent_slot, self.vent_gap, self.vent_direction, self.vent_info):
+            self.hole_form.setRowVisible(widget, is_vent)
+        self.hole_form.setRowVisible(self.common_sizes, not is_vent)
+        self.hole_form.setRowVisible(self.measure_hint, hole.kind == RECT)
         self.hole_height.setToolTip("Front to back" if hole.surface in (BOTTOM, LID) else "Up and down")
         if self._common_kind != hole.kind:
             self._common_kind = hole.kind
             self.common_sizes.clear()
-            for text, value in (COMMON_RECTS if is_rect else COMMON_HOLES):
+            for text, value in (COMMON_RECTS if hole.kind == RECT else COMMON_HOLES):
                 self.common_sizes.addItem(text, value)
         if hole.surface == SIDE:
             self.u_label.setText("Around")
@@ -661,9 +694,9 @@ class MainWindow(QMainWindow):
         if surface is None:
             current = p.hole(self.selected_id) if self.selected_id else None
             surface = current.surface if current else (FRONT if p.shape == BOX else SIDE)
-        if kind == RECT:
-            size = picking.fitting_rect(p, surface)
-            hole = Hole(surface=surface, kind=RECT, u=u, v=v)
+        if kind in (RECT, VENT):
+            size = (picking.fitting_rect if kind == RECT else picking.fitting_vent)(p, surface)
+            hole = Hole(surface=surface, kind=kind, u=u, v=v)
             if size:
                 hole.width, hole.height = size
         else:
@@ -742,6 +775,10 @@ class MainWindow(QMainWindow):
             if h.kind == kind:
                 return
             h.kind = kind
+            if kind == VENT:
+                size = picking.fitting_vent(p, h.surface)
+                if size:
+                    h.width, h.height = size
             # Keep it on the surface after the size changes.
             pos = clamp_hole(p, h) or clamp_hole(p, h, MIN_EDGE)
             if pos:
