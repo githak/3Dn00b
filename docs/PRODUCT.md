@@ -40,6 +40,11 @@ Defaults I chose myself, which are easy to change:
   app fits the slots. For placement it behaves like one rectangle, so all the
   usual rules apply. Up-and-down slots are the default on walls because they
   print without long bridges.
+- Compartments (0.5): evenly spaced dividers in boxes (left to right and front
+  to back), full height or lower. With a lid they are notched at the ends for
+  the lip and stop just below the lid, automatically. Holes where a divider
+  meets a wall or the floor are flagged. A "Shallow tray with compartments"
+  template is in the New menu. Round containers have no dividers yet.
 - Push-on lid that follows the box size, with fit presets.
 - Plain-language checks covering impossible sizes, thin walls, holes off the
   edge, holes behind the lid lip, overlapping or too-close holes, a lid that
@@ -57,8 +62,20 @@ STL import and editing.
 
 ## Postponed (candidates for later, in rough priority order)
 
-1. Dividers and compartments, and a shallow tray preset.
-2. Screw-mounting bosses, and a screw-fastened lid.
+1. **Screw posts for mounting circuit boards** (requested by the project owner):
+   - Cylinders standing on the bottom (or another surface), with a hole in
+     the centre sized for common screws: M1, M2, M2.5, M3 and M4.
+   - The user picks the screw size and the **length**, so a board such as a
+     Raspberry Pi sits raised, clear of the bottom and the walls.
+   - **Board presets** add a whole set of posts at once, in the right
+     pattern for the Raspberry Pi Zero, Zero 2 W, 3, 4 and 5, plus other
+     common single-board computers (SBCs).
+   - A set moves as one group: dragging it keeps every post in the same
+     position relative to the others.
+   - Open questions for later: whether the screw hole should be sized for
+     the screw to cut its own thread or for a melted-in threaded insert, and
+     whether to check that the board's outline fits inside the box.
+2. A screw-fastened lid (can reuse the screw posts above).
 3. Snap-fit and sliding lids. A threaded lid for round containers may come later.
 4. 3MF export, if users need it. STEP is unlikely, since the geometry engine is mesh-based.
 5. A packaged app (Flatpak or AppImage).
@@ -74,7 +91,7 @@ much easier, without CAD vocabulary, and without making the interface busier?
 | GUI | PySide6 (Qt 6), LGPL | Native-looking Linux desktop app, installs from pip |
 | 3D preview | pyqtgraph `GLViewWidget` with a custom soft-lit shader | Small, pure Python, works on integrated graphics (OpenGL 2-era shaders) |
 | Geometry | **Manifold** (`manifold3d`), Apache-2.0 | Fast, robust Boolean operations whose results are **always watertight**. That is exactly what an STL needs. It is a small pip wheel with no system dependencies |
-| Project files | Versioned JSON (`"format": "3dn00b-project", "version": 3`) | Human-readable, diffable, forward-compatible |
+| Project files | Versioned JSON (`"format": "3dn00b-project", "version": 4`) | Human-readable, diffable, forward-compatible |
 
 **Why not CadQuery or build123d (OpenCascade)?** They are excellent, but they
 bring a large binary dependency (OCP), a slower and more fragile pipeline for

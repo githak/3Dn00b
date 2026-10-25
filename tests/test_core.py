@@ -522,3 +522,98 @@ def test_vent_round_trip_and_unknown_kinds(tmp_path):
     data["project"]["holes"][0]["kind"] = "hexagon"
     with pytest.raises(project_io.ProjectFileError):
         project_io.from_dict(data)
+
+
+# ---- dividers --------------------------------------------------------------
+
+from threedn00b.model import (Dividers, TRAY_TEMPLATE, compartment_size,  # noqa: E402
+                              divider_positions, divider_top)
+
+
+def test_compartments_are_evenly_sized():
+    p = Project(width=100, depth=60, wall=2, corner_radius=0, dividers=Dividers(across=3, deep=2,
+                                                                                 thickness=2))
+    w, d = compartment_size(p)
+    assert w == pytest.approx((96 - 2 * 2) / 3) and d == pytest.approx((56 - 2) / 2)
+    xs, ys = divider_positions(p)
+    edges = [-48] + [x for x in xs for x in (x - 1, x + 1)] + [48]
+    widths = [b - a for a, b in zip(edges[::2], edges[1::2])]
+    assert widths == pytest.approx([w] * 3) and ys == pytest.approx([0])
+
+
+def test_dividers_add_the_expected_material():
+    p = Project(width=100, depth=60, height=30, wall=2, bottom=2, corner_radius=0)
+    plain = geometry.build_body(p).volume()
+    p.dividers = Dividers(across=2, deep=1, thickness=2)
+    body = geometry.build_body(p)
+    assert body.volume() - plain == pytest.approx(2 * 56 * 28, rel=1e-6)
+    assert geometry.piece_count(body) == 1 and _edges_shared_twice(body)
+
+
+@pytest.mark.parametrize("fit", ["tight", "normal", "loose"])
+@pytest.mark.parametrize("corner", [0.0, 4.0, 15.0])
+def test_dividers_leave_room_for_the_lid(fit, corner):
+    p = box_with_lid(corner_radius=corner, dividers=Dividers(across=3, deep=3))
+    p.lid.fit = fit
+    parts = geometry.build_parts(p)
+    assert geometry.overlap_volume(parts.body, parts.lid) < 1e-6
+    assert geometry.piece_count(parts.body) == 1 and _edges_shared_twice(parts.body)
+    assert not validation.has_errors(validation.check(p, parts))
+
+
+def test_lower_dividers():
+    p = default_project(BOX)
+    p.dividers = Dividers(across=2, height=10)
+    assert divider_top(p) == pytest.approx(p.bottom + 10)
+    xs, _ = divider_positions(p)
+    body = geometry.build_body(p)
+    hits = body.ray_cast([xs[0], 0, 100], [xs[0], 0, 0])
+    assert hits[0].position[2] == pytest.approx(p.bottom + 10)
+
+
+def test_hole_where_divider_meets_wall_or_floor_is_reported():
+    p = default_project(BOX)
+    p.dividers = Dividers(across=2, deep=2)
+    p.holes = [Hole(FRONT, 6, 0, 0), Hole(BOTTOM, 5, 10, 0), Hole(LEFT, 5, 10, 0)]
+    blocked = {i.hole_id for i in validation.check(p) if "divider meets" in i.message}
+    assert blocked == {p.holes[0].id, p.holes[1].id}
+    p.dividers.height = 5                       # low dividers stay below the front hole
+    blocked = {i.hole_id for i in validation.check(p) if "divider meets" in i.message}
+    assert blocked == {p.holes[1].id}
+
+
+def test_too_many_compartments_is_an_error():
+    p = default_project(BOX)
+    p.dividers = Dividers(across=12, thickness=5)
+    issues = validation.check(p)
+    assert validation.has_errors(issues) and validation.has_errors(validation.check_size(p))
+    p.dividers = Dividers(across=6)
+    assert any("hard to reach" in i.message for i in validation.check(p))
+
+
+def test_round_containers_ignore_dividers():
+    p = default_project(BOX)
+    p.dividers = Dividers(across=3)
+    p.set_shape(CYLINDER)
+    assert geometry.build_dividers(p) is None
+    assert any("only for boxes" in i.message for i in validation.check(p))
+
+
+def test_tray_template_is_ready_to_print():
+    p = default_project(TRAY_TEMPLATE)
+    assert p.dividers.across * p.dividers.deep == 6
+    issues = validation.check(p)
+    assert not validation.has_errors(issues) and "warning" not in levels(issues)
+
+
+def test_dividers_round_trip_and_type_checks(tmp_path):
+    p = box_with_lid(dividers=Dividers(across=4, deep=2, thickness=1.2, height=12))
+    path = tmp_path / "organiser.3dn00b"
+    project_io.save_project(p, path)
+    assert project_io.load_project(path) == p
+    data = project_io.to_dict(p)
+    data["project"]["dividers"]["across"] = 2.5
+    with pytest.raises(project_io.ProjectFileError):
+        project_io.from_dict(data)
+    del data["project"]["dividers"]           # files from before dividers existed
+    assert project_io.from_dict(data).dividers == Dividers()

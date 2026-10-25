@@ -309,3 +309,33 @@ def test_drag_air_vent(window):
     start = _hole_pixel(window, vent) + QPoint(3, 0)    # grab between two slots
     _drag(window.viewer, start, start + QPoint(40, 0))
     assert window.project.holes[0].u > vent.u + 3
+
+
+def test_compartment_controls(window):
+    window.div_across.setValue(3)
+    window.div_deep.setValue(2)
+    window.rebuild()
+    assert (window.project.dividers.across, window.project.dividers.deep) == (3, 2)
+    assert "6 compartments" in window.divider_info.text()
+    window.div_full.setChecked(False)
+    assert window.project.dividers.height > 0 and window.div_height.isVisible()
+    window.div_height.setValue(12)
+    assert window.project.dividers.height == 12
+    window.undo_stack.undo()
+    window.undo_stack.undo()
+    assert window.project.dividers.height == 0
+    window.shape_buttons[CYLINDER].click()
+    assert not window.divider_box.isVisible()
+    assert not validation_errors(window)
+
+
+def test_new_tray_from_menu(window):
+    new_button = [a for a in window.findChildren(type(window.export_action)) if a.text() == "New"][0]
+    tray = [a for a in new_button.menu().actions() if "tray" in a.text()][0]
+    tray.trigger()
+    window.rebuild()
+    assert window.project.name == "My tray"
+    assert window.project.dividers.across == 3
+    assert not validation_errors(window)
+    new_button.trigger()                      # plain New = a box
+    assert window.project.name == "My box"

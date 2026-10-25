@@ -11,10 +11,10 @@ from pathlib import Path
 import numpy as np
 
 from . import geometry
-from .model import HOLE_KIND_LABELS, SHAPES, Hole, Lid, Project
+from .model import HOLE_KIND_LABELS, SHAPES, Dividers, Hole, Lid, Project
 
 FORMAT_NAME = "3dn00b-project"
-FORMAT_VERSION = 3   # 2: rectangular holes (kind, width, height); 3: air vents
+FORMAT_VERSION = 4   # 2: rectangular holes; 3: air vents; 4: dividers
 PROJECT_SUFFIX = ".3dn00b"
 
 
@@ -38,14 +38,15 @@ def from_dict(data: dict) -> Project:
         raise ProjectFileError("The project file is damaged.")
     try:
         lid = _build(Lid, raw.get("lid") or {})
+        dividers = _build(Dividers, raw.get("dividers") or {})
         holes = [_build(Hole, h) for h in raw.get("holes") or []]
-        rest = {k: v for k, v in raw.items() if k not in ("lid", "holes")}
+        rest = {k: v for k, v in raw.items() if k not in ("lid", "holes", "dividers")}
         project = _build(Project, rest)
     except (TypeError, ValueError) as exc:
         raise ProjectFileError("The project file is damaged.") from exc
     if project.shape not in SHAPES or any(h.kind not in HOLE_KIND_LABELS for h in holes):
         raise ProjectFileError("The project uses a shape this version doesn't know.")
-    project.lid, project.holes = lid, holes
+    project.lid, project.holes, project.dividers = lid, holes, dividers
     return project
 
 
@@ -53,12 +54,15 @@ def _build(cls, raw: dict):
     """Create a dataclass from a dict, ignoring unknown keys and checking types."""
     kwargs = {}
     for f in fields(cls):
-        if f.name not in raw or f.name in ("lid", "holes"):
+        if f.name not in raw or f.name in ("lid", "holes", "dividers"):
             continue
         value = raw[f.name]
         default = getattr(cls(), f.name)
         if isinstance(default, bool):
             if not isinstance(value, bool):
+                raise ValueError(f.name)
+        elif isinstance(default, int):
+            if isinstance(value, bool) or not isinstance(value, int):
                 raise ValueError(f.name)
         elif isinstance(default, float):
             if isinstance(value, bool) or not isinstance(value, (int, float)):

@@ -10,9 +10,10 @@ import itertools
 from dataclasses import dataclass
 
 from . import geometry
-from .model import (ALONG_V, BOTTOM, LID, MIN_EDGE, SURFACE_LABELS, VENT, Hole, Project,
-                    clamp_hole, comfortable_margin, hole_edge_clearance, hole_limits,
-                    lip_outer_offset, lip_wall, opening_gap)
+from .model import (ALONG_V, BACK, BOTTOM, BOX, FRONT, LEFT, LID, MIN_EDGE, RIGHT,
+                    SURFACE_LABELS, VENT, Hole, Project, clamp_hole, comfortable_margin,
+                    compartment_size, divider_positions, divider_top, has_dividers,
+                    hole_edge_clearance, hole_limits, lip_outer_offset, lip_wall, opening_gap)
 
 ERROR, WARNING, INFO = "error", "warning", "info"
 _ORDER = {ERROR: 0, WARNING: 1, INFO: 2}
@@ -38,17 +39,33 @@ def hole_name(project: Project, hole: Hole) -> str:
     return f"Hole {index}"
 
 
+def _check_divider_size(p: Project) -> list[Issue]:
+    if not has_dividers(p):
+        return []
+    w, d = compartment_size(p)
+    if min(w, d) < 3:
+        return [Issue(ERROR, "There are too many compartments for this size; they'd be too narrow.",
+                      "Use fewer compartments, thinner dividers or a bigger box.")]
+    return []
+
+
 def check_size(project: Project) -> list[Issue]:
     """Only the basic size rules; cheap, and needed before geometry can be built."""
-    return sorted(_check_size(project), key=lambda i: _ORDER[i.level])
+    issues = _check_size(project)
+    if not has_errors(issues):
+        issues += _check_divider_size(project)
+    return sorted(issues, key=lambda i: _ORDER[i.level])
 
 
 def check(project: Project, parts: geometry.Parts | None = None) -> list[Issue]:
     issues: list[Issue] = []
     issues += _check_size(project)
     if not has_errors(issues):
+        issues += _check_divider_size(project)
+    if not has_errors(issues):
         issues += _check_lid(project)
         issues += _check_holes(project)
+        issues += _check_dividers(project)
         if parts is None:
             parts = geometry.build_parts(project)
         issues += _check_geometry(project, parts)
@@ -168,6 +185,47 @@ def _check_holes(p: Project) -> list[Issue]:
     if p.holes:
         out.append(Issue(INFO, "Printed holes often come out 0.2 to 0.4 mm smaller than designed.",
                          "For screws or cables, make the hole a little bigger than needed."))
+    return out
+
+
+def _check_dividers(p: Project) -> list[Issue]:
+    out = []
+    if p.shape != BOX:
+        if p.dividers.enabled:
+            out.append(Issue(INFO, "Dividers are only for boxes, so this round container has none.",
+                             "They come back if you switch to a box."))
+        return out
+    if not p.dividers.enabled:
+        return out
+    d = p.dividers
+    w, dp = compartment_size(p)
+    if min(w, dp) < 12:
+        out.append(Issue(WARNING, f"Each compartment is only {_mm(w)} × {_mm(dp)}, which is hard "
+                         "to reach into.", "Use fewer compartments or a bigger box."))
+    if d.thickness < 1.0:
+        out.append(Issue(WARNING, f"Dividers of {_mm(d.thickness)} are thin and may break.",
+                         "1.2 to 2 mm works well."))
+    if p.lid.enabled and d.height == 0:
+        out.append(Issue(INFO, "The dividers have small notches at their ends so the lid's lip fits.",
+                         "They also stop just below the lid."))
+    xs, ys = divider_positions(p)
+    top = divider_top(p)
+    half = d.thickness / 2
+    for hole in p.holes:
+        hu, hv = hole.half_extents
+        if hole.surface == BOTTOM:
+            hit = (any(abs(hole.u - x) < hu + half for x in xs)
+                   or any(abs(hole.v - y) < hv + half for y in ys))
+        elif hole.surface in (FRONT, BACK, LEFT, RIGHT):
+            along = {FRONT: xs, BACK: [-x for x in xs], LEFT: [-y for y in ys], RIGHT: ys}[hole.surface]
+            low = p.outer_height / 2 + hole.v - hv
+            hit = low < top and any(abs(hole.u - pos) < hu + half for pos in along)
+        else:
+            continue
+        if hit:
+            out.append(Issue(WARNING, f"{hole_name(p, hole)} is where a divider meets the "
+                             f"{SURFACE_LABELS[hole.surface].lower()}, so the divider blocks part of it.",
+                             "Move the hole into one of the compartments.", hole.id))
     return out
 
 

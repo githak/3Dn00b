@@ -12,14 +12,16 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox,
                                QDoubleSpinBox, QFileDialog, QFormLayout, QFrame,
                                QHBoxLayout, QLabel, QLineEdit, QListWidget,
                                QListWidgetItem, QMainWindow, QMessageBox,
-                               QPushButton, QRadioButton, QSizePolicy, QSplitter,
-                               QStyle, QTabWidget, QToolBar, QVBoxLayout, QWidget)
+                               QMenu, QPushButton, QRadioButton, QSizePolicy, QSpinBox,
+                               QSplitter, QStyle, QTabWidget, QToolBar, QToolButton,
+                               QVBoxLayout, QWidget)
 
 from .. import APP_NAME, geometry, picking, project_io, validation
 from ..model import (ALONG_U, ALONG_V, BOTTOM, BOX, CYLINDER, FIT_LABELS, FIT_PRESETS,
                      FRONT, HOLE_DIAMETER_RANGE, HOLE_KIND_LABELS, INSIDE, LID, MIN_EDGE,
                      OUTSIDE, RECT, ROUND, SIDE, SIZE_RANGE, SURFACE_LABELS, VENT,
-                     WALL_RANGE, Hole, Project, clamp_hole, default_project, hole_limits)
+                     DIVIDER_RANGE, MAX_COMPARTMENTS, TRAY_TEMPLATE, WALL_RANGE, Hole, Project,
+                     clamp_hole, compartment_size, default_project, hole_limits)
 from .viewer import Viewer
 
 COMMON_HOLES = [
@@ -80,6 +82,13 @@ def spin(lo, hi, value=0.0, suffix=" mm", step=1.0, decimals=1):
     return box
 
 
+def int_spin(lo: int, hi: int) -> QSpinBox:
+    box = QSpinBox()
+    box.setRange(lo, hi)
+    box.setAlignment(Qt.AlignmentFlag.AlignRight)
+    return box
+
+
 def hint(text: str) -> QLabel:
     label = QLabel(text)
     label.setWordWrap(True)
@@ -89,7 +98,7 @@ def hint(text: str) -> QLabel:
 
 def set_quietly(widget, value):
     widget.blockSignals(True)
-    if isinstance(widget, QDoubleSpinBox):
+    if isinstance(widget, (QDoubleSpinBox, QSpinBox)):
         widget.setValue(value)
     elif isinstance(widget, (QCheckBox, QRadioButton, QPushButton)):
         widget.setChecked(value)
@@ -167,7 +176,15 @@ class MainWindow(QMainWindow):
             bar.addAction(act)
             return act
 
-        action("New", QStyle.StandardPixmap.SP_FileIcon, self.new_project, QKeySequence.StandardKey.New)
+        # A lambda, because triggered() would otherwise pass its 'checked' flag as `template`.
+        new = action("New", QStyle.StandardPixmap.SP_FileIcon, lambda: self.new_project(),
+                     QKeySequence.StandardKey.New, "Start a new design")
+        menu = QMenu(self)
+        for label, template in (("Box", BOX), ("Round container", CYLINDER),
+                                ("Shallow tray with compartments", TRAY_TEMPLATE)):
+            menu.addAction(label, lambda t=template: self.new_project(t))
+        new.setMenu(menu)
+        bar.widgetForAction(new).setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
         action("Open", QStyle.StandardPixmap.SP_DialogOpenButton, self.open_project, QKeySequence.StandardKey.Open)
         action("Save", QStyle.StandardPixmap.SP_DialogSaveButton, self.save_project, QKeySequence.StandardKey.Save,
                "Save an editable project file")
@@ -275,6 +292,40 @@ class MainWindow(QMainWindow):
         self.size_summary.setFrameShape(QFrame.Shape.StyledPanel)
         self.size_summary.setStyleSheet("padding: 6px; background: #f4f6f9;")
         layout.addWidget(self.size_summary)
+
+        layout.addWidget(QLabel("<b>Compartments</b>"))
+        self.divider_box = QWidget()
+        form = self.divider_form = QFormLayout(self.divider_box)
+        form.setContentsMargins(0, 0, 0, 0)
+        self.div_across = int_spin(1, MAX_COMPARTMENTS)
+        self.div_deep = int_spin(1, MAX_COMPARTMENTS)
+        self.div_across.setToolTip("How many compartments from left to right. 1 = no dividers.")
+        self.div_deep.setToolTip("How many compartments from front to back. 1 = no dividers.")
+        self.div_thickness = spin(*DIVIDER_RANGE, step=0.2, decimals=2)
+        self.div_full = QCheckBox("Full height")
+        self.div_height = spin(1.0, 300.0, step=1.0)
+        self.div_height.setToolTip("Lower dividers make it easier to reach into the compartments")
+        form.addRow("Left to right", self.div_across)
+        form.addRow("Front to back", self.div_deep)
+        form.addRow("Divider thickness", self.div_thickness)
+        form.addRow("Divider height", self.div_full)
+        form.addRow("", self.div_height)
+        self.div_across.valueChanged.connect(
+            lambda v: self.edit("Change compartments", lambda p: setattr(p.dividers, "across", v),
+                                merge="div_across"))
+        self.div_deep.valueChanged.connect(
+            lambda v: self.edit("Change compartments", lambda p: setattr(p.dividers, "deep", v),
+                                merge="div_deep"))
+        self.div_thickness.valueChanged.connect(
+            lambda v: self.edit("Change divider thickness",
+                                lambda p: setattr(p.dividers, "thickness", v), merge="div_t"))
+        self.div_full.toggled.connect(self._on_divider_full)
+        self.div_height.valueChanged.connect(
+            lambda v: self.edit("Change divider height", lambda p: setattr(p.dividers, "height", v),
+                                merge="div_h"))
+        layout.addWidget(self.divider_box)
+        self.divider_info = hint("")
+        layout.addWidget(self.divider_info)
         layout.addStretch()
         return page
 
@@ -494,6 +545,7 @@ class MainWindow(QMainWindow):
         self.diameter_spin.setVisible(not is_box)
         self.diameter_label.setVisible(not is_box)
         self._refresh_size_summary()
+        self._refresh_dividers()
 
         set_quietly(self.lid_check, p.lid.enabled)
         self.lid_box.setEnabled(p.lid.enabled)
@@ -503,6 +555,31 @@ class MainWindow(QMainWindow):
         set_quietly(self.lid_thickness, p.lid.thickness)
         set_quietly(self.lip_height, p.lid.lip_height)
         self.refresh_holes()
+
+    def _refresh_dividers(self):
+        p, d = self.project, self.project.dividers
+        is_box = p.shape == BOX
+        self.divider_box.setVisible(is_box)
+        for widget, value in ((self.div_across, d.across), (self.div_deep, d.deep),
+                              (self.div_thickness, d.thickness)):
+            set_quietly(widget, value)
+        set_quietly(self.div_full, d.height == 0)
+        set_quietly(self.div_height, d.height if d.height > 0 else p.inner_height)
+        self.divider_form.setRowVisible(self.div_height, d.height > 0)
+        for widget in (self.div_thickness, self.div_full):
+            widget.setEnabled(d.enabled)
+        if not is_box:
+            self.divider_info.setText("Dividers are available for boxes.")
+        elif not d.enabled:
+            self.divider_info.setText("Set more than 1 to split the box into compartments.")
+        else:
+            w, dp = compartment_size(p)
+            count = d.across * d.deep
+            self.divider_info.setText(f"{count} compartments, each {w:.1f} × {dp:.1f} mm inside.")
+
+    def _on_divider_full(self, full: bool):
+        height = 0.0 if full else round(self.project.inner_height / 2, 1)
+        self.edit("Change divider height", lambda p: setattr(p.dividers, "height", height))
 
     def _refresh_size_summary(self):
         p = self.project
@@ -893,10 +970,10 @@ class MainWindow(QMainWindow):
             return self.save_project()
         return answer == QMessageBox.StandardButton.Discard
 
-    def new_project(self):
+    def new_project(self, template: str = BOX):
         if not self._confirm_discard():
             return
-        self._load(default_project(), None)
+        self._load(default_project(template), None)
 
     def _load(self, project: Project, path: Path | None):
         self.project = project

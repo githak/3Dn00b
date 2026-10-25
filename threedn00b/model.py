@@ -122,6 +122,19 @@ class Lid:
 
 
 @dataclass
+class Dividers:
+    """Evenly spaced walls inside a box that split it into compartments."""
+    across: int = 1                # compartments from left to right
+    deep: int = 1                  # compartments from front to back
+    thickness: float = 1.6
+    height: float = 0.0            # 0 = full height; otherwise height above the bottom
+
+    @property
+    def enabled(self) -> bool:
+        return self.across > 1 or self.deep > 1
+
+
+@dataclass
 class Project:
     shape: str = BOX
     size_mode: str = OUTSIDE       # do the numbers below describe outside or inside?
@@ -135,6 +148,7 @@ class Project:
     lid: Lid = field(default_factory=Lid)
     holes: list[Hole] = field(default_factory=list)
     name: str = "My box"
+    dividers: Dividers = field(default_factory=Dividers)   # boxes only
 
     # ---- derived measurements -------------------------------------------
     def _to_outer(self, value: float, walls: float) -> float:
@@ -470,9 +484,52 @@ def clamp_hole(project: Project, hole: Hole, margin: float | None = None) -> tup
     return round(u, 2), round(v, 2)
 
 
+DIVIDER_RANGE = (0.8, 10.0)
+MAX_COMPARTMENTS = 12
+
+
+def has_dividers(project: Project) -> bool:
+    return project.shape == BOX and project.dividers.enabled
+
+
+def compartment_size(project: Project) -> tuple[float, float]:
+    """Inside width and depth of each compartment."""
+    d = project.dividers
+    w = (project.inner_width - (d.across - 1) * d.thickness) / d.across
+    dp = (project.inner_depth - (d.deep - 1) * d.thickness) / d.deep
+    return w, dp
+
+
+def divider_positions(project: Project) -> tuple[list[float], list[float]]:
+    """Centre lines of the dividers: x positions (left-right split), y positions (front-back split)."""
+    d = project.dividers
+    cw, cd = compartment_size(project)
+    xs = [-project.inner_width / 2 + i * cw + (i - 0.5) * d.thickness for i in range(1, d.across)]
+    ys = [-project.inner_depth / 2 + i * cd + (i - 0.5) * d.thickness for i in range(1, d.deep)]
+    return xs, ys
+
+
+def divider_top(project: Project) -> float:
+    """Height (z) of the top of the dividers."""
+    top = project.outer_height
+    if project.lid.enabled:
+        top -= project.lid.gap * 2            # stop just below the lid
+    if project.dividers.height > 0:
+        top = min(top, project.bottom + project.dividers.height)
+    return top
+
+
+TRAY_TEMPLATE = "tray"
+
+
 def default_project(shape: str = BOX) -> Project:
     p = Project(shape=shape)
-    if shape == CYLINDER:
+    if shape == TRAY_TEMPLATE:
+        p.shape, p.name = BOX, "My tray"
+        p.width, p.depth, p.height = 150.0, 100.0, 25.0
+        p.wall = p.bottom = 1.6
+        p.dividers = Dividers(across=3, deep=2)
+    elif shape == CYLINDER:
         p.name = "My container"
         p.height = 80.0
     return p

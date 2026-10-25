@@ -13,7 +13,8 @@ import numpy as np
 from manifold3d import CrossSection, Error, JoinType, Manifold, OpType
 
 from .model import (BACK, BOTTOM, CYLINDER, FRONT, LEFT, LID, RECT, RIGHT, SIDE, VENT,
-                    Hole, Project, lip_outer_offset, lip_wall, vent_openings)
+                    Hole, Project, divider_positions, divider_top, has_dividers,
+                    lip_outer_offset, lip_wall, vent_openings)
 
 
 @dataclass
@@ -80,11 +81,47 @@ def build_body(project: Project) -> Manifold:
     cavity = _prism(footprint(project, project.wall), h - project.bottom + 1.0, project.bottom)
     if cavity is not None:
         body = body - cavity
+    dividers = build_dividers(project)
+    if dividers is not None:
+        body = body + dividers
     cutters = [_hole_cutter(project, hole) for hole in project.holes if hole.surface != LID]
     cutters = [c for c in cutters if c is not None]
     if cutters:
         body = body - Manifold.batch_boolean(cutters, OpType.Add)
     return body
+
+
+def build_dividers(project: Project) -> Manifold | None:
+    """The divider walls, reaching into the outer walls so they fuse with them."""
+    if not has_dividers(project):
+        return None
+    d = project.dividers
+    top = divider_top(project)
+    z0 = project.bottom - 0.01                     # overlap the floor slightly
+    height = top - z0
+    if height <= 0 or d.thickness <= 0:
+        return None
+    w, dp = project.outer_width, project.outer_depth
+    xs, ys = divider_positions(project)
+    slabs = [Manifold.cube([d.thickness, dp, height]).translate([x - d.thickness / 2, -dp / 2, z0])
+             for x in xs]
+    slabs += [Manifold.cube([w, d.thickness, height]).translate([-w / 2, y - d.thickness / 2, z0])
+              for y in ys]
+    walls = Manifold.batch_boolean(slabs, OpType.Add)
+    # Never poke out through rounded corners.
+    walls = walls ^ _prism(footprint(project), project.outer_height, 0.0)
+    if project.lid.enabled:
+        # Notch the ends where the lid's lip goes, with the fit gap all round.
+        gap = project.lid.gap
+        inner = footprint(project, project.wall)
+        clear = footprint(project, project.wall + lip_outer_offset(project) + lip_wall(project) + gap)
+        z_notch = project.outer_height - project.lid.lip_height - gap
+        ring = _prism(inner, project.outer_height - z_notch + 1.0, z_notch)
+        if ring is not None and clear is not None:
+            ring = ring - _prism(clear, project.outer_height - z_notch + 2.0, z_notch - 0.5)
+        if ring is not None:
+            walls = walls - ring
+    return walls
 
 
 def build_lid(project: Project) -> Manifold | None:
