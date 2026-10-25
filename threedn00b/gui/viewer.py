@@ -12,7 +12,7 @@ from PySide6.QtCore import QCoreApplication, QPoint, Qt, Signal
 from PySide6.QtGui import QSurfaceFormat, QVector4D
 from PySide6.QtWidgets import QLabel
 
-from .. import geometry
+from .. import geometry, mounts
 from ..model import (BOTTOM, LID, RECT, SIDE, VENT, Hole, Project, hole_center_3d,
                      surface_frame, vent_openings)
 
@@ -54,6 +54,7 @@ LID_COLOR = (0.98, 0.73, 0.35, 1.0)
 HOLE_COLOR = (0.15, 0.15, 0.15, 0.9)
 SELECTED_COLOR = (1.0, 0.25, 0.55, 1.0)
 PROBLEM_COLOR = (0.9, 0.1, 0.1, 1.0)
+BOARD_COLOR = (0.1, 0.6, 0.25, 1.0)
 BACKGROUND = (236, 239, 243)
 LID_LIFT = 15.0   # extra space between body and lid in the preview
 
@@ -91,6 +92,7 @@ class Viewer(gl.GLViewWidget):
         self._lid_offset = 0.0
         self._mesh_items: list = []
         self._marker_items: list = []
+        self._mount_items: list = []
         self._grid = gl.GLGridItem()
         self._grid.setColor((150, 160, 175, 120))
         self.addItem(self._grid)
@@ -162,6 +164,33 @@ class Viewer(gl.GLViewWidget):
                                          glOptions="translucent")
                 self.addItem(item)
                 self._marker_items.append(item)
+
+    def set_mount_markers(self, project: Project, selected_id: str | None, problem_ids: set):
+        """Board outlines (where the board will sit, not printed) and post rings."""
+        for item in self._mount_items:
+            self.removeItem(item)
+        self._mount_items.clear()
+        for m in project.mounts:
+            if m.id == selected_id:
+                color, width = SELECTED_COLOR, 3.5
+            elif m.id in problem_ids:
+                color, width = PROBLEM_COLOR, 3
+            else:
+                color, width = BOARD_COLOR, 2
+            z = mounts.board_bottom(project, m) + 0.05
+            lines = []
+            corners = mounts.board_corners(m)
+            if corners:
+                lines.append(np.array([(x, y, z) for x, y in corners + corners[:1]]))
+            t = np.linspace(0, 2 * np.pi, 33)
+            r = mounts.post_radius(m) + 0.5
+            for x, y in mounts.post_positions(m):
+                lines.append(np.column_stack([x + r * np.cos(t), y + r * np.sin(t), np.full_like(t, z)]))
+            for line in lines:
+                item = gl.GLLinePlotItem(pos=line, color=color, width=width, antialias=True,
+                                         glOptions="translucent")
+                self.addItem(item)
+                self._mount_items.append(item)
 
     def reset_view(self, project: Project):
         size = max(project.outer_width, project.outer_depth, project.closed_height)

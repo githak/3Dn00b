@@ -8,7 +8,7 @@ Software for people getting into 3D printing and want to start with something ea
 sizes in millimetres, add holes and a lid, and export files your slicer can
 print. No sketches, no constraints, no feature trees.
 
-## What it can do (version 0.5)
+## What it can do (version 0.6)
 
 - **Box** (with rounded corners) or **round container**.
 - Sizes as **outside size** or **inside space**, with a single switch.
@@ -27,6 +27,12 @@ print. No sketches, no constraints, no feature trees.
   move it: it slides along its own wall, snaps to the centre lines and lines up
   with other holes, and always keeps a safe distance from the edges. Common
   sizes are built in (M3/M4 screws, cables).
+- **Screw posts for circuit boards**: pick a board (Raspberry Pi Zero / Zero 2 W,
+  3 / 4 / 5, 3 A+, Pico, Arduino Uno, or your own 4-hole board) and all its posts
+  appear in the right pattern. Choose the screw size (M1 to M4) and how tall the
+  posts are; the screw cuts its own thread into the post. Drag the board's green
+  outline to move all its posts together, or turn it in 90° steps. The app checks
+  that the board fits, doesn't touch the walls or the lid, and doesn't stick out.
 - A **push-on lid** with a lip and a Tight / Normal / Loose fit (or a custom
   gap). It resizes itself with the box.
 - **Checks in plain language**, for example a hole running off the edge of a
@@ -80,8 +86,9 @@ app on Python 3.11, and 3Dn00b now avoids that version.)
    wall in the 3D view), then pick where it goes, how big it is and where on
    that surface it sits. Positions
    are measured from the middle of the surface, so `0` means centred.
-3. **Lid**: tick **Add a lid** and choose a fit.
-4. **Check & Export**: read the checks, fix anything marked ✖ and click
+3. **Posts** (optional): add screw posts for a circuit board.
+4. **Lid**: tick **Add a lid** and choose a fit.
+5. **Check & Export**: read the checks, fix anything marked ✖ and click
    **Export for printing**.
 
 In the 3D view: drag a hole to move it, drag anywhere else to turn the view,
@@ -90,7 +97,7 @@ add a hole. Each drag is one step for Undo.
 
 ## Examples
 
-The `examples/` folder has a screw box, a screw tray with six compartments,
+The `examples/` folder has a Raspberry Pi box, a screw box, a screw tray with six compartments,
 a pencil cup and a small sensor enclosure with a USB-C opening and an air vent
 in the lid.
 

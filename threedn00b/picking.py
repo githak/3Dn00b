@@ -211,3 +211,44 @@ def snap_drag(project: Project, hole: Hole, u: float, v: float):
     if hole.surface == SIDE:
         u = (u + 180.0) % 360.0 - 180.0
     return round(u, 1), round(v, 1), ", ".join(notes)
+
+
+# ---------------------------------------------------------------------------
+# Screw posts: grabbed and moved on the plane of their tops.
+# ---------------------------------------------------------------------------
+
+def mount_plane_hit(project: Project, mount, origin, direction):
+    """Where a ray meets the plane of a set's post tops: (distance, x, y) or None."""
+    from .mounts import board_bottom
+    z = board_bottom(project, mount)
+    if abs(direction[2]) < 1e-9:
+        return None
+    t = (z - origin[2]) / direction[2]
+    if t < 0:
+        return None
+    return t, origin[0] + t * direction[0], origin[1] + t * direction[1]
+
+
+def mount_under_ray(project: Project, origin, direction, mesh_distance: float | None):
+    """The set of posts (or its board outline) the mouse is pointing at, if any."""
+    from . import mounts
+    best, best_t = None, None
+    for m in project.mounts:
+        hit = mount_plane_hit(project, m, origin, direction)
+        if hit is None:
+            continue
+        t, x, y = hit
+        if mesh_distance is not None and t > mesh_distance + 0.5:
+            continue                       # hidden behind a wall
+        a = math.radians(-m.rotation)
+        lx = (x - m.u) * math.cos(a) - (y - m.v) * math.sin(a)
+        ly = (x - m.u) * math.sin(a) + (y - m.v) * math.cos(a)
+        size = mounts.board_size(m)
+        if size:
+            inside = abs(lx) <= size[0] / 2 + 1.0 and abs(ly) <= size[1] / 2 + 1.0
+        else:
+            r = mounts.post_radius(m) + 1.5
+            inside = any(math.hypot(x - px, y - py) <= r for px, py in mounts.post_positions(m))
+        if inside and (best_t is None or t < best_t):
+            best, best_t = m, t
+    return best

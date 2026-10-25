@@ -10,11 +10,11 @@ from pathlib import Path
 
 import numpy as np
 
-from . import geometry
-from .model import HOLE_KIND_LABELS, SHAPES, Dividers, Hole, Lid, Project
+from . import geometry, mounts
+from .model import HOLE_KIND_LABELS, SHAPES, Dividers, Hole, Lid, Mount, Project
 
 FORMAT_NAME = "3dn00b-project"
-FORMAT_VERSION = 4   # 2: rectangular holes; 3: air vents; 4: dividers
+FORMAT_VERSION = 5   # 2: rectangular holes; 3: air vents; 4: dividers; 5: screw posts
 PROJECT_SUFFIX = ".3dn00b"
 
 
@@ -39,14 +39,18 @@ def from_dict(data: dict) -> Project:
     try:
         lid = _build(Lid, raw.get("lid") or {})
         dividers = _build(Dividers, raw.get("dividers") or {})
+        mount_list = [_build(Mount, m) for m in raw.get("mounts") or []]
         holes = [_build(Hole, h) for h in raw.get("holes") or []]
-        rest = {k: v for k, v in raw.items() if k not in ("lid", "holes", "dividers")}
+        rest = {k: v for k, v in raw.items() if k not in ("lid", "holes", "dividers", "mounts")}
         project = _build(Project, rest)
     except (TypeError, ValueError) as exc:
         raise ProjectFileError("The project file is damaged.") from exc
-    if project.shape not in SHAPES or any(h.kind not in HOLE_KIND_LABELS for h in holes):
+    if (project.shape not in SHAPES or any(h.kind not in HOLE_KIND_LABELS for h in holes)
+            or any(m.board not in mounts.BOARDS or m.screw not in mounts.SCREWS
+                   or m.rotation not in mounts.ROTATIONS for m in mount_list)):
         raise ProjectFileError("The project uses a shape this version doesn't know.")
     project.lid, project.holes, project.dividers = lid, holes, dividers
+    project.mounts = mount_list
     return project
 
 
@@ -54,7 +58,7 @@ def _build(cls, raw: dict):
     """Create a dataclass from a dict, ignoring unknown keys and checking types."""
     kwargs = {}
     for f in fields(cls):
-        if f.name not in raw or f.name in ("lid", "holes", "dividers"):
+        if f.name not in raw or f.name in ("lid", "holes", "dividers", "mounts"):
             continue
         value = raw[f.name]
         default = getattr(cls(), f.name)

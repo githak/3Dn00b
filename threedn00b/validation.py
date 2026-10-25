@@ -9,11 +9,12 @@ from __future__ import annotations
 import itertools
 from dataclasses import dataclass
 
-from . import geometry
+from . import geometry, mounts
 from .model import (ALONG_V, BACK, BOTTOM, BOX, FRONT, LEFT, LID, MIN_EDGE, RIGHT,
                     SURFACE_LABELS, VENT, Hole, Project, clamp_hole, comfortable_margin,
                     compartment_size, divider_positions, divider_top, has_dividers,
-                    hole_edge_clearance, hole_limits, lip_outer_offset, lip_wall, opening_gap)
+                    hole_edge_clearance, hole_limits, lip_outer_offset, lip_wall, opening_gap,
+                    point_near_opening)
 
 ERROR, WARNING, INFO = "error", "warning", "info"
 _ORDER = {ERROR: 0, WARNING: 1, INFO: 2}
@@ -25,9 +26,10 @@ class Issue:
     message: str
     hint: str = ""
     hole_id: str | None = None
-    # Optional one-click fix: move hole `hole_id` to (u, v).
+    # Optional one-click fix: move hole `hole_id` (or posts `mount_id`) to (u, v).
     fix: tuple[float, float] | None = None
     fix_label: str = ""
+    mount_id: str | None = None
 
 
 def _mm(value: float) -> str:
@@ -66,6 +68,7 @@ def check(project: Project, parts: geometry.Parts | None = None) -> list[Issue]:
         issues += _check_lid(project)
         issues += _check_holes(project)
         issues += _check_dividers(project)
+        issues += _check_mounts(project)
         if parts is None:
             parts = geometry.build_parts(project)
         issues += _check_geometry(project, parts)
@@ -226,6 +229,81 @@ def _check_dividers(p: Project) -> list[Issue]:
             out.append(Issue(WARNING, f"{hole_name(p, hole)} is where a divider meets the "
                              f"{SURFACE_LABELS[hole.surface].lower()}, so the divider blocks part of it.",
                              "Move the hole into one of the compartments.", hole.id))
+    return out
+
+
+def mount_name(p: Project, m) -> str:
+    index = next((i for i, x in enumerate(p.mounts) if x.id == m.id), 0) + 1
+    return f"Posts {index} ({mounts.label(m)})"
+
+
+def _check_mounts(p: Project) -> list[Issue]:
+    out = []
+    xs, ys = divider_positions(p) if has_dividers(p) else ([], [])
+    div_top = divider_top(p)
+    for m in p.mounts:
+        name = mount_name(p, m)
+        screw = mounts.SCREWS[m.screw]
+        size = mounts.board_size(m)
+        top = mounts.board_bottom(p, m) + (mounts.BOARD_THICKNESS if size else 0.0)
+        ceiling = p.outer_height - (p.lid.gap * 2 if p.lid.enabled else 0.0)
+        if m.board == "custom" and (m.spacing_x >= m.board_width or m.spacing_y >= m.board_depth):
+            out.append(Issue(ERROR, f"{name}: the holes are further apart than the board is big.",
+                             "Check the board size and the hole spacing.", mount_id=m.id))
+            continue
+        if top > ceiling:
+            what = "board" if size else "posts"
+            out.append(Issue(ERROR, f"{name}: the {what} would stick out of the top of the box.",
+                             "Make the posts shorter or the box taller.", mount_id=m.id))
+        room = mounts.clearance(p, m)
+        need = mounts.needed_clearance(p, m)
+        fix = mounts.clamp_mount(p, m, m.u, m.v)
+        fix_label = "Move to the nearest spot that fits"
+        if room < 0:
+            what = "The board doesn't fit" if size else "A post runs into the wall"
+            out.append(Issue(ERROR, f"{name}: {what[0].lower() + what[1:]} there.",
+                             "Move it further in, or turn it.", mount_id=m.id, fix=fix,
+                             fix_label=fix_label))
+        elif room < need - 1e-6:
+            if need > 1.0:
+                msg = f"{name}: the board would hit the lid's lip."
+                hint = "Move it away from the wall, or make the posts shorter."
+            else:
+                msg = f"{name}: the board touches the wall."
+                hint = "Leave at least 1 mm of room so it goes in easily."
+            out.append(Issue(WARNING if need <= 1.0 else ERROR, msg, hint, mount_id=m.id,
+                             fix=fix, fix_label=fix_label))
+        if m.screw == "M1":
+            out.append(Issue(WARNING, f"{name}: holes for M1 screws are tiny ({screw.pilot} mm) and "
+                             "may close up when printed.", "You may need to drill them out.",
+                             mount_id=m.id))
+        if m.length > 6 * screw.post:
+            out.append(Issue(WARNING, f"{name}: the posts are tall and thin and may snap.",
+                             "Use shorter posts or a bigger screw size.", mount_id=m.id))
+        r = mounts.post_radius(m)
+        posts = mounts.post_positions(m)
+        if any(abs(x - dx) < r + 0.8 for x, _ in posts for dx in xs) or \
+                any(abs(y - dy) < r + 0.8 for _, y in posts for dy in ys):
+            out.append(Issue(WARNING, f"{name}: a post stands on a divider.",
+                             "Move the posts into a compartment.", mount_id=m.id))
+        elif size and div_top > mounts.board_bottom(p, m):
+            corners = mounts.board_corners(m)
+            lo_x, hi_x = min(c[0] for c in corners), max(c[0] for c in corners)
+            lo_y, hi_y = min(c[1] for c in corners), max(c[1] for c in corners)
+            if any(lo_x < x < hi_x for x in xs) or any(lo_y < y < hi_y for y in ys):
+                out.append(Issue(WARNING, f"{name}: the board would rest on a divider.",
+                                 "Move it into one compartment, or use lower dividers.",
+                                 mount_id=m.id))
+        for hole in p.holes:
+            if hole.surface == BOTTOM and any(
+                    point_near_opening(p, hole, x, y, r) for x, y in posts):
+                out.append(Issue(WARNING, f"{hole_name(p, hole)} is under a post of {name}.",
+                                 "Move the hole or the posts.", hole.id))
+    for a, b in itertools.combinations(p.mounts, 2):
+        (ax, ay), (bx, by) = mounts.half_extents(a), mounts.half_extents(b)
+        if abs(a.u - b.u) < ax + bx and abs(a.v - b.v) < ay + by:
+            out.append(Issue(WARNING, f"{mount_name(p, a)} and {mount_name(p, b)} overlap.",
+                             "Move one of them.", mount_id=b.id))
     return out
 
 

@@ -617,3 +617,143 @@ def test_dividers_round_trip_and_type_checks(tmp_path):
         project_io.from_dict(data)
     del data["project"]["dividers"]           # files from before dividers existed
     assert project_io.from_dict(data).dividers == Dividers()
+
+
+# ---- screw posts -------------------------------------------------------------
+
+from threedn00b import mounts  # noqa: E402
+from threedn00b.model import Mount  # noqa: E402
+
+
+def _spacing(m):
+    pts = mounts.post_positions(m)
+    xs, ys = sorted({round(x, 2) for x, _ in pts}), sorted({round(y, 2) for _, y in pts})
+    return round(xs[-1] - xs[0], 2), round(ys[-1] - ys[0], 2)
+
+
+def test_board_hole_patterns_match_the_datasheets():
+    assert _spacing(Mount(board="rpi-ab")) == (58.0, 49.0)
+    assert _spacing(Mount(board="rpi-3a")) == (58.0, 49.0)
+    assert _spacing(Mount(board="rpi-zero")) == (58.0, 23.0)
+    assert _spacing(Mount(board="pico")) == (47.0, 11.4)
+    assert _spacing(Mount(board="custom", spacing_x=50, spacing_y=30)) == (50.0, 30.0)
+    for key, board in mounts.BOARDS.items():
+        m = Mount(board=key)
+        size = mounts.board_size(m)
+        if size:   # every hole lies inside its board
+            assert all(abs(x) < size[0] / 2 and abs(y) < size[1] / 2
+                       for x, y in mounts.post_positions(m)), key
+
+
+def test_turning_keeps_the_pattern():
+    m = Mount(board="uno", u=5, v=-3)
+    before = mounts.post_positions(m)
+    m.rotation = 90
+    after = mounts.post_positions(m)
+    dist = lambda pts: sorted(round(math.dist(a, b), 6) for a in pts for b in pts)  # noqa: E731
+    assert dist(before) == dist(after)
+    assert mounts.half_extents(m) == pytest.approx((53.3 / 2, 68.6 / 2))
+
+
+def test_posts_have_pilot_holes_that_stop_at_the_floor():
+    p = Project(width=110, depth=80, height=40)
+    m = mounts.new_mount(p, "rpi-ab")
+    p.mounts = [m]
+    body = geometry.build_body(p)
+    assert geometry.piece_count(body) == 1 and _edges_shared_twice(body)
+    x, y = mounts.post_positions(m)[0]
+    pilot = mounts.SCREWS["M2.5"].pilot / 2
+    assert body.ray_cast([x, y, 100], [x, y, -5])[0].position[2] == pytest.approx(p.bottom)
+    assert body.ray_cast([x + pilot + 0.2, y, 100], [x + pilot + 0.2, y, -5])[0].position[2] == \
+        pytest.approx(p.bottom + m.length)
+    assert body.ray_cast([x, y, -5], [x, y, 100])[0].position[2] == pytest.approx(0)  # floor intact
+    assert mounts.max_screw_length(m) == 7.0
+
+
+def test_board_that_does_not_fit_is_an_error():
+    p = default_project(BOX)                     # 76 x 56 inside: a Pi 4 (85 x 56) can't fit
+    p.mounts = [mounts.new_mount(p, "rpi-ab")]
+    assert validation.has_errors(validation.check(p))
+    p.width = 110
+    p.mounts = [mounts.new_mount(p, "rpi-ab")]
+    assert not validation.has_errors(validation.check(p))
+
+
+def test_board_near_a_wall_gets_a_fix():
+    p = Project(width=110, depth=80, height=40)
+    m = mounts.new_mount(p, "rpi-ab")
+    m.u = 12
+    p.mounts = [m]
+    issue = next(i for i in validation.check(p) if i.mount_id)
+    assert issue.level == "error" and issue.fix
+    m.u, m.v = issue.fix
+    assert not any(i.mount_id for i in validation.check(p) if i.level != "info")
+    m.u += 1.0     # now only 0.5 mm from the wall
+    assert any(i.level == "warning" and "touches the wall" in i.message for i in validation.check(p))
+
+
+def test_board_too_high_or_hitting_the_lid_lip():
+    p = Project(width=110, depth=80, height=30)
+    p.lid.enabled = True
+    m = mounts.new_mount(p, "rpi-zero")
+    p.mounts = [m]
+    m.length = 30
+    assert any("stick out" in i.message for i in validation.check(p))
+    m.length = 23                                # board top 26.6: level with the lid's lip
+    lim = p.inner_width / 2 - 65 / 2
+    m.u = lim - 1.5                              # 1.5 mm from the wall: fine without a lid
+    assert any("lip" in i.message for i in validation.check(p))
+    p.lid.enabled = False
+    assert not any(i.mount_id for i in validation.check(p) if i.level != "info")
+
+
+def test_posts_and_dividers_holes_and_other_boards():
+    p = Project(width=150, depth=100, height=40, dividers=Dividers(across=2))
+    pico = mounts.new_mount(p, "single")
+    p.mounts = [pico]
+    assert any("stands on a divider" in i.message for i in validation.check(p))
+    zero = mounts.new_mount(p, "rpi-zero")
+    p.mounts = [zero]
+    assert any("rest on a divider" in i.message for i in validation.check(p))
+    p.dividers.height = 3                        # low dividers stay under the board
+    assert not any("divider" in i.message for i in validation.check(p))
+    x, y = mounts.post_positions(zero)[0]
+    p.holes = [Hole(BOTTOM, 3, x, y)]
+    assert any("under a post" in i.message for i in validation.check(p))
+    p.holes = []
+    p.mounts = [zero, mounts.new_mount(p, "pico")]
+    assert any("overlap" in i.message for i in validation.check(p))
+
+
+def test_screw_warnings_and_custom_board_errors():
+    p = Project(width=110, depth=80, height=60)
+    single = mounts.new_mount(p, "single")
+    single.screw, single.length = "M1", 30
+    p.mounts = [single]
+    msgs = messages(validation.check(p))
+    assert "tiny" in msgs and "tall and thin" in msgs
+    p.mounts = [Mount(board="custom", spacing_x=70, board_width=60)]
+    assert validation.has_errors(validation.check(p))
+
+
+def test_posts_in_round_container():
+    p = default_project(CYLINDER)               # 56 mm across inside
+    p.mounts = [mounts.new_mount(p, "pico")]
+    assert not validation.has_errors(validation.check(p))
+    p.mounts = [mounts.new_mount(p, "rpi-ab")]
+    assert validation.has_errors(validation.check(p))
+
+
+def test_posts_round_trip_and_bad_values(tmp_path):
+    p = Project(width=110, depth=80, height=40)
+    m = mounts.new_mount(p, "uno")
+    m.rotation, m.length = 270, 8
+    p.mounts = [m, Mount(board="custom", spacing_x=40, spacing_y=20, board_width=50, board_depth=30)]
+    path = tmp_path / "board.3dn00b"
+    project_io.save_project(p, path)
+    assert project_io.load_project(path) == p
+    for key, bad in (("board", "rpi-99"), ("screw", "M7"), ("rotation", 45)):
+        data = project_io.to_dict(p)
+        data["project"]["mounts"][0][key] = bad
+        with pytest.raises(project_io.ProjectFileError):
+            project_io.from_dict(data)

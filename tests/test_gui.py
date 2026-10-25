@@ -339,3 +339,69 @@ def test_new_tray_from_menu(window):
     assert not validation_errors(window)
     new_button.trigger()                      # plain New = a box
     assert window.project.name == "My box"
+
+
+def test_screw_post_controls(window):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    window.width_spin.setValue(110)
+    window.depth_spin.setValue(80)
+    window.board_combo.setCurrentIndex(window.board_combo.findData("rpi-zero"))
+    QTest.mouseClick(window.add_posts_button, Qt.MouseButton.LeftButton)
+    window.rebuild()
+    m = window.project.mounts[0]
+    assert m.board == "rpi-zero" and m.screw == "M2.5"
+    assert "up to 7 mm" in window.mount_info.text()
+    window.post_length.setValue(10)
+    assert "up to 11 mm" in window.mount_info.text()
+    window.screw_combo.setCurrentIndex(window.screw_combo.findData("M3"))
+    window.screw_combo.activated.emit(window.screw_combo.currentIndex())
+    assert window.project.mounts[0].screw == "M3"
+    assert "usually fixed with M2.5" in window.mount_info.text()
+    turn = [b for b in window.mount_box.findChildren(type(window.add_posts_button))
+            if b.text() == "Turn 90°"][0]
+    turn.click()
+    assert window.project.mounts[0].rotation == 90
+    assert not validation_errors(window)
+    window.undo_stack.undo()
+    assert window.project.mounts[0].rotation == 0
+
+
+def test_drag_board_moves_all_posts_together(window):
+    from PySide6.QtCore import QPoint
+    window.width_spin.setValue(150)
+    window.depth_spin.setValue(100)
+    window.add_mount("rpi-zero")
+    window.rebuild()
+    window.viewer.setCameraPosition(elevation=70)
+    m = window.project.mounts[0]
+    before = mounts_positions(m)
+    x, y = window.viewer.project_point((m.u, m.v, window.project.bottom + m.length))
+    start = QPoint(round(x), round(y))
+    _drag(window.viewer, start, start + QPoint(60, 0))
+    moved = window.project.mounts[0]
+    after = mounts_positions(moved)
+    assert moved.u != m.u or moved.v != m.v
+    shift = (after[0][0] - before[0][0], after[0][1] - before[0][1])
+    assert all(a == pytest.approx((b[0] + shift[0], b[1] + shift[1])) for a, b in zip(after, before))
+    window.undo_stack.undo()
+    assert (window.project.mounts[0].u, window.project.mounts[0].v) == (m.u, m.v)
+
+
+def test_fix_button_moves_board_inside(window):
+    window.width_spin.setValue(110)
+    window.depth_spin.setValue(80)
+    window.add_mount("rpi-ab")
+    window._edit_mount("Move posts", "u", 15.0)
+    window.rebuild()
+    window.tabs.setCurrentIndex(4)
+    row = next(i for i, issue in enumerate(window.issues) if issue.mount_id)
+    window.issue_list.setCurrentRow(row)
+    assert window.fix_button.isVisibleTo(window)
+    window.fix_button.click()
+    assert not validation_errors(window)
+
+
+def mounts_positions(m):
+    from threedn00b import mounts
+    return mounts.post_positions(m)

@@ -84,6 +84,9 @@ def build_body(project: Project) -> Manifold:
     dividers = build_dividers(project)
     if dividers is not None:
         body = body + dividers
+    posts = build_posts(project)
+    if posts is not None:
+        body = body + posts
     cutters = [_hole_cutter(project, hole) for hole in project.holes if hole.surface != LID]
     cutters = [c for c in cutters if c is not None]
     if cutters:
@@ -122,6 +125,26 @@ def build_dividers(project: Project) -> Manifold | None:
         if ring is not None:
             walls = walls - ring
     return walls
+
+
+def build_posts(project: Project) -> Manifold | None:
+    """Screw posts on the floor, each with a pilot hole down to the floor."""
+    from . import mounts
+    posts = []
+    for m in project.mounts:
+        screw = mounts.SCREWS[m.screw]
+        r, pilot = screw.post / 2, screw.pilot / 2
+        if m.length <= 0:
+            continue
+        for x, y in mounts.post_positions(m):
+            post = Manifold.cylinder(m.length + 0.01, r, -1.0, _circle_segments(r, 0.5, 24, 96))
+            hole = Manifold.cylinder(m.length + 1.0, pilot, -1.0, _circle_segments(pilot, 0.4, 16, 48))
+            posts.append((post - hole.translate([0.0, 0.0, 0.01]))
+                         .translate([x, y, project.bottom - 0.01]))
+    if not posts:
+        return None
+    # Never poke out through the walls.
+    return Manifold.batch_boolean(posts, OpType.Add) ^ _prism(footprint(project), project.outer_height, 0.0)
 
 
 def build_lid(project: Project) -> Manifold | None:

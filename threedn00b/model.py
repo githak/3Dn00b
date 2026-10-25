@@ -135,6 +135,27 @@ class Dividers:
 
 
 @dataclass
+class Mount:
+    """Screw posts on the floor: a single post, or a set matching a circuit board.
+
+    All posts of a set move and turn together. See mounts.py for the board
+    catalogue and the placement rules.
+    """
+    board: str = "rpi-ab"          # key of mounts.BOARDS
+    screw: str = "M2.5"            # key of mounts.SCREWS
+    length: float = 6.0            # height of the posts above the floor
+    u: float = 0.0                 # centre of the set: left/right
+    v: float = 0.0                 # centre of the set: towards the back
+    rotation: int = 0              # 0, 90, 180 or 270 degrees, seen from above
+    # Only for the "custom" board:
+    board_width: float = 60.0
+    board_depth: float = 40.0
+    spacing_x: float = 52.0        # distance between the holes, left to right
+    spacing_y: float = 32.0        # distance between the holes, front to back
+    id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
+
+
+@dataclass
 class Project:
     shape: str = BOX
     size_mode: str = OUTSIDE       # do the numbers below describe outside or inside?
@@ -149,6 +170,10 @@ class Project:
     holes: list[Hole] = field(default_factory=list)
     name: str = "My box"
     dividers: Dividers = field(default_factory=Dividers)   # boxes only
+    mounts: list[Mount] = field(default_factory=list)
+
+    def mount(self, mount_id: str) -> Mount | None:
+        return next((m for m in self.mounts if m.id == mount_id), None)
 
     # ---- derived measurements -------------------------------------------
     def _to_outer(self, value: float, walls: float) -> float:

@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox,
                                QSplitter, QStyle, QTabWidget, QToolBar, QToolButton,
                                QVBoxLayout, QWidget)
 
-from .. import APP_NAME, geometry, picking, project_io, validation
+from .. import APP_NAME, geometry, mounts, picking, project_io, validation
 from ..model import (ALONG_U, ALONG_V, BOTTOM, BOX, CYLINDER, FIT_LABELS, FIT_PRESETS,
                      FRONT, HOLE_DIAMETER_RANGE, HOLE_KIND_LABELS, INSIDE, LID, MIN_EDGE,
                      OUTSIDE, RECT, ROUND, SIDE, SIZE_RANGE, SURFACE_LABELS, VENT,
@@ -42,6 +42,8 @@ COMMON_RECTS = [
     ("Rocker switch (19 × 13 mm)", (19.0, 13.0)),
 ]
 RECT_SIZE_RANGE = (1.0, 150.0)
+TAB_SHAPE, TAB_HOLES, TAB_POSTS, TAB_LID, TAB_CHECK = range(5)
+CHECK_TAB_TITLE = "5 Check && Export"
 
 
 class SnapshotCommand(QUndoCommand):
@@ -116,6 +118,7 @@ class MainWindow(QMainWindow):
         self.project = project or default_project()
         self.path: Path | None = None
         self.selected_id: str | None = None
+        self.selected_mount_id: str | None = None
         self._drag: dict | None = None
         self._drag_count = 0
         self.parts: geometry.Parts | None = None
@@ -132,18 +135,19 @@ class MainWindow(QMainWindow):
         self.viewer.surfaceDoubleClicked.connect(self._on_surface_double_clicked)
 
         self.tabs = QTabWidget()
-        self.tabs.addTab(self._build_shape_tab(), "1  Shape")
-        self.tabs.addTab(self._build_holes_tab(), "2  Holes")
-        self.tabs.addTab(self._build_lid_tab(), "3  Lid")
-        self.tabs.addTab(self._build_check_tab(), "4  Check && Export")
-        self.tabs.setMinimumWidth(340)
-        self.tabs.setMaximumWidth(460)
+        self.tabs.addTab(self._build_shape_tab(), "1 Shape")
+        self.tabs.addTab(self._build_holes_tab(), "2 Holes")
+        self.tabs.addTab(self._build_posts_tab(), "3 Posts")
+        self.tabs.addTab(self._build_lid_tab(), "4 Lid")
+        self.tabs.addTab(self._build_check_tab(), CHECK_TAB_TITLE)
+        self.tabs.setMinimumWidth(420)
+        self.tabs.setMaximumWidth(500)
 
         splitter = QSplitter()
         splitter.addWidget(self.viewer)
         splitter.addWidget(self.tabs)
         splitter.setStretchFactor(0, 1)
-        splitter.setSizes([820, 380])
+        splitter.setSizes([800, 440])
         splitter.setChildrenCollapsible(False)
         self.setCentralWidget(splitter)
 
@@ -419,6 +423,80 @@ class MainWindow(QMainWindow):
         layout.addStretch()
         return page
 
+    def _build_posts_tab(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.addWidget(hint("Screw posts hold a circuit board above the floor. Pick a board "
+                              "to add all its posts at once, in the right pattern. "
+                              "Drag the green outline in the 3D view to move them together."))
+        row = QHBoxLayout()
+        self.board_combo = QComboBox()
+        for key, board in mounts.BOARDS.items():
+            self.board_combo.addItem(board.name, key)
+        self.board_combo.setCurrentIndex(self.board_combo.findData("rpi-ab"))
+        self.add_posts_button = QPushButton("+ Add")
+        self.add_posts_button.setMinimumHeight(30)
+        # A lambda, because clicked() would otherwise pass its 'checked' flag.
+        self.add_posts_button.clicked.connect(lambda: self.add_mount(self.board_combo.currentData()))
+        row.addWidget(self.board_combo, 1)
+        row.addWidget(self.add_posts_button)
+        layout.addLayout(row)
+        self.mount_list = QListWidget()
+        self.mount_list.setMaximumHeight(110)
+        self.mount_list.currentRowChanged.connect(self._on_mount_row_changed)
+        layout.addWidget(self.mount_list)
+
+        self.mount_box = QWidget()
+        form = self.mount_form = QFormLayout(self.mount_box)
+        form.setContentsMargins(0, 0, 0, 0)
+        self.screw_combo = QComboBox()
+        for key, screw in mounts.SCREWS.items():
+            self.screw_combo.addItem(f"{key} screw", key)
+        self.screw_combo.activated.connect(
+            lambda _: self._edit_mount("Change screw size", "screw", self.screw_combo.currentData()))
+        form.addRow("Screw", self.screw_combo)
+        self.post_length = spin(1.0, 100.0, step=0.5)
+        self.post_length.setToolTip("How high the posts stand above the floor")
+        self.post_length.valueChanged.connect(lambda v: self._edit_mount("Change post length", "length", v))
+        form.addRow("Post length", self.post_length)
+        self.board_w = spin(5.0, 300.0)
+        self.board_d = spin(5.0, 300.0)
+        self.spacing_x = spin(1.0, 300.0, step=0.5)
+        self.spacing_y = spin(1.0, 300.0, step=0.5)
+        for widget, attr, text in ((self.board_w, "board_width", "Board width"),
+                                   (self.board_d, "board_depth", "Board depth"),
+                                   (self.spacing_x, "spacing_x", "Holes apart (width)"),
+                                   (self.spacing_y, "spacing_y", "Holes apart (depth)")):
+            widget.valueChanged.connect(lambda v, a=attr: self._edit_mount("Change board", a, v))
+            form.addRow(text, widget)
+        self.spacing_x.setToolTip("Centre to centre, measured on your board")
+        self.spacing_y.setToolTip("Centre to centre, measured on your board")
+        self.mount_u = spin(-500, 500)
+        self.mount_v = spin(-500, 500)
+        self.mount_u.valueChanged.connect(lambda v: self._edit_mount("Move posts", "u", v))
+        self.mount_v.valueChanged.connect(lambda v: self._edit_mount("Move posts", "v", v))
+        form.addRow("Left / right", self.mount_u)
+        form.addRow("Front / back", self.mount_v)
+        buttons = QHBoxLayout()
+        turn = QPushButton("Turn 90°")
+        turn.setToolTip("Turn the board so its connectors face another wall")
+        turn.clicked.connect(self._turn_mount)
+        center = QPushButton("Centre it")
+        center.clicked.connect(self._center_mount)
+        remove = QPushButton("Remove")
+        remove.clicked.connect(self.remove_selected_mount)
+        for button in (turn, center, remove):
+            buttons.addWidget(button)
+        form.addRow(buttons)
+        layout.addWidget(self.mount_box)
+        self.mount_info = hint("")
+        layout.addWidget(self.mount_info)
+        self.mount_problem = hint("")
+        self.mount_problem.setStyleSheet("color: #b02020;")
+        layout.addWidget(self.mount_problem)
+        layout.addStretch()
+        return page
+
     def _build_lid_tab(self):
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -510,11 +588,14 @@ class MainWindow(QMainWindow):
         self.project = project_io.from_dict(data)
         if self.selected_id and not self.project.hole(self.selected_id):
             self.selected_id = None
+        if self.selected_mount_id and not self.project.mount(self.selected_mount_id):
+            self.selected_mount_id = None
         self.refresh_controls()
         # Throttle (not debounce) so the preview keeps up while dragging or typing.
         if not self._rebuild_timer.isActive():
             self._rebuild_timer.start()
         self.viewer.set_hole_markers(self.project, self.selected_id, self._problem_holes())
+        self.viewer.set_mount_markers(self.project, self.selected_mount_id, self._problem_mounts())
         self._update_title()
 
     def _edit_hole(self, label, attr, value):
@@ -555,6 +636,7 @@ class MainWindow(QMainWindow):
         set_quietly(self.lid_thickness, p.lid.thickness)
         set_quietly(self.lip_height, p.lid.lip_height)
         self.refresh_holes()
+        self.refresh_mounts()
 
     def _refresh_dividers(self):
         p, d = self.project, self.project.dividers
@@ -685,6 +767,56 @@ class MainWindow(QMainWindow):
         msgs = [i.message for i in self.issues if i.hole_id == hole.id and i.level != validation.INFO]
         self.hole_problem.setText("\n".join("⚠ " + m for m in msgs))
 
+    def refresh_mounts(self):
+        p = self.project
+        problems = self._problem_mounts()
+        self.mount_list.blockSignals(True)
+        self.mount_list.clear()
+        current = -1
+        for i, m in enumerate(p.mounts):
+            mark = "⚠ " if m.id in problems else ""
+            count = len(mounts.post_positions(m))
+            self.mount_list.addItem(f"{mark}Posts {i + 1} · {mounts.label(m)} · {m.screw} × {count}")
+            if m.id == self.selected_mount_id:
+                current = i
+        self.mount_list.setCurrentRow(current)
+        self.mount_list.blockSignals(False)
+        m = p.mount(self.selected_mount_id) if self.selected_mount_id else None
+        self.mount_box.setEnabled(m is not None)
+        if m is None:
+            self.mount_info.setText("" if p.mounts else "No posts yet.")
+            self.mount_problem.setText("")
+            for widget in (self.board_w, self.board_d, self.spacing_x, self.spacing_y):
+                self.mount_form.setRowVisible(widget, False)
+            return
+        set_quietly(self.screw_combo, m.screw)
+        is_custom = m.board == "custom"
+        for widget, value in ((self.post_length, m.length), (self.board_w, m.board_width),
+                              (self.board_d, m.board_depth), (self.spacing_x, m.spacing_x),
+                              (self.spacing_y, m.spacing_y)):
+            set_quietly(widget, value)
+        for widget in (self.board_w, self.board_d, self.spacing_x, self.spacing_y):
+            self.mount_form.setRowVisible(widget, is_custom)
+        for widget, value in ((self.mount_u, m.u), (self.mount_v, m.v)):
+            widget.blockSignals(True)
+            widget.setRange(-p.inner_width / 2 if widget is self.mount_u else -p.inner_depth / 2,
+                            p.inner_width / 2 if widget is self.mount_u else p.inner_depth / 2)
+            widget.setRange(min(widget.minimum(), value), max(widget.maximum(), value))
+            widget.blockSignals(False)
+            set_quietly(widget, value)
+        info = f"Use {m.screw} screws up to {mounts.max_screw_length(m):g} mm long."
+        if mounts.board_size(m):
+            info += (" The board rests on top of the posts; the green outline shows where it "
+                     "goes (it isn't printed).")
+        if m.screw != mounts.BOARDS[m.board].screw and m.board not in ("single", "custom"):
+            info += f" This board is usually fixed with {mounts.BOARDS[m.board].screw} screws."
+        self.mount_info.setText(info)
+        msgs = [i.message for i in self.issues if i.mount_id == m.id and i.level != validation.INFO]
+        self.mount_problem.setText("\n".join("⚠ " + msg for msg in msgs))
+
+    def _problem_mounts(self) -> set:
+        return {i.mount_id for i in self.issues if i.mount_id and i.level != validation.INFO}
+
     def _problem_holes(self) -> set:
         return {i.hole_id for i in self.issues if i.hole_id and i.level != validation.INFO}
 
@@ -706,8 +838,10 @@ class MainWindow(QMainWindow):
                                             f"Try different measurements. ({exc})")]
         self.viewer.set_parts(p, self.parts)
         self.viewer.set_hole_markers(p, self.selected_id, self._problem_holes())
+        self.viewer.set_mount_markers(p, self.selected_mount_id, self._problem_mounts())
         self._refresh_issues()
         self.refresh_holes()
+        self.refresh_mounts()
 
     def _refresh_issues(self):
         icons = {validation.ERROR: QStyle.StandardPixmap.SP_MessageBoxCritical,
@@ -740,7 +874,7 @@ class MainWindow(QMainWindow):
         self.export_button.setEnabled(not errors)
         self.export_hint.setText("Fix the problems marked ✖ above to export." if errors else
                                  "Each part is saved as its own STL file, placed flat side down.")
-        self.tabs.setTabText(3, "4  Check && Export" + (" ✖" if errors else " ⚠" if warnings else ""))
+        self.tabs.setTabText(TAB_CHECK, CHECK_TAB_TITLE + (" ✖" if errors else " ⚠" if warnings else ""))
         self._refresh_parts_summary()
 
     def _refresh_parts_summary(self):
@@ -754,7 +888,11 @@ class MainWindow(QMainWindow):
             size = " × ".join(f"{lo[i + 3] - lo[i]:.1f}" for i in range(3))
             lines.append(f"<b>{names[part]}:</b> {size} mm, about {solid.volume() / 1000:.0f} cm³ of plastic")
         holes = len(self.project.holes)
-        lines.append(f"{holes} hole{'s' * (holes != 1)}")
+        line = f"{holes} hole{'s' * (holes != 1)}"
+        posts = sum(len(mounts.post_positions(m)) for m in self.project.mounts)
+        if posts:
+            line += f", {posts} screw post{'s' * (posts != 1)}"
+        lines.append(line)
         self.parts_summary.setText("<br>".join(lines))
 
     # ------------------------------------------------------------------
@@ -762,8 +900,17 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     def select_hole(self, hole_id: str | None):
         self.selected_id = hole_id
+        if hole_id is not None and self.selected_mount_id is not None:
+            self.select_mount(None)
         self.refresh_holes()
         self.viewer.set_hole_markers(self.project, self.selected_id, self._problem_holes())
+
+    def select_mount(self, mount_id: str | None):
+        self.selected_mount_id = mount_id
+        if mount_id is not None and self.selected_id is not None:
+            self.select_hole(None)
+        self.refresh_mounts()
+        self.viewer.set_mount_markers(self.project, self.selected_mount_id, self._problem_mounts())
 
     def add_hole(self, surface: str | None = None, u: float = 0.0, v: float = 0.0,
                  kind: str = ROUND):
@@ -788,7 +935,7 @@ class MainWindow(QMainWindow):
         if pos:
             hole.u, hole.v = pos
         self.edit("Add hole", lambda proj: proj.holes.append(copy.deepcopy(hole)))
-        self.tabs.setCurrentIndex(1)
+        self.tabs.setCurrentIndex(TAB_HOLES)
         self.select_hole(hole.id)
 
     def remove_selected_hole(self):
@@ -866,19 +1013,72 @@ class MainWindow(QMainWindow):
         holes = self.project.holes
         self.select_hole(holes[row].id if 0 <= row < len(holes) else None)
 
+    # ---- screw posts -----------------------------------------------------
+    def add_mount(self, board: str):
+        m = mounts.new_mount(self.project, board)
+        if mounts.clamp_mount(self.project, m, m.u, m.v) is None:
+            self.statusBar().showMessage(f"The {mounts.label(m)} doesn't fit in this box. "
+                                         "It's added anyway so you can see why.", 6000)
+        self.edit("Add posts", lambda p: p.mounts.append(copy.deepcopy(m)))
+        self.tabs.setCurrentIndex(TAB_POSTS)
+        self.select_mount(m.id)
+
+    def remove_selected_mount(self):
+        mount_id = self.selected_mount_id
+        if mount_id is None or not self.project.mount(mount_id):
+            return
+        self.selected_mount_id = None
+        self.edit("Remove posts", lambda p: p.mounts.remove(p.mount(mount_id)))
+
+    def _edit_mount(self, label, attr, value):
+        mount_id = self.selected_mount_id
+        if mount_id is None:
+            return
+        self.edit(label, lambda p: setattr(p.mount(mount_id), attr, value),
+                  merge=f"{mount_id}:{attr}")
+
+    def _turn_mount(self):
+        mount_id = self.selected_mount_id
+        if mount_id is None:
+            return
+
+        def change(p):
+            m = p.mount(mount_id)
+            m.rotation = (m.rotation + 90) % 360
+            pos = mounts.clamp_mount(p, m, m.u, m.v)
+            if pos:
+                m.u, m.v = pos
+        self.edit("Turn posts", change)
+
+    def _center_mount(self):
+        mount_id = self.selected_mount_id
+        if mount_id is None:
+            return
+
+        def change(p):
+            m = p.mount(mount_id)
+            pos = mounts.clamp_mount(p, m, 0.0, 0.0)
+            m.u, m.v = pos if pos else (0.0, 0.0)
+        self.edit("Centre posts", change)
+
+    def _on_mount_row_changed(self, row):
+        items = self.project.mounts
+        self.select_mount(items[row].id if 0 <= row < len(items) else None)
+
     # ---- dragging holes in the 3D view (called by the Viewer) ----------
     def _hole_under(self, origin, direction, mesh_distance):
         return picking.hole_under_ray(self.project, origin, direction, mesh_distance,
                                       self.viewer.lid_offset, self.viewer.show_lid)
 
     def hole_at(self, origin, direction, mesh_distance) -> bool:
-        return self._hole_under(origin, direction, mesh_distance) is not None
+        return (self._hole_under(origin, direction, mesh_distance) is not None
+                or picking.mount_under_ray(self.project, origin, direction, mesh_distance) is not None)
 
     def drag_begin(self, origin, direction, mesh_distance) -> bool:
         hole = self._hole_under(origin, direction, mesh_distance)
         if hole is None:
-            return False
-        self.tabs.setCurrentIndex(1)
+            return self._mount_drag_begin(origin, direction, mesh_distance)
+        self.tabs.setCurrentIndex(TAB_HOLES)
         self.select_hole(hole.id)
         hit = picking.surface_hit(self.project, hole.surface, origin, direction,
                                   self.viewer.lid_offset)
@@ -888,11 +1088,53 @@ class MainWindow(QMainWindow):
         # gets its own undo merge key, so one drag = one undo step.
         self._drag_count += 1
         self._drag = {"id": hole.id, "du": hole.u - hit[1], "dv": hole.v - hit[2],
-                      "key": f"drag:{self._drag_count}"}
+                      "key": f"drag:{self._drag_count}", "type": "hole"}
         return True
+
+    def _mount_drag_begin(self, origin, direction, mesh_distance) -> bool:
+        m = picking.mount_under_ray(self.project, origin, direction, mesh_distance)
+        if m is None:
+            return False
+        self.tabs.setCurrentIndex(TAB_POSTS)
+        self.select_mount(m.id)
+        hit = picking.mount_plane_hit(self.project, m, origin, direction)
+        self._drag_count += 1
+        self._drag = {"id": m.id, "du": m.u - hit[1], "dv": m.v - hit[2],
+                      "key": f"drag:{self._drag_count}", "type": "mount"}
+        return True
+
+    def _mount_drag_move(self, origin, direction):
+        drag = self._drag
+        m = self.project.mount(drag["id"])
+        if m is None:
+            return
+        hit = picking.mount_plane_hit(self.project, m, origin, direction)
+        if hit is None:
+            return
+        u, v = hit[1] + drag["du"], hit[2] + drag["dv"]
+        notes = []
+        if abs(u) <= picking.SNAP_MM:
+            u = 0.0
+            notes.append("centred left to right")
+        if abs(v) <= picking.SNAP_MM:
+            v = 0.0
+            notes.append("centred front to back")
+        # Keep the whole board inside the box with room around it.
+        pos = mounts.clamp_mount(self.project, m, u, v)
+        if pos is None:
+            return
+        if abs(pos[0] - u) > 0.05 or abs(pos[1] - v) > 0.05:
+            notes = ["kept away from the walls"]
+        mount_id = m.id
+        self.edit("Move posts", lambda p: _set_position(p.mount(mount_id), pos), merge=drag["key"])
+        name = validation.mount_name(self.project, self.project.mount(mount_id))
+        self.statusBar().showMessage(f"{name}: {', '.join(notes)}" if notes else name, 1500)
 
     def drag_move(self, origin, direction):
         drag = self._drag
+        if drag and drag["type"] == "mount":
+            self._mount_drag_move(origin, direction)
+            return
         hole = self.project.hole(drag["id"]) if drag else None
         if hole is None:
             return
@@ -943,9 +1185,16 @@ class MainWindow(QMainWindow):
             self.fix_button.setText(issue.fix_label or "Fix it")
         if issue and issue.hole_id:
             self.select_hole(issue.hole_id)
+        elif issue and issue.mount_id:
+            self.select_mount(issue.mount_id)
 
     def _apply_fix(self):
         issue = self._issue_at(self.issue_list.currentRow())
+        if issue and issue.fix and issue.mount_id:
+            mount_id, pos = issue.mount_id, issue.fix
+            self.edit("Fix post position", lambda p: _set_position(p.mount(mount_id), pos))
+            self.statusBar().showMessage("Posts moved. Press Ctrl+Z to undo.", 5000)
+            return
         if not issue or not issue.fix or not issue.hole_id:
             return
         hole_id, (u, v) = issue.hole_id, issue.fix
@@ -979,6 +1228,7 @@ class MainWindow(QMainWindow):
         self.project = project
         self.path = path
         self.selected_id = None
+        self.selected_mount_id = None
         self.undo_stack.clear()
         self.viewer._fitted_size = None
         self.refresh_controls()
@@ -1034,7 +1284,7 @@ class MainWindow(QMainWindow):
 
     def export_stl(self):
         if validation.has_errors(self.issues):
-            self.tabs.setCurrentIndex(3)
+            self.tabs.setCurrentIndex(TAB_CHECK)
             return
         folder = QFileDialog.getExistingDirectory(self, "Choose a folder for the STL files",
                                                   self._last_dir())
