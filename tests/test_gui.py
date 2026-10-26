@@ -405,3 +405,15 @@ def test_fix_button_moves_board_inside(window):
 def mounts_positions(m):
     from threedn00b import mounts
     return mounts.post_positions(m)
+
+
+def test_parts_on_top_field(window):
+    window.width_spin.setValue(110)
+    window.depth_spin.setValue(100)
+    window.add_mount("rpi-zero")
+    assert window.parts_height.value() == 4.0 and "5 mm of room" in window.mount_info.text()
+    window.parts_height.setValue(8.5)
+    assert window.project.mounts[0].parts_height == 8.5
+    assert "9.5 mm of room" in window.mount_info.text()
+    window.add_mount("single")
+    assert not window.parts_height.isVisibleTo(window)

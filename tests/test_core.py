@@ -757,3 +757,59 @@ def test_posts_round_trip_and_bad_values(tmp_path):
         data["project"]["mounts"][0][key] = bad
         with pytest.raises(project_io.ProjectFileError):
             project_io.from_dict(data)
+
+
+# ---- stacked boards ----------------------------------------------------------
+
+def _stack(lower_board, upper_board, upper_length, turn=90, box=(110, 100, 45)):
+    p = Project(width=box[0], depth=box[1], height=box[2])
+    lower, upper = mounts.new_mount(p, lower_board), mounts.new_mount(p, upper_board)
+    upper.rotation, upper.length = turn, upper_length
+    p.mounts = [lower, upper]
+    return p, [i for i in validation.check(p) if i.mount_id]
+
+
+def test_flat_boards_can_cross_when_there_is_room():
+    # Pi Zero on 6 mm posts: board top at 7.6 mm above the floor, needs 4 + 1 mm above it.
+    _, issues = _stack("rpi-zero", "rpi-zero", 12.6)
+    assert issues == []
+    _, issues = _stack("rpi-zero", "rpi-zero", 12.0)
+    assert issues[0].level == "error" and "0.6 mm taller" in issues[0].hint
+
+
+def test_same_height_overlap_is_an_error():
+    _, issues = _stack("rpi-zero", "rpi-zero", 6.0)
+    assert issues[0].level == "error" and "same height" in issues[0].message
+
+
+def _zero_reaching_over_pi4(length):
+    # The Pi Zero's posts stand just behind the Pi 4 (their edges at y 3.25), while
+    # its board reaches over the Pi 4's back edge (from y 2.75).
+    p = Project(width=110, depth=140, height=60)
+    pi4 = Mount(board="rpi-ab", v=-25)                       # spans y -53 .. 3
+    zero = Mount(board="rpi-zero", v=17.75, length=length)   # posts at y 6.25 and 29.25
+    p.mounts = [pi4, zero]
+    return [i for i in validation.check(p) if i.mount_id]
+
+
+def test_boards_with_tall_sockets_only_get_a_reminder():
+    issues = _zero_reaching_over_pi4(30.0)
+    assert [i.level for i in issues] == ["warning"]
+    assert "USB and network sockets" in issues[0].message
+    issues = _zero_reaching_over_pi4(15.0)                 # Pi 4 needs 17 mm above its top
+    assert [i.level for i in issues] == ["error"]
+
+
+def test_posts_may_not_go_through_the_lower_board():
+    # Same direction, stacked straight above: the upper posts land on the lower board.
+    _, issues = _stack("rpi-zero", "rpi-zero", 20.0, turn=0)
+    assert issues[0].level == "error" and "go through" in issues[0].message
+
+
+def test_parts_height_can_be_changed():
+    p, _ = _stack("rpi-zero", "rpi-zero", 12.6)
+    p.mounts[0].parts_height = 8.5               # GPIO header soldered on
+    assert any("needs 9.5 mm" in i.message for i in validation.check(p))
+    data = project_io.to_dict(p)
+    del data["project"]["mounts"][0]["parts_height"]     # files from 0.6.0
+    assert mounts.parts_height(project_io.from_dict(data).mounts[0]) == 4.0

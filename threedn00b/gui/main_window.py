@@ -428,7 +428,8 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(page)
         layout.addWidget(hint("Screw posts hold a circuit board above the floor. Pick a board "
                               "to add all its posts at once, in the right pattern. "
-                              "Drag the green outline in the 3D view to move them together."))
+                              "Drag the green outline in the 3D view to move them together. "
+                              "Boards may overlap if one sits higher, on taller posts."))
         row = QHBoxLayout()
         self.board_combo = QComboBox()
         for key, board in mounts.BOARDS.items():
@@ -459,6 +460,13 @@ class MainWindow(QMainWindow):
         self.post_length.setToolTip("How high the posts stand above the floor")
         self.post_length.valueChanged.connect(lambda v: self._edit_mount("Change post length", "length", v))
         form.addRow("Post length", self.post_length)
+        self.parts_height = spin(0.0, 60.0, step=0.5)
+        self.parts_height.setToolTip("Height of the tallest part on top of the board (sockets, pin "
+                                     "headers). Another board can sit above it if there is this "
+                                     "much room plus 1 mm.")
+        self.parts_height.valueChanged.connect(
+            lambda v: self._edit_mount("Change parts height", "parts_height", v))
+        form.addRow("Parts on top", self.parts_height)
         self.board_w = spin(5.0, 300.0)
         self.board_d = spin(5.0, 300.0)
         self.spacing_x = spin(1.0, 300.0, step=0.5)
@@ -791,7 +799,9 @@ class MainWindow(QMainWindow):
             return
         set_quietly(self.screw_combo, m.screw)
         is_custom = m.board == "custom"
-        for widget, value in ((self.post_length, m.length), (self.board_w, m.board_width),
+        self.mount_form.setRowVisible(self.parts_height, mounts.board_size(m) is not None)
+        for widget, value in ((self.post_length, m.length), (self.parts_height, mounts.parts_height(m)),
+                              (self.board_w, m.board_width),
                               (self.board_d, m.board_depth), (self.spacing_x, m.spacing_x),
                               (self.spacing_y, m.spacing_y)):
             set_quietly(widget, value)
@@ -808,6 +818,9 @@ class MainWindow(QMainWindow):
         if mounts.board_size(m):
             info += (" The board rests on top of the posts; the green outline shows where it "
                      "goes (it isn't printed).")
+        if mounts.board_size(m):
+            info += (f" Another board can sit above this one if there is "
+                     f"{mounts.room_above(m):g} mm of room.")
         if m.screw != mounts.BOARDS[m.board].screw and m.board not in ("single", "custom"):
             info += f" This board is usually fixed with {mounts.BOARDS[m.board].screw} screws."
         self.mount_info.setText(info)

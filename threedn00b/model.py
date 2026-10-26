@@ -153,6 +153,9 @@ class Mount:
     spacing_x: float = 52.0        # distance between the holes, left to right
     spacing_y: float = 32.0        # distance between the holes, front to back
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
+    # Height of the tallest part on top of the board; boards stacked above need
+    # this much room plus a little air. Negative = the board's usual value.
+    parts_height: float = -1.0
 
 
 @dataclass

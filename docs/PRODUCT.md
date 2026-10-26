@@ -54,6 +54,13 @@ Defaults I chose myself, which are easy to change:
   Zero 2 W, 3 B / 3 B+ / 4 / 5, 3 A+, Pico, Arduino Uno, plus a custom 4-hole
   board and a single post. A board's posts move and turn (90° steps) as one
   group. Posts stand on the floor only for now.
+- Stacked boards (0.6.1), requested by the project owner: boards may overlap
+  when one sits higher. Each board has a "Parts on top" height (preset default,
+  editable); the board above needs that much room plus 1 mm. Flat boards
+  (Pi Zero family, Pico) with enough room are approved; boards with tall
+  sockets (Pi 3/4/5, 3 A+, Arduino Uno, custom) get a reminder to check, since
+  their parts vary. Too little room, or a post that would have to pass through
+  the lower board, is an error.
 - Push-on lid that follows the box size, with fit presets.
 - Plain-language checks covering impossible sizes, thin walls, holes off the
   edge, holes behind the lid lip, overlapping or too-close holes, a lid that

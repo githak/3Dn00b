@@ -33,6 +33,8 @@ print. No sketches, no constraints, no feature trees.
   posts are; the screw cuts its own thread into the post. Drag the board's green
   outline to move all its posts together, or turn it in 90° steps. The app checks
   that the board fits, doesn't touch the walls or the lid, and doesn't stick out.
+  Boards can be **stacked**: one may overlap another if its posts are tall enough
+  to leave room for the lower board's parts (set under "Parts on top").
 - A **push-on lid** with a lip and a Tight / Normal / Loose fit (or a custom
   gap). It resizes itself with the box.
 - **Checks in plain language**, for example a hole running off the edge of a

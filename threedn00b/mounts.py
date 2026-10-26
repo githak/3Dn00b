@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from .model import Mount, Project, flat_clearance, lip_outer_offset, lip_wall
 
 BOARD_THICKNESS = 1.6     # standard circuit board thickness
+STACK_AIR = 1.0           # extra room between a board's tallest part and the board above
 ROTATIONS = (0, 90, 180, 270)
 
 
@@ -38,6 +39,10 @@ class Board:
     size: tuple[float, float] | None       # None = a single post with no board
     holes: tuple[tuple[float, float], ...]
     screw: str
+    parts_height: float = 10.0   # tallest part on top of the board
+    flat: bool = False           # only low parts on top: stacking above it can be approved
+    tall_parts: str = ""         # what the tallest parts are, for messages
+    short: str = ""              # short name for messages
 
 
 def _from_corner(width, depth, holes):
@@ -46,24 +51,27 @@ def _from_corner(width, depth, holes):
 
 
 BOARDS = {
-    "single": Board("Single post", None, ((0.0, 0.0),), "M3"),
+    "single": Board("Single post", None, ((0.0, 0.0),), "M3", parts_height=0.0, flat=True, short="single post"),
     "rpi-ab": Board("Raspberry Pi 3 B / 3 B+ / 4 / 5", (85.0, 56.0),
                     _from_corner(85, 56, [(3.5, 3.5), (61.5, 3.5), (3.5, 52.5), (61.5, 52.5)]),
-                    "M2.5"),
+                    "M2.5", parts_height=16.0, tall_parts="USB and network sockets",
+                    short="Pi 3/4/5"),
     "rpi-3a": Board("Raspberry Pi 3 A+", (65.0, 56.0),
                     _from_corner(65, 56, [(3.5, 3.5), (61.5, 3.5), (3.5, 52.5), (61.5, 52.5)]),
-                    "M2.5"),
+                    "M2.5", parts_height=8.0, tall_parts="USB socket", short="Pi 3 A+"),
     "rpi-zero": Board("Raspberry Pi Zero / Zero W / Zero 2 W", (65.0, 30.0),
                       _from_corner(65, 30, [(3.5, 3.5), (61.5, 3.5), (3.5, 26.5), (61.5, 26.5)]),
-                      "M2.5"),
+                      "M2.5", parts_height=4.0, flat=True, short="Pi Zero"),
     "pico": Board("Raspberry Pi Pico / Pico W / Pico 2", (51.0, 21.0),
                   _from_corner(51, 21, [(2.0, 4.8), (49.0, 4.8), (2.0, 16.2), (49.0, 16.2)]),
-                  "M2"),
+                  "M2", parts_height=4.0, flat=True, short="Pico"),
     "uno": Board("Arduino Uno", (68.6, 53.3),
                  _from_corner(68.6, 53.3, [(13.97, 2.54), (15.24, 50.8), (66.04, 7.62),
                                            (66.04, 35.56)]),
-                 "M3"),
-    "custom": Board("Custom board (4 holes)", None, (), "M3"),
+                 "M3", parts_height=11.0, tall_parts="USB and power sockets",
+                 short="Arduino Uno"),
+    "custom": Board("Custom board (4 holes)", None, (), "M3", parts_height=10.0,
+                    tall_parts="parts", short="custom board"),
 }
 
 
@@ -123,6 +131,27 @@ def board_bottom(project: Project, m: Mount) -> float:
 def max_screw_length(m: Mount) -> float:
     """Longest screw that fits: through the board and down the post, not into the floor."""
     return math.floor((m.length + (BOARD_THICKNESS if board_size(m) else 0.0) - 0.5) * 2) / 2
+
+
+def parts_height(m: Mount) -> float:
+    """Height of the tallest part on top of the board."""
+    return m.parts_height if m.parts_height >= 0 else BOARDS[m.board].parts_height
+
+
+def room_above(m: Mount) -> float:
+    """Room a board needs above it before another board can sit there."""
+    return parts_height(m) + STACK_AIR
+
+
+def board_top(project: Project, m: Mount) -> float:
+    """Height (z) of the top surface of the board (or of the posts, for a single post)."""
+    return board_bottom(project, m) + (BOARD_THICKNESS if board_size(m) else 0.0)
+
+
+def footprint_box(m: Mount) -> tuple[float, float, float, float]:
+    """(x_min, x_max, y_min, y_max) covered on the floor; exact, as boards turn in 90° steps."""
+    hx, hy = half_extents(m)
+    return m.u - hx, m.u + hx, m.v - hy, m.v + hy
 
 
 def label(m: Mount) -> str:

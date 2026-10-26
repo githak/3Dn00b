@@ -234,7 +234,7 @@ def _check_dividers(p: Project) -> list[Issue]:
 
 def mount_name(p: Project, m) -> str:
     index = next((i for i, x in enumerate(p.mounts) if x.id == m.id), 0) + 1
-    return f"Posts {index} ({mounts.label(m)})"
+    return f"Posts {index} ({mounts.BOARDS[m.board].short})"
 
 
 def _check_mounts(p: Project) -> list[Issue]:
@@ -300,11 +300,55 @@ def _check_mounts(p: Project) -> list[Issue]:
                 out.append(Issue(WARNING, f"{hole_name(p, hole)} is under a post of {name}.",
                                  "Move the hole or the posts.", hole.id))
     for a, b in itertools.combinations(p.mounts, 2):
-        (ax, ay), (bx, by) = mounts.half_extents(a), mounts.half_extents(b)
-        if abs(a.u - b.u) < ax + bx and abs(a.v - b.v) < ay + by:
-            out.append(Issue(WARNING, f"{mount_name(p, a)} and {mount_name(p, b)} overlap.",
-                             "Move one of them.", mount_id=b.id))
+        out += _check_stacking(p, a, b)
     return out
+
+
+def _check_stacking(p: Project, a, b) -> list[Issue]:
+    """Two sets of posts whose areas overlap, seen from above.
+
+    That's fine when one board sits high enough above the other: flat boards
+    are approved, boards with tall connectors get a reminder to check.
+    """
+    ax0, ax1, ay0, ay1 = mounts.footprint_box(a)
+    bx0, bx1, by0, by1 = mounts.footprint_box(b)
+    if ax1 <= bx0 or bx1 <= ax0 or ay1 <= by0 or by1 <= ay0:
+        return []
+    lower, upper = sorted((a, b), key=lambda m: mounts.board_bottom(p, m))
+    low_name, up_name = mount_name(p, lower), mount_name(p, upper)
+    # Posts of the upper set stand on the floor: they must not need to go through the lower board.
+    corners = mounts.board_corners(lower)
+    if corners:
+        x0, x1 = min(c[0] for c in corners), max(c[0] for c in corners)
+        y0, y1 = min(c[1] for c in corners), max(c[1] for c in corners)
+        r = mounts.post_radius(upper)
+        if upper.length > lower.length and any(
+                x0 - r < x < x1 + r and y0 - r < y < y1 + r for x, y in mounts.post_positions(upper)):
+            return [Issue(ERROR, f"A post of {up_name} would have to go through the board of "
+                          f"{low_name}.", "Turn or move one of them so the posts stand beside "
+                          "the lower board.", mount_id=upper.id)]
+    if not mounts.board_size(lower):
+        if mounts.board_size(upper) and mounts.board_bottom(p, upper) - mounts.board_top(p, lower) >= -1e-6:
+            return []           # a single post under a board just supports it
+        return [Issue(WARNING, f"{low_name} and {up_name} overlap.", "Move one of them.",
+                      mount_id=b.id)]
+    gap = mounts.board_bottom(p, upper) - mounts.board_top(p, lower)
+    need = mounts.room_above(lower)
+    if gap < need - 1e-6:
+        if gap <= 0:
+            return [Issue(ERROR, f"{low_name} and {up_name} overlap at the same height.",
+                          f"Move one of them, or make the posts of one at least {_mm(need - gap)} "
+                          "taller so it sits above the other.", mount_id=b.id)]
+        return [Issue(ERROR, f"{up_name} sits only {_mm(gap)} above {low_name}, which needs "
+                      f"{_mm(need)} of room above it.",
+                      f"Make the posts of {up_name} {_mm(need - gap)} taller.", mount_id=upper.id)]
+    if not mounts.BOARDS[lower.board].flat:
+        what = mounts.BOARDS[lower.board].tall_parts or "parts"
+        return [Issue(WARNING, f"{up_name} sits {_mm(gap)} above {low_name}. Check that the "
+                      f"{what} of {low_name} fit underneath.",
+                      "Their height varies between board versions; measure yours.",
+                      mount_id=upper.id)]
+    return []
 
 
 def _check_vent(hole: Hole, name: str) -> list[Issue]:
