@@ -9,28 +9,12 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from .model import Mount, Project, flat_clearance, lip_outer_offset, lip_wall
+from .model import (SCREWS, Mount, Project, flat_clearance, has_lip, lid_column_radius,
+                    lid_screw_positions, lip_outer_offset, lip_wall)
 
 BOARD_THICKNESS = 1.6     # standard circuit board thickness
 STACK_AIR = 1.0           # extra room between a board's tallest part and the board above
 ROTATIONS = (0, 90, 180, 270)
-
-
-@dataclass(frozen=True)
-class Screw:
-    pilot: float          # hole the screw cuts its own thread into
-    post: float           # outside diameter of the post
-
-
-# Pilot holes are a little smaller than the screw so it cuts a thread into the
-# plastic; posts are wide enough to leave a strong wall around the hole.
-SCREWS = {
-    "M1": Screw(pilot=0.9, post=3.5),
-    "M2": Screw(pilot=1.7, post=5.0),
-    "M2.5": Screw(pilot=2.2, post=6.0),
-    "M3": Screw(pilot=2.6, post=7.0),
-    "M4": Screw(pilot=3.5, post=9.0),
-}
 
 
 @dataclass(frozen=True)
@@ -172,10 +156,36 @@ def clearance(project: Project, m: Mount, u: float | None = None, v: float | Non
     return min(flat_clearance(project, "bottom", x + du, y + dv) - r for x, y in post_positions(m))
 
 
+COLUMN_ROOM = 0.5      # room kept between a board and a lid screw column
+
+
+def column_clearance(project: Project, m: Mount, u: float | None = None,
+                     v: float | None = None) -> float:
+    """Room (mm) between the set and the lid's screw columns (large if there are none)."""
+    columns = lid_screw_positions(project)
+    if not columns:
+        return 1e9
+    du = 0.0 if u is None else u - m.u
+    dv = 0.0 if v is None else v - m.v
+    r = lid_column_radius(project)
+    corners = board_corners(m)
+    room = 1e9
+    for cx, cy in columns:
+        if corners:
+            x0, x1 = min(c[0] for c in corners) + du, max(c[0] for c in corners) + du
+            y0, y1 = min(c[1] for c in corners) + dv, max(c[1] for c in corners) + dv
+            gap = math.hypot(max(x0 - cx, 0.0, cx - x1), max(y0 - cy, 0.0, cy - y1)) - r
+        else:
+            gap = min(math.dist((cx, cy), (x + du, y + dv)) for x, y in post_positions(m)) \
+                - r - post_radius(m)
+        room = min(room, gap)
+    return room
+
+
 def needed_clearance(project: Project, m: Mount) -> float:
     """Room needed around the set: a little air, plus the lid's lip if the board reaches it."""
     need = 1.0 if board_size(m) else 0.0
-    if project.lid.enabled and board_size(m):
+    if has_lip(project) and board_size(m):
         top = board_bottom(project, m) + BOARD_THICKNESS
         if top > project.outer_height - project.lid.lip_height - project.lid.gap:
             need = max(need, lip_outer_offset(project) + lip_wall(project) + project.lid.gap)
@@ -191,12 +201,26 @@ def clamp_mount(project: Project, m: Mount, u: float, v: float) -> tuple[float, 
     if lim_x < 0 or lim_y < 0:
         return None
     u, v = min(max(u, -lim_x), lim_x), min(max(v, -lim_y), lim_y)
-    for _ in range(150):
-        if clearance(project, m, u, v) >= need - 1e-6:
-            return round(u, 2), round(v, 2)
-        u *= 0.97
-        v *= 0.97
-    return None
+
+    def fits(x, y):
+        return (clearance(project, m, x, y) >= need - 1e-6
+                and column_clearance(project, m, x, y) >= COLUMN_ROOM - 1e-6)
+
+    # Walk straight towards the middle (which handles walls and rounded corners) ...
+    for i in range(101):
+        x, y = u * (1 - i / 100), v * (1 - i / 100)
+        if fits(x, y):
+            return round(x, 2), round(y, 2)
+    # ... else look around the floor for the nearest spot that fits.
+    best = None
+    steps = 30
+    for i in range(-steps, steps + 1):
+        for j in range(-steps, steps + 1):
+            x, y = lim_x * i / steps, lim_y * j / steps
+            d = math.hypot(x - u, y - v)
+            if (best is None or d < best[0]) and fits(x, y):
+                best = (d, x, y)
+    return (round(best[1], 2), round(best[2], 2)) if best else None
 
 
 def new_mount(project: Project, board: str) -> Mount:

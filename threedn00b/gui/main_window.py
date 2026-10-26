@@ -20,7 +20,7 @@ from .. import APP_NAME, geometry, mounts, picking, project_io, validation
 from ..model import (ALONG_U, ALONG_V, BOTTOM, BOX, CYLINDER, FIT_LABELS, FIT_PRESETS,
                      FRONT, HOLE_DIAMETER_RANGE, HOLE_KIND_LABELS, INSIDE, LID, MIN_EDGE,
                      OUTSIDE, RECT, ROUND, SIDE, SIZE_RANGE, SURFACE_LABELS, VENT,
-                     DIVIDER_RANGE, MAX_COMPARTMENTS, TRAY_TEMPLATE, WALL_RANGE, Hole, Project,
+                     DIVIDER_RANGE, LID_STYLE_LABELS, MAX_COMPARTMENTS, SCREWED, SCREWS, TRAY_TEMPLATE, WALL_RANGE, Hole, Project,
                      clamp_hole, compartment_size, default_project, hole_limits)
 from .viewer import Viewer
 
@@ -514,11 +514,26 @@ class MainWindow(QMainWindow):
             lambda on: self.edit("Turn lid on" if on else "Turn lid off",
                                  lambda p: setattr(p.lid, "enabled", on)))
         layout.addWidget(self.lid_check)
-        layout.addWidget(hint("A push-on lid: a flat top with a lip that slides "
-                              "into the box and holds by friction."))
         self.lid_box = QWidget()
-        form = QFormLayout(self.lid_box)
+        form = self.lid_form = QFormLayout(self.lid_box)
         form.setContentsMargins(0, 0, 0, 0)
+        self.lid_style = QComboBox()
+        for key, text in LID_STYLE_LABELS.items():
+            self.lid_style.addItem(text, key)
+        self.lid_style.activated.connect(
+            lambda _: self.edit("Change lid type",
+                                lambda p: setattr(p.lid, "style", self.lid_style.currentData())))
+        form.addRow("Type", self.lid_style)
+        self.lid_style_hint = hint("")
+        form.addRow(self.lid_style_hint)
+        self.lid_screw = QComboBox()
+        for key in SCREWS:
+            if key != "M1":
+                self.lid_screw.addItem(f"{key} screws", key)
+        self.lid_screw.activated.connect(
+            lambda _: self.edit("Change lid screws",
+                                lambda p: setattr(p.lid, "screw", self.lid_screw.currentData())))
+        form.addRow("Screws", self.lid_screw)
         self.fit_combo = QComboBox()
         for key in ("tight", "normal", "loose", "custom"):
             gap = f" ({FIT_PRESETS[key]:.2f} mm gap)" if key in FIT_PRESETS else ""
@@ -545,10 +560,8 @@ class MainWindow(QMainWindow):
                                 merge="lip"))
         form.addRow("Lip depth", self.lip_height)
         layout.addWidget(self.lid_box)
-        layout.addWidget(hint(
-            "Normal fits most printers. If your lid ends up too tight, choose Loose "
-            "and print just the lid again; if it falls off, choose Tight.\n\n"
-            "The lid is exported upside down, which is the best way to print it."))
+        self.lid_tip = hint("")
+        layout.addWidget(self.lid_tip)
         layout.addStretch()
         return page
 
@@ -638,6 +651,25 @@ class MainWindow(QMainWindow):
 
         set_quietly(self.lid_check, p.lid.enabled)
         self.lid_box.setEnabled(p.lid.enabled)
+        screwed = p.lid.style == SCREWED
+        set_quietly(self.lid_style, p.lid.style)
+        set_quietly(self.lid_screw, p.lid.screw)
+        self.lid_form.setRowVisible(self.lid_screw, screwed)
+        for widget in (self.fit_combo, self.gap_spin, self.lip_height):
+            self.lid_form.setRowVisible(widget, not screwed)
+        if screwed:
+            self.lid_style_hint.setText("A flat lid held by a screw in each corner. The box gets a "
+                                        "column in each corner for the screws to bite into.")
+            self.lid_tip.setText("Screws cut their own thread into the plastic. Tighten them "
+                                 "gently, just until the lid is snug.\n\nThe lid is exported "
+                                 "upside down, which is the best way to print it.")
+        else:
+            self.lid_style_hint.setText("A flat top with a lip that slides into the box and "
+                                        "holds by friction.")
+            self.lid_tip.setText("Normal fits most printers. If your lid ends up too tight, "
+                                 "choose Loose and print just the lid again; if it falls off, "
+                                 "choose Tight.\n\nThe lid is exported upside down, which is "
+                                 "the best way to print it.")
         set_quietly(self.fit_combo, p.lid.fit)
         set_quietly(self.gap_spin, p.lid.gap)
         self.gap_spin.setEnabled(p.lid.fit == "custom")

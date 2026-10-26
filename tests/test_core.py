@@ -813,3 +813,109 @@ def test_parts_height_can_be_changed():
     data = project_io.to_dict(p)
     del data["project"]["mounts"][0]["parts_height"]     # files from 0.6.0
     assert mounts.parts_height(project_io.from_dict(data).mounts[0]) == 4.0
+
+
+# ---- screwed-down lid --------------------------------------------------------
+
+from threedn00b.model import SCREWED, lid_screw_positions  # noqa: E402
+
+
+def screwed_box(**kw):
+    p = box_with_lid(**kw)
+    p.lid.style = SCREWED
+    return p
+
+
+def test_screw_columns_sit_in_the_corners():
+    p = screwed_box(corner_radius=0)              # inside 76 x 56, M3 column radius 3.5
+    assert sorted(lid_screw_positions(p)) == [(-34.5, -24.5), (-34.5, 24.5), (34.5, -24.5), (34.5, 24.5)]
+    p = screwed_box(corner_radius=15)             # inside corner radius 13: tangent to the curve
+    x, y = lid_screw_positions(p)[0]
+    arc_centre = (-(38 - 13), -(28 - 13))
+    assert math.dist((x, y), arc_centre) == pytest.approx(13 - 3.5)
+
+
+@pytest.mark.parametrize("shape,corner", [(BOX, 0.0), (BOX, 4.0), (BOX, 20.0), (CYLINDER, 0.0)])
+def test_screwed_lid_geometry(shape, corner):
+    p = default_project(shape)
+    p.corner_radius = corner
+    p.lid.enabled, p.lid.style = True, SCREWED
+    parts = geometry.build_parts(p)
+    body, lid = parts.body, parts.lid
+    for solid in (body, lid):
+        assert geometry.piece_count(solid) == 1 and _edges_shared_twice(solid)
+    assert body.bounding_box() == pytest.approx(geometry.build_body(default_project(shape)).bounding_box())
+    assert lid.bounding_box()[2] == pytest.approx(p.outer_height)        # flat: no lip
+    assert geometry.overlap_volume(body, lid) < 1e-6
+    for x, y in lid_screw_positions(p):
+        # Pilot hole from the top, 16 mm deep; the lid's hole goes right through.
+        assert body.ray_cast([x, y, 200], [x, y, -5])[0].position[2] == pytest.approx(p.outer_height - 16)
+        assert not lid.ray_cast([x, y, 200], [x, y, p.outer_height - 0.5])
+    assert not validation.has_errors(validation.check(p, parts))
+
+
+def test_screwed_lid_checks():
+    p = screwed_box(width=18, depth=18, corner_radius=0)       # 14 mm inside, columns need 16
+    assert any("too small for the lid's screw columns" in i.message for i in validation.check(p))
+    p = screwed_box(height=7)                                  # 4 mm for the screws to bite into
+    assert any("only have" in i.message for i in validation.check(p))
+    p = screwed_box()
+    info = next(i for i in validation.check(p) if "screws, up to" in i.message)
+    assert "4 M3 screws, up to 17.5 mm" in info.message
+
+
+def test_wall_hole_near_a_screw_column():
+    p = screwed_box(corner_radius=0)
+    hole = Hole(FRONT, 6, 33, 0)                  # column covers 31 .. 38 along the front wall
+    p.holes = [hole]
+    issue = next(i for i in validation.check(p) if i.hole_id)
+    assert issue.level == "error" and "screw column" in issue.message
+    hole.u, hole.v = issue.fix
+    assert not validation.has_errors(validation.check(p))
+    hole.v = 14                     # high up is fine: a screwed lid has no lip
+    assert not validation.has_errors(validation.check(p))
+    hole.v = 18                     # off the top edge: not blamed on the column
+    issue = next(i for i in validation.check(p) if i.hole_id)
+    assert "runs off the edge" in issue.message
+
+
+def test_round_wall_hole_between_columns():
+    p = default_project(CYLINDER)
+    p.lid.enabled, p.lid.style = True, SCREWED
+    p.holes = [Hole(SIDE, 6, 45, 0)]
+    assert any("screw columns" in i.message for i in validation.check(p))
+    p.holes = [Hole(SIDE, 6, 0, 0)]               # columns are at 45°, 135° ...
+    assert not validation.has_errors(validation.check(p))
+
+
+def test_floor_and_lid_holes_near_columns():
+    p = screwed_box(corner_radius=0)
+    p.holes = [Hole(BOTTOM, 4, 34, 24), Hole(LID, 4, 32, 22)]
+    msgs = messages(validation.check(p))
+    assert "under one of the lid's screw columns" in msgs and "too close to a screw hole" in msgs
+
+
+def test_board_hitting_a_screw_column_gets_a_fix():
+    p = screwed_box(width=100, depth=74, height=40, corner_radius=0)
+    m = mounts.new_mount(p, "rpi-ab")
+    p.mounts = [m]
+    assert not validation.has_errors(validation.check(p))   # placed clear of the columns
+    m.u, m.v = 4, 4                 # still clear of the walls, but a corner hits a column
+    issues = [i for i in validation.check(p) if i.mount_id]
+    assert issues and "screw columns" in issues[0].message
+    m.u, m.v = issues[0].fix
+    assert not validation.has_errors(validation.check(p))
+
+
+def test_screwed_lid_round_trip(tmp_path):
+    p = screwed_box()
+    p.lid.screw = "M2.5"
+    path = tmp_path / "screwed.3dn00b"
+    project_io.save_project(p, path)
+    assert project_io.load_project(path) == p
+    data = project_io.to_dict(p)
+    data["project"]["lid"]["style"] = "magnetic"
+    with pytest.raises(project_io.ProjectFileError):
+        project_io.from_dict(data)
+    del data["project"]["lid"]["style"]           # older files: push-on lid
+    assert project_io.from_dict(data).lid.style == "push"

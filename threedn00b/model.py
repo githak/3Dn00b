@@ -106,9 +106,37 @@ class Hole:
         return [(0.0, first + i * pitch, self.width, self.slot) for i in range(n)]
 
 
+@dataclass(frozen=True)
+class Screw:
+    pilot: float          # hole the screw cuts its own thread into
+    post: float           # outside diameter of a post or column around it
+    nominal: float        # the screw's own diameter (M3 = 3 mm)
+
+    @property
+    def clearance(self) -> float:
+        """Hole the screw slides through freely (in the lid)."""
+        return self.nominal + 0.4
+
+
+# Pilot holes are a little smaller than the screw so it cuts a thread into the
+# plastic; posts are wide enough to leave a strong wall around the hole.
+SCREWS = {
+    "M1": Screw(pilot=0.9, post=3.5, nominal=1.0),
+    "M2": Screw(pilot=1.7, post=5.0, nominal=2.0),
+    "M2.5": Screw(pilot=2.2, post=6.0, nominal=2.5),
+    "M3": Screw(pilot=2.6, post=7.0, nominal=3.0),
+    "M4": Screw(pilot=3.5, post=9.0, nominal=4.0),
+}
+
+PUSH_ON, SCREWED = "push", "screwed"
+LID_STYLE_LABELS = {PUSH_ON: "Push-on (friction fit)", SCREWED: "Screwed down"}
+
+
 @dataclass
 class Lid:
     enabled: bool = False
+    style: str = PUSH_ON           # PUSH_ON: lip that holds by friction; SCREWED: flat, with screws
+    screw: str = "M3"              # screwed lids: key of SCREWS
     fit: str = "normal"            # key of FIT_PRESETS, or "custom"
     custom_gap: float = 0.25       # used when fit == "custom"
     thickness: float = 2.0         # thickness of the flat top
@@ -289,6 +317,62 @@ def comfortable_margin(project: Project) -> float:
     return max(1.5, project.wall)
 
 
+def has_lip(project: Project) -> bool:
+    """Push-on lids have a lip that reaches down inside the walls."""
+    return project.lid.enabled and project.lid.style == PUSH_ON
+
+
+def has_screw_lid(project: Project) -> bool:
+    return project.lid.enabled and project.lid.style == SCREWED
+
+
+def lid_column_radius(project: Project) -> float:
+    return SCREWS[project.lid.screw].post / 2
+
+
+def lid_screw_positions(project: Project) -> list[tuple[float, float]]:
+    """Where the screws of a screwed-down lid go: one column in each corner.
+
+    Each column touches both walls of its corner (or, with rounded corners,
+    the curve), so it fuses with the walls.
+    """
+    if not has_screw_lid(project):
+        return []
+    r = lid_column_radius(project)
+    if project.shape == CYLINDER:
+        reach = project.outer_diameter / 2 - project.wall - r
+        return [(reach * math.cos(math.radians(a)), reach * math.sin(math.radians(a)))
+                for a in (45.0, 135.0, 225.0, 315.0)]
+    ri = project.inner_corner_radius
+    hx, hy = project.inner_width / 2, project.inner_depth / 2
+    if ri > r:
+        inset = ri - (ri - r) / math.sqrt(2)      # tangent to the rounded corner
+    else:
+        inset = r                                 # tangent to both walls
+    return [(sx * (hx - inset), sy * (hy - inset)) for sx in (-1, 1) for sy in (-1, 1)]
+
+
+def lid_pilot_depth(project: Project) -> float:
+    """How deep the screw holes in the columns go (never into the floor)."""
+    return max(0.0, min(16.0, project.inner_height - 1.0))
+
+
+def wall_corner_zone(project: Project, surface: str) -> float:
+    """Distance from the end of a wall's inside face where holes can't go.
+
+    That's the rounded corner, or the lid's screw column if it is bigger.
+    """
+    zone = project.inner_corner_radius
+    positions = lid_screw_positions(project)
+    if positions and project.shape != CYLINDER:
+        r = lid_column_radius(project)
+        if surface in (FRONT, BACK):
+            zone = max(zone, project.inner_width / 2 - abs(positions[0][0]) + r)
+        else:
+            zone = max(zone, project.inner_depth / 2 - abs(positions[0][1]) + r)
+    return zone
+
+
 def lip_outer_offset(project: Project) -> float:
     """Inward offset from the box's inner wall to the outside of the lid lip."""
     return project.lid.gap
@@ -357,7 +441,7 @@ def extent_limits(project: Project, surface: str, half_u: float, half_v: float,
     if surface in (FRONT, BACK, LEFT, RIGHT, SIDE):
         z_lo = project.bottom + half_v + margin
         z_hi = project.outer_height - half_v - margin
-        if project.lid.enabled:
+        if has_lip(project):
             # The lid's lip covers the top of the wall on the inside.
             z_hi -= project.lid.lip_height
         v_lo, v_hi = z_lo - project.outer_height / 2, z_hi - project.outer_height / 2
@@ -365,7 +449,7 @@ def extent_limits(project: Project, surface: str, half_u: float, half_v: float,
             u_lo, u_hi = -180.0, 180.0
         else:
             span = project.inner_width if surface in (FRONT, BACK) else project.inner_depth
-            half = span / 2 - project.inner_corner_radius - half_u - margin
+            half = span / 2 - wall_corner_zone(project, surface) - half_u - margin
             u_lo, u_hi = -half, half
     else:
         hw, hd = _flat_half_extents(project, surface)
@@ -379,7 +463,7 @@ def extent_limits(project: Project, surface: str, half_u: float, half_v: float,
 def _flat_half_extents(project: Project, surface: str):
     """Half width/depth of the usable flat area of the bottom or lid."""
     hw, hd = project.inner_width / 2, project.inner_depth / 2
-    if surface == LID:
+    if surface == LID and has_lip(project):
         inset = lip_outer_offset(project) + lip_wall(project)
         hw, hd = hw - inset, hd - inset
     return hw, hd
@@ -390,7 +474,7 @@ def _flat_corner_radius(project: Project, surface: str) -> float:
         hw, _ = _flat_half_extents(project, surface)
         return max(hw, 0.0)
     rad = project.inner_corner_radius
-    if surface == LID:
+    if surface == LID and has_lip(project):
         rad = max(0.0, rad - lip_outer_offset(project) - lip_wall(project))
     return rad
 
@@ -427,11 +511,11 @@ def hole_edge_clearance(project: Project, hole: Hole) -> float:
         return _flat_hole_clearance(project, hole, hole.u, hole.v)
     z = project.outer_height / 2 + hole.v
     z_lo = project.bottom
-    z_hi = project.outer_height - (project.lid.lip_height if project.lid.enabled else 0.0)
+    z_hi = project.outer_height - (project.lid.lip_height if has_lip(project) else 0.0)
     clear = min(z - hv - z_lo, z_hi - (z + hv))
     if hole.surface != SIDE:
         span = project.inner_width if hole.surface in (FRONT, BACK) else project.inner_depth
-        half = span / 2 - project.inner_corner_radius
+        half = span / 2 - wall_corner_zone(project, hole.surface)
         clear = min(clear, half - abs(hole.u) - hu)
     return clear
 

@@ -417,3 +417,20 @@ def test_parts_on_top_field(window):
     assert "9.5 mm of room" in window.mount_info.text()
     window.add_mount("single")
     assert not window.parts_height.isVisibleTo(window)
+
+
+def test_lid_type_controls(window):
+    window.lid_check.setChecked(True)
+    form = window.lid_form
+    assert form.isRowVisible(window.fit_combo) and not form.isRowVisible(window.lid_screw)
+    window.lid_style.setCurrentIndex(window.lid_style.findData("screwed"))
+    window.lid_style.activated.emit(window.lid_style.currentIndex())
+    assert window.project.lid.style == "screwed"
+    assert form.isRowVisible(window.lid_screw) and not form.isRowVisible(window.fit_combo)
+    window.lid_screw.setCurrentIndex(window.lid_screw.findData("M4"))
+    window.lid_screw.activated.emit(window.lid_screw.currentIndex())
+    assert window.project.lid.screw == "M4"
+    assert not validation_errors(window)
+    window.undo_stack.undo()
+    window.undo_stack.undo()
+    assert window.project.lid.style == "push"

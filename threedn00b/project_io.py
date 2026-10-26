@@ -11,10 +11,12 @@ from pathlib import Path
 import numpy as np
 
 from . import geometry, mounts
-from .model import HOLE_KIND_LABELS, SHAPES, Dividers, Hole, Lid, Mount, Project
+from .model import (HOLE_KIND_LABELS, LID_STYLE_LABELS, SCREWS, SHAPES, Dividers, Hole, Lid,
+                    Mount, Project)
 
 FORMAT_NAME = "3dn00b-project"
-FORMAT_VERSION = 5   # 2: rectangular holes; 3: air vents; 4: dividers; 5: screw posts
+FORMAT_VERSION = 6   # 2: rectangular holes; 3: air vents; 4: dividers; 5: screw posts;
+                     # 6: screwed-down lids
 PROJECT_SUFFIX = ".3dn00b"
 
 
@@ -47,7 +49,8 @@ def from_dict(data: dict) -> Project:
         raise ProjectFileError("The project file is damaged.") from exc
     if (project.shape not in SHAPES or any(h.kind not in HOLE_KIND_LABELS for h in holes)
             or any(m.board not in mounts.BOARDS or m.screw not in mounts.SCREWS
-                   or m.rotation not in mounts.ROTATIONS for m in mount_list)):
+                   or m.rotation not in mounts.ROTATIONS for m in mount_list)
+            or lid.style not in LID_STYLE_LABELS or lid.screw not in SCREWS):
         raise ProjectFileError("The project uses a shape this version doesn't know.")
     project.lid, project.holes, project.dividers = lid, holes, dividers
     project.mounts = mount_list

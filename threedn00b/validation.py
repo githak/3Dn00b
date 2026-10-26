@@ -7,11 +7,13 @@ broken or unprintable), "warning" is probably a mistake, "info" is advice.
 from __future__ import annotations
 
 import itertools
+import math
 from dataclasses import dataclass
 
 from . import geometry, mounts
-from .model import (ALONG_V, BACK, BOTTOM, BOX, FRONT, LEFT, LID, MIN_EDGE, RIGHT,
-                    SURFACE_LABELS, VENT, Hole, Project, clamp_hole, comfortable_margin,
+from .model import (ALONG_V, BACK, BOTTOM, BOX, CYLINDER, FRONT, LEFT, LID, MIN_EDGE, RIGHT,
+                    SCREWS, SIDE, SURFACE_LABELS, VENT, Hole, Project, has_lip, has_screw_lid,
+                    lid_pilot_depth, lid_screw_positions, wall_corner_zone, clamp_hole, comfortable_margin,
                     compartment_size, divider_positions, divider_top, has_dividers,
                     hole_edge_clearance, hole_limits, lip_outer_offset, lip_wall, opening_gap,
                     point_near_opening)
@@ -106,6 +108,8 @@ def _check_size(p: Project) -> list[Issue]:
 def _check_lid(p: Project) -> list[Issue]:
     if not p.lid.enabled:
         return []
+    if has_screw_lid(p):
+        return _check_screw_lid(p)
     lid = p.lid
     out = []
     lip_inside = min(p.inner_width, p.inner_depth) - 2 * (lip_outer_offset(p) + lip_wall(p))
@@ -129,6 +133,66 @@ def _check_lid(p: Project) -> list[Issue]:
                          "3 to 6 mm works well for most boxes."))
     out.append(Issue(INFO, "How well the lid fits depends on your printer and material.",
                      "If it's too tight or too loose, change the Fit and reprint just the lid."))
+    return out
+
+
+def _check_screw_lid(p: Project) -> list[Issue]:
+    out = []
+    lid = p.lid
+    screw = SCREWS[lid.screw]
+    r = screw.post / 2
+    positions = lid_screw_positions(p)
+    if p.shape == CYLINDER:
+        crowded = math.dist(positions[0], positions[1]) < 2 * r + 1
+    else:
+        crowded = min(p.inner_width, p.inner_depth) < 4 * r + 2
+    if crowded:
+        out.append(Issue(ERROR, "The box is too small for the lid's screw columns.",
+                         "Make the box bigger, or use smaller screws or a push-on lid."))
+    depth = lid_pilot_depth(p)
+    if depth < 5:
+        out.append(Issue(WARNING, f"The lid screws only have {_mm(depth)} to bite into.",
+                         "Make the box taller so they hold better."))
+    if lid.thickness < 1.6:
+        out.append(Issue(WARNING, f"A lid of {_mm(lid.thickness)} is thin and may crack at the screws.",
+                         "2 mm or more is recommended."))
+    if lid.screw == "M1":
+        out.append(Issue(WARNING, f"Holes for M1 screws are tiny ({screw.pilot} mm) and may close "
+                         "up when printed.", "You may need to drill them out."))
+    longest = math.floor((lid.thickness + depth - 0.5) * 2) / 2
+    out.append(Issue(INFO, f"The lid needs {len(positions)} {lid.screw} screws, up to {longest:g} mm "
+                     "long. They cut their own thread into the corner columns.",
+                     "Don't overtighten them, or the thread in the plastic can strip."))
+    # Things that would run into the screw columns.
+    for hole in p.holes:
+        name = hole_name(p, hole)
+        hu, _ = hole.half_extents
+        if hole.surface == SIDE:
+            inner_r = p.outer_diameter / 2 - p.wall
+            for x, y in positions:
+                angle = math.degrees(math.atan2(x, -y))
+                arc = math.radians(abs((hole.u - angle + 180.0) % 360.0 - 180.0)) * inner_r
+                if arc - hu - r < MIN_EDGE:
+                    out.append(Issue(ERROR, f"{name} runs into one of the lid's screw columns.",
+                                     "Turn it so it sits between two columns.", hole.id))
+                    break
+        elif hole.surface == BOTTOM:
+            if any(point_near_opening(p, hole, x, y, r) for x, y in positions):
+                out.append(Issue(WARNING, f"{name} is under one of the lid's screw columns.",
+                                 "Move it away from the corner.", hole.id))
+        elif hole.surface == LID:
+            for x, y in positions:
+                screw_hole = Hole(LID, diameter=screw.clearance, u=x, v=y)
+                if opening_gap(p, hole, screw_hole) < 1.0:
+                    out.append(Issue(WARNING, f"{name} is too close to a screw hole in the lid.",
+                                     "Move it away from the corner.", hole.id))
+                    break
+    for m in p.mounts:
+        if mounts.column_clearance(p, m) < mounts.COLUMN_ROOM - 1e-6:
+            out.append(Issue(ERROR, f"{mount_name(p, m)} runs into one of the lid's screw columns.",
+                             "Move it away from the corner.", mount_id=m.id,
+                             fix=mounts.clamp_mount(p, m, m.u, m.v),
+                             fix_label="Move to the nearest spot that fits"))
     return out
 
 
@@ -159,6 +223,10 @@ def _check_holes(p: Project) -> list[Issue]:
         if _behind_lip(p, hole):
             out.append(Issue(ERROR, f"{name} is behind the lid's lip, so the lid would cover it from inside.",
                              "Move the hole lower, or make the lid's lip shorter.", hole.id, fix, fix_label))
+        elif clearance < MIN_EDGE and _near_screw_column(p, hole):
+            out.append(Issue(ERROR, f"{name} runs into the lid's screw column in the corner.",
+                             "Move it further from the corner or make it smaller.", hole.id, fix,
+                             fix_label))
         elif clearance < MIN_EDGE:
             out.append(Issue(ERROR, f"{name} runs off the edge of the {where}.",
                              "Move it further in or make it smaller.", hole.id, fix, fix_label))
@@ -208,7 +276,7 @@ def _check_dividers(p: Project) -> list[Issue]:
     if d.thickness < 1.0:
         out.append(Issue(WARNING, f"Dividers of {_mm(d.thickness)} are thin and may break.",
                          "1.2 to 2 mm works well."))
-    if p.lid.enabled and d.height == 0:
+    if has_lip(p) and d.height == 0:
         out.append(Issue(INFO, "The dividers have small notches at their ends so the lid's lip fits.",
                          "They also stop just below the lid."))
     xs, ys = divider_positions(p)
@@ -366,8 +434,19 @@ def _check_vent(hole: Hole, name: str) -> list[Issue]:
     return out
 
 
+def _near_screw_column(p: Project, hole: Hole) -> bool:
+    """Is a wall hole stopped by a screw column (rather than by the wall's end)?"""
+    if not has_screw_lid(p) or hole.surface not in (FRONT, BACK, LEFT, RIGHT):
+        return False
+    span = p.inner_width if hole.surface in (FRONT, BACK) else p.inner_depth
+    reach = abs(hole.u) + hole.half_extents[0]
+    room_with_column = span / 2 - wall_corner_zone(p, hole.surface) - reach
+    room_without = span / 2 - p.inner_corner_radius - reach
+    return room_with_column < MIN_EDGE <= room_without
+
+
 def _behind_lip(p: Project, hole: Hole) -> bool:
-    if not p.lid.enabled or hole.surface in (BOTTOM, LID):
+    if not has_lip(p) or hole.surface in (BOTTOM, LID):
         return False
     z = p.outer_height / 2 + hole.v
     return z + hole.half_extents[1] > p.outer_height - p.lid.lip_height

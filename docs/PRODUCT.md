@@ -61,6 +61,13 @@ Defaults I chose myself, which are easy to change:
   sockets (Pi 3/4/5, 3 A+, Arduino Uno, custom) get a reminder to check, since
   their parts vary. Too little room, or a post that would have to pass through
   the lower board, is an error.
+- Screwed-down lid (0.7): a lid type next to the push-on lid. Flat lid, no lip,
+  clearance holes in the corners; the box gets a full-height column in each
+  corner (tangent to the walls or the rounded corner; four columns spaced around
+  a round container) with a pilot hole the screw cuts its own thread into,
+  16 mm deep at most and never into the floor. Wall holes, floor holes, lid
+  holes and circuit boards are kept clear of the columns, with fixes where
+  possible.
 - Push-on lid that follows the box size, with fit presets.
 - Plain-language checks covering impossible sizes, thin walls, holes off the
   edge, holes behind the lid lip, overlapping or too-close holes, a lid that
@@ -78,10 +85,9 @@ STL import and editing.
 
 ## Postponed (candidates for later, in rough priority order)
 
-1. A screw-fastened lid (can reuse the screw posts).
-2. Snap-fit and sliding lids. A threaded lid for round containers may come later.
-3. 3MF export, if users need it. STEP is unlikely, since the geometry engine is mesh-based.
-4. A packaged app (Flatpak or AppImage).
+1. Snap-fit and sliding lids. A threaded lid for round containers may come later.
+2. 3MF export, if users need it. STEP is unlikely, since the geometry engine is mesh-based.
+3. A packaged app (Flatpak or AppImage).
 
 Each addition must pass the brief's test: does it make a common beginner task
 much easier, without CAD vocabulary, and without making the interface busier?
@@ -94,7 +100,7 @@ much easier, without CAD vocabulary, and without making the interface busier?
 | GUI | PySide6 (Qt 6), LGPL | Native-looking Linux desktop app, installs from pip |
 | 3D preview | pyqtgraph `GLViewWidget` with a custom soft-lit shader | Small, pure Python, works on integrated graphics (OpenGL 2-era shaders) |
 | Geometry | **Manifold** (`manifold3d`), Apache-2.0 | Fast, robust Boolean operations whose results are **always watertight**. That is exactly what an STL needs. It is a small pip wheel with no system dependencies |
-| Project files | Versioned JSON (`"format": "3dn00b-project", "version": 5`) | Human-readable, diffable, forward-compatible |
+| Project files | Versioned JSON (`"format": "3dn00b-project", "version": 6`) | Human-readable, diffable, forward-compatible |
 
 **Why not CadQuery or build123d (OpenCascade)?** They are excellent, but they
 bring a large binary dependency (OCP), a slower and more fragile pipeline for

@@ -13,7 +13,8 @@ import numpy as np
 from manifold3d import CrossSection, Error, JoinType, Manifold, OpType
 
 from .model import (BACK, BOTTOM, CYLINDER, FRONT, LEFT, LID, RECT, RIGHT, SIDE, VENT,
-                    Hole, Project, divider_positions, divider_top, has_dividers,
+                    SCREWS, Hole, Project, divider_positions, divider_top, has_dividers, has_lip,
+                    has_screw_lid, lid_pilot_depth, lid_screw_positions,
                     lip_outer_offset, lip_wall, vent_openings)
 
 
@@ -87,6 +88,9 @@ def build_body(project: Project) -> Manifold:
     posts = build_posts(project)
     if posts is not None:
         body = body + posts
+    columns = build_lid_columns(project)
+    if columns is not None:
+        body = body + columns
     cutters = [_hole_cutter(project, hole) for hole in project.holes if hole.surface != LID]
     cutters = [c for c in cutters if c is not None]
     if cutters:
@@ -113,7 +117,7 @@ def build_dividers(project: Project) -> Manifold | None:
     walls = Manifold.batch_boolean(slabs, OpType.Add)
     # Never poke out through rounded corners.
     walls = walls ^ _prism(footprint(project), project.outer_height, 0.0)
-    if project.lid.enabled:
+    if has_lip(project):
         # Notch the ends where the lid's lip goes, with the fit gap all round.
         gap = project.lid.gap
         inner = footprint(project, project.wall)
@@ -147,12 +151,36 @@ def build_posts(project: Project) -> Manifold | None:
     return Manifold.batch_boolean(posts, OpType.Add) ^ _prism(footprint(project), project.outer_height, 0.0)
 
 
+def build_lid_columns(project: Project) -> Manifold | None:
+    """Corner columns for a screwed-down lid, with a pilot hole from the top."""
+    positions = lid_screw_positions(project)
+    if not positions:
+        return None
+    screw = SCREWS[project.lid.screw]
+    r, pilot = screw.post / 2, screw.pilot / 2
+    h, z0 = project.outer_height, project.bottom - 0.01
+    depth = lid_pilot_depth(project)
+    columns = []
+    for x, y in positions:
+        column = Manifold.cylinder(h - z0, r, -1.0, _circle_segments(r, 0.5, 24, 96)).translate([x, y, z0])
+        hole = Manifold.cylinder(depth + 1.0, pilot, -1.0, _circle_segments(pilot, 0.4, 16, 48))
+        columns.append(column - hole.translate([x, y, h - depth]))
+    # Clip to the outside of the box so nothing pokes out through the walls.
+    return Manifold.batch_boolean(columns, OpType.Add) ^ _prism(footprint(project), h, 0.0)
+
+
 def build_lid(project: Project) -> Manifold | None:
     lid_opts = project.lid
     if not lid_opts.enabled:
         return None
     h = project.outer_height
     lid = _prism(footprint(project), lid_opts.thickness, h)
+    if has_screw_lid(project):
+        d = SCREWS[lid_opts.screw].clearance
+        holes = [Manifold.cylinder(lid_opts.thickness + 2.0, d / 2, -1.0, _circle_segments(d / 2, 0.4, 16, 48))
+                 .translate([x, y, h - 1.0]) for x, y in lid_screw_positions(project)]
+        lid = lid - Manifold.batch_boolean(holes, OpType.Add)
+        return _cut_lid_holes(project, lid)
     lip_out_inset = project.wall + lip_outer_offset(project)
     # The lip reaches 0.01 mm into the plate so the union is a single solid.
     lip_outer = _prism(footprint(project, lip_out_inset), lid_opts.lip_height + 0.01,
@@ -162,6 +190,10 @@ def build_lid(project: Project) -> Manifold | None:
                            lid_opts.lip_height + 1.0, h - lid_opts.lip_height - 0.5)
         lip = lip_outer - lip_inner if lip_inner is not None else lip_outer
         lid = lid + lip
+    return _cut_lid_holes(project, lid)
+
+
+def _cut_lid_holes(project: Project, lid: Manifold) -> Manifold:
     cutters = [_hole_cutter(project, hole) for hole in project.holes if hole.surface == LID]
     cutters = [c for c in cutters if c is not None]
     if cutters:

@@ -8,7 +8,7 @@ Software for people getting into 3D printing and want to start with something ea
 sizes in millimetres, add holes and a lid, and export files your slicer can
 print. No sketches, no constraints, no feature trees.
 
-## What it can do (version 0.6)
+## What it can do (version 0.7)
 
 - **Box** (with rounded corners) or **round container**.
 - Sizes as **outside size** or **inside space**, with a single switch.
@@ -37,6 +37,9 @@ print. No sketches, no constraints, no feature trees.
   to leave room for the lower board's parts (set under "Parts on top").
 - A **push-on lid** with a lip and a Tight / Normal / Loose fit (or a custom
   gap). It resizes itself with the box.
+- Or a **screwed-down lid**: a flat lid held by a screw in each corner (M2 to M4).
+  The box gets a column in each corner for the screws to cut their own thread
+  into, and the app tells you how many screws you need and how long they can be.
 - **Checks in plain language**, for example a hole running off the edge of a
   wall, a hole hidden behind the lid's lip, holes that overlap, walls that are
   too thin, or a lid that won't fit. Many come with a one-click **Fix** that
@@ -89,7 +92,8 @@ app on Python 3.11, and 3Dn00b now avoids that version.)
    that surface it sits. Positions
    are measured from the middle of the surface, so `0` means centred.
 3. **Posts** (optional): add screw posts for a circuit board.
-4. **Lid**: tick **Add a lid** and choose a fit.
+4. **Lid**: tick **Add a lid**, then choose a push-on lid (and its fit) or a
+   screwed-down lid (and its screw size).
 5. **Check & Export**: read the checks, fix anything marked ✖ and click
    **Export for printing**.
 
@@ -99,7 +103,7 @@ add a hole. Each drag is one step for Undo.
 
 ## Examples
 
-The `examples/` folder has a Raspberry Pi box, a screw box, a screw tray with six compartments,
+The `examples/` folder has a Raspberry Pi box, a Pi Zero box with a screwed-down lid, a screw box, a screw tray with six compartments,
 a pencil cup and a small sensor enclosure with a USB-C opening and an air vent
 in the lid.
 
