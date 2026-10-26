@@ -143,3 +143,90 @@ def export_stl_files(project: Project, folder: str | Path, stem: str | None = No
         write_stl(solid, path, f"{project.name} {part}")
         written.append(path)
     return written
+
+
+# ---------------------------------------------------------------------------
+# 3MF export: all printable parts in one file, laid out on the build plate.
+# ---------------------------------------------------------------------------
+
+_3MF_CONTENT_TYPES = """<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/>
+</Types>
+"""
+_3MF_RELS = """<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Target="/3D/3dmodel.model" Id="rel0"
+    Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/>
+</Relationships>
+"""
+_3MF_NS = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
+PART_SPACING = 10.0       # gap between parts on the build plate
+
+
+def _xml_text(value: str) -> str:
+    from xml.sax.saxutils import escape
+    return escape(value, {'"': "&quot;"})
+
+
+def _mesh_xml(solid) -> str:
+    verts, tris = geometry.mesh_arrays(solid)
+    vertices = "\n".join(f'<vertex x="{x:.4f}" y="{y:.4f}" z="{z:.4f}"/>' for x, y, z in verts)
+    triangles = "\n".join(f'<triangle v1="{a}" v2="{b}" v3="{c}"/>' for a, b, c in tris)
+    return f"<mesh>\n<vertices>\n{vertices}\n</vertices>\n<triangles>\n{triangles}\n</triangles>\n</mesh>"
+
+
+def write_3mf(parts: dict, path: str | Path, title: str) -> None:
+    """Write named solids (already flat side down) side by side into one 3MF file."""
+    import zipfile
+    objects, items = [], []
+    widths = [solid.bounding_box()[3] - solid.bounding_box()[0] for solid in parts.values()]
+    x = -(sum(widths) + PART_SPACING * (len(widths) - 1)) / 2     # centre the row of parts
+    for index, ((name, solid), width) in enumerate(zip(parts.items(), widths), start=1):
+        box = solid.bounding_box()
+        offset = x + width / 2 - (box[0] + box[3]) / 2
+        objects.append(f'<object id="{index}" name="{_xml_text(title + " " + name)}" type="model">\n'
+                       f'{_mesh_xml(solid)}\n</object>')
+        items.append(f'<item objectid="{index}" transform="1 0 0 0 1 0 0 0 1 {offset:.4f} 0 0"/>')
+        x += width + PART_SPACING
+    model = (f'<?xml version="1.0" encoding="UTF-8"?>\n'
+             f'<model unit="millimeter" xml:lang="en-US" xmlns="{_3MF_NS}">\n'
+             f'<metadata name="Title">{_xml_text(title)}</metadata>\n'
+             f'<metadata name="Application">3Dn00b</metadata>\n'
+             '<resources>\n' + "\n".join(objects) + '\n</resources>\n'
+             '<build>\n' + "\n".join(items) + '\n</build>\n</model>\n')
+    path = Path(path)
+    tmp = path.with_name(path.name + ".tmp")
+    with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("[Content_Types].xml", _3MF_CONTENT_TYPES)
+        zf.writestr("_rels/.rels", _3MF_RELS)
+        zf.writestr("3D/3dmodel.model", model)
+    tmp.replace(path)
+
+
+def read_3mf(path: str | Path) -> list[dict]:
+    """Read back a 3MF file (used by tests): name, vertices, triangles and offset per part."""
+    import xml.etree.ElementTree as ET
+    import zipfile
+    ns = {"m": _3MF_NS}
+    with zipfile.ZipFile(path) as zf:
+        root = ET.fromstring(zf.read("3D/3dmodel.model"))
+    offsets = {item.get("objectid"): [float(v) for v in item.get("transform").split()[9:12]]
+               for item in root.find("m:build", ns)}
+    parts = []
+    for obj in root.find("m:resources", ns):
+        mesh = obj.find("m:mesh", ns)
+        verts = np.array([[float(v.get(k)) for k in "xyz"] for v in mesh.find("m:vertices", ns)])
+        tris = np.array([[int(t.get(k)) for k in ("v1", "v2", "v3")]
+                         for t in mesh.find("m:triangles", ns)])
+        parts.append({"name": obj.get("name"), "vertices": verts, "triangles": tris,
+                      "offset": offsets[obj.get("id")], "unit": root.get("unit")})
+    return parts
+
+
+def export_3mf_file(project: Project, folder: str | Path, stem: str | None = None) -> Path:
+    """Export every printable part into one 3MF file, ready for the slicer."""
+    path = Path(folder) / f"{safe_file_stem(stem or project.name)}.3mf"
+    write_3mf(geometry.build_parts(project).printable(), path, project.name)
+    return path

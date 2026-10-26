@@ -8,7 +8,7 @@ Software for people getting into 3D printing and want to start with something ea
 sizes in millimetres, add holes and a lid, and export files your slicer can
 print. No sketches, no constraints, no feature trees.
 
-## What it can do (version 0.9)
+## What it can do (version 0.10)
 
 - **Box** (with rounded corners) or **round container**.
 - Sizes as **outside size** or **inside space**, with a single switch.
@@ -52,9 +52,10 @@ print. No sketches, no constraints, no feature trees.
   you can undo.
 - **Undo / redo** for every change.
 - **Save and reopen** editable projects (`.3dn00b` files, plain JSON).
-- **Export STL** files: one per printable part, flat side down and ready for
-  your slicer (the lid comes out upside down, which is how it prints best).
-  Every exported part is guaranteed to be watertight.
+- **Export for printing** as **STL** (one file per part) or **3MF** (all parts in
+  one file, laid out side by side, with the size in millimetres). Parts are flat
+  side down and ready for your slicer (the lid comes out upside down, which is how
+  it prints best). Every exported part is guaranteed to be watertight.
 
 ## Install and run (Linux)
 
@@ -100,8 +101,8 @@ app on Python 3.11, and 3Dn00b now avoids that version.)
 3. **Posts** (optional): add screw posts for a circuit board.
 4. **Lid**: tick **Add a lid** and choose its type: push-on, snap-on, sliding
    screwed down or threaded.
-5. **Check & Export**: read the checks, fix anything marked ✖ and click
-   **Export for printing**.
+5. **Check & Export**: read the checks, fix anything marked ✖, pick the file
+   type and click **Export for printing**.
 
 In the 3D view: drag a hole to move it, drag anywhere else to turn the view,
 scroll or right-drag to zoom, middle-drag to pan, and double-click a wall to

@@ -459,3 +459,20 @@ def test_threaded_lid_controls(window):
     assert not validation_errors(window)
     window.shape_buttons[BOX].click()
     assert any("round containers" in m for m in validation_errors(window))
+
+
+def test_export_3mf_from_the_window(window, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog, QMessageBox
+    from threedn00b import project_io as io
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: str(tmp_path)))
+    monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda *a, **k: None))
+    window.lid_check.setChecked(True)
+    window.rebuild()
+    window.format_combo.setCurrentIndex(window.format_combo.findData("3mf"))
+    assert "3MF" in window.export_button.text()
+    assert window.settings.value("export_format") == "3mf"
+    window.export_button.click()
+    assert [q["name"] for q in io.read_3mf(tmp_path / "my-box.3mf")] == ["My box body", "My box lid"]
+    window.format_combo.setCurrentIndex(window.format_combo.findData("stl"))
+    window.export_button.click()
+    assert (tmp_path / "my-box-body.stl").exists() and (tmp_path / "my-box-lid.stl").exists()

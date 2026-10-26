@@ -83,6 +83,10 @@ Defaults I chose myself, which are easy to change:
   set by the usual fit. Tests unscrew the lid through two turns for several
   sizes and fits and check it never collides, and that pulling straight up or
   turning the wrong way is blocked. Holes are kept off the neck.
+- 3MF export (0.10): next to STL, a "File type" choice exports all parts into
+  one 3MF file, laid out side by side 10 mm apart and centred, with millimetres
+  stated in the file. Tests read the file back and compare every vertex and
+  triangle with the built parts; PrusaSlicer opens and slices every example.
 - Push-on lid that follows the box size, with fit presets.
 - Plain-language checks covering impossible sizes, thin walls, holes off the
   edge, holes behind the lid lip, overlapping or too-close holes, a lid that
@@ -100,8 +104,7 @@ STL import and editing.
 
 ## Postponed (candidates for later, in rough priority order)
 
-1. 3MF export, if users need it. STEP is unlikely, since the geometry engine is mesh-based.
-2. A packaged app (Flatpak or AppImage).
+1. A packaged app (Flatpak or AppImage).
 
 Each addition must pass the brief's test: does it make a common beginner task
 much easier, without CAD vocabulary, and without making the interface busier?

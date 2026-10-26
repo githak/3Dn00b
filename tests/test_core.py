@@ -1106,3 +1106,49 @@ def test_threaded_lid_round_trip(tmp_path):
     path = tmp_path / "jar.3dn00b"
     project_io.save_project(p, path)
     assert project_io.load_project(path) == p
+
+
+# ---- 3MF export --------------------------------------------------------------
+
+def test_3mf_holds_every_part_exactly(tmp_path):
+    p = box_with_lid(name="Tool box")
+    p.holes = [Hole(FRONT, 8, 0, 0)]
+    path = project_io.export_3mf_file(p, tmp_path)
+    assert path.name == "tool-box.3mf"
+    printable = geometry.build_parts(p).printable()
+    parts = project_io.read_3mf(path)
+    assert [q["name"] for q in parts] == ["Tool box body", "Tool box lid"]
+    for q, solid in zip(parts, printable.values()):
+        verts, tris = geometry.mesh_arrays(solid)
+        assert q["unit"] == "millimeter"
+        assert len(q["triangles"]) == len(tris)
+        assert q["vertices"] == pytest.approx(verts, abs=1e-4)
+        assert (q["triangles"] == tris).all()
+        edges = np.concatenate([tris[:, [0, 1]], tris[:, [1, 2]], tris[:, [2, 0]]])
+        edges.sort(axis=1)
+        assert (np.unique(edges, axis=0, return_counts=True)[1] == 2).all()   # watertight
+
+
+def test_3mf_lays_parts_side_by_side(tmp_path):
+    p = jar()
+    parts = project_io.read_3mf(project_io.export_3mf_file(p, tmp_path))
+    spans = []
+    for q in parts:
+        xs = q["vertices"][:, 0] + q["offset"][0]
+        spans.append((xs.min(), xs.max()))
+        assert q["vertices"][:, 2].min() == pytest.approx(0, abs=1e-4)         # on the plate
+    (a0, a1), (b0, b1) = spans
+    assert b0 - a1 == pytest.approx(project_io.PART_SPACING, abs=1e-3)     # 10 mm apart
+    assert (a0 + b1) / 2 == pytest.approx(0, abs=1e-3)                      # centred
+
+
+def test_3mf_with_one_part_and_awkward_names(tmp_path):
+    import zipfile
+    p = default_project(BOX)
+    p.name = 'Tom & Jerry\'s "box" <1>'
+    path = project_io.export_3mf_file(p, tmp_path)
+    parts = project_io.read_3mf(path)
+    assert [q["name"] for q in parts] == ['Tom & Jerry\'s "box" <1> body']
+    assert parts[0]["offset"][0] == pytest.approx(0)
+    with zipfile.ZipFile(path) as zf:
+        assert {"[Content_Types].xml", "_rels/.rels", "3D/3dmodel.model"} <= set(zf.namelist())
