@@ -15,8 +15,8 @@ from .model import (HOLE_KIND_LABELS, LID_STYLE_LABELS, SCREWS, SHAPES, Dividers
                     Mount, Project)
 
 FORMAT_NAME = "3dn00b-project"
-FORMAT_VERSION = 6   # 2: rectangular holes; 3: air vents; 4: dividers; 5: screw posts;
-                     # 6: screwed-down lids
+FORMAT_VERSION = 7   # 2: rectangular holes; 3: air vents; 4: dividers; 5: screw posts;
+                     # 6: screwed-down lids; 7: snap-on and sliding lids
 PROJECT_SUFFIX = ".3dn00b"
 
 

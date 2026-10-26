@@ -20,7 +20,8 @@ from .. import APP_NAME, geometry, mounts, picking, project_io, validation
 from ..model import (ALONG_U, ALONG_V, BOTTOM, BOX, CYLINDER, FIT_LABELS, FIT_PRESETS,
                      FRONT, HOLE_DIAMETER_RANGE, HOLE_KIND_LABELS, INSIDE, LID, MIN_EDGE,
                      OUTSIDE, RECT, ROUND, SIDE, SIZE_RANGE, SURFACE_LABELS, VENT,
-                     DIVIDER_RANGE, LID_STYLE_LABELS, MAX_COMPARTMENTS, SCREWED, SCREWS, TRAY_TEMPLATE, WALL_RANGE, Hole, Project,
+                     DIVIDER_RANGE, LID_STYLE_LABELS, MAX_COMPARTMENTS, PUSH_ON, SCREWED, SCREWS, SLIDING,
+                     SNAP, TRAY_TEMPLATE, WALL_RANGE, Hole, Project,
                      clamp_hole, compartment_size, default_project, hole_limits)
 from .viewer import Viewer
 
@@ -43,6 +44,15 @@ COMMON_RECTS = [
 ]
 RECT_SIZE_RANGE = (1.0, 150.0)
 TAB_SHAPE, TAB_HOLES, TAB_POSTS, TAB_LID, TAB_CHECK = range(5)
+LID_STYLE_HINTS = {
+    PUSH_ON: "A flat top with a lip that slides into the box and holds by friction.",
+    SNAP: "Like the push-on lid, with small ridges on its lip that click into grooves "
+          "inside the walls.",
+    SLIDING: "A flat panel that slides into grooves at the top of the walls, from the front. "
+             "Only for boxes.",
+    SCREWED: "A flat lid held by a screw in each corner. The box gets a column in each corner "
+             "for the screws to bite into.",
+}
 CHECK_TAB_TITLE = "5 Check && Export"
 
 
@@ -651,25 +661,24 @@ class MainWindow(QMainWindow):
 
         set_quietly(self.lid_check, p.lid.enabled)
         self.lid_box.setEnabled(p.lid.enabled)
-        screwed = p.lid.style == SCREWED
-        set_quietly(self.lid_style, p.lid.style)
+        style = p.lid.style
+        set_quietly(self.lid_style, style)
         set_quietly(self.lid_screw, p.lid.screw)
-        self.lid_form.setRowVisible(self.lid_screw, screwed)
-        for widget in (self.fit_combo, self.gap_spin, self.lip_height):
-            self.lid_form.setRowVisible(widget, not screwed)
-        if screwed:
-            self.lid_style_hint.setText("A flat lid held by a screw in each corner. The box gets a "
-                                        "column in each corner for the screws to bite into.")
-            self.lid_tip.setText("Screws cut their own thread into the plastic. Tighten them "
-                                 "gently, just until the lid is snug.\n\nThe lid is exported "
-                                 "upside down, which is the best way to print it.")
-        else:
-            self.lid_style_hint.setText("A flat top with a lip that slides into the box and "
-                                        "holds by friction.")
-            self.lid_tip.setText("Normal fits most printers. If your lid ends up too tight, "
-                                 "choose Loose and print just the lid again; if it falls off, "
-                                 "choose Tight.\n\nThe lid is exported upside down, which is "
-                                 "the best way to print it.")
+        self.lid_form.setRowVisible(self.lid_screw, style == SCREWED)
+        self.lid_form.setRowVisible(self.fit_combo, style != SCREWED)
+        self.lid_form.setRowVisible(self.gap_spin, style != SCREWED)
+        self.lid_form.setRowVisible(self.lip_height, style in (PUSH_ON, SNAP))
+        self.lid_style_hint.setText(LID_STYLE_HINTS[style])
+        upside_down = "\n\nThe lid is exported upside down, which is the best way to print it."
+        fit_tip = ("Normal fits most printers. If your lid ends up too tight, choose Loose and "
+                   "print just the lid again; if it's too loose, choose Tight.")
+        self.lid_tip.setText({
+            PUSH_ON: fit_tip + upside_down,
+            SNAP: fit_tip + " A looser fit also makes the click softer." + upside_down,
+            SLIDING: fit_tip + "\n\nThe lid is printed flat. Slide it in from the front.",
+            SCREWED: "Screws cut their own thread into the plastic. Tighten them gently, just "
+                     "until the lid is snug." + upside_down,
+        }[style])
         set_quietly(self.fit_combo, p.lid.fit)
         set_quietly(self.gap_spin, p.lid.gap)
         self.gap_spin.setEnabled(p.lid.fit == "custom")

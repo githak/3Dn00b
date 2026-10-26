@@ -68,6 +68,14 @@ Defaults I chose myself, which are easy to change:
   16 mm deep at most and never into the floor. Wall holes, floor holes, lid
   holes and circuit boards are kept clear of the columns, with fixes where
   possible.
+- Snap-on and sliding lids (0.8). Snap-on: the push-on lid plus 0.5 mm ridges
+  on the middle third of each side of the lip, clicking into matching grooves
+  in the walls; works for boxes and round containers; checks lip depth and
+  wall thickness. Sliding (boxes only): a flat panel in grooves in the left,
+  right and back walls, entering from the front where the wall is lowered; the
+  back of the groove follows rounded corners so it never breaks through. The
+  panel sits inside the walls. Tests slide it all the way out to prove the path
+  is clear.
 - Push-on lid that follows the box size, with fit presets.
 - Plain-language checks covering impossible sizes, thin walls, holes off the
   edge, holes behind the lid lip, overlapping or too-close holes, a lid that
@@ -85,7 +93,7 @@ STL import and editing.
 
 ## Postponed (candidates for later, in rough priority order)
 
-1. Snap-fit and sliding lids. A threaded lid for round containers may come later.
+1. A threaded lid for round containers.
 2. 3MF export, if users need it. STEP is unlikely, since the geometry engine is mesh-based.
 3. A packaged app (Flatpak or AppImage).
 
@@ -100,7 +108,7 @@ much easier, without CAD vocabulary, and without making the interface busier?
 | GUI | PySide6 (Qt 6), LGPL | Native-looking Linux desktop app, installs from pip |
 | 3D preview | pyqtgraph `GLViewWidget` with a custom soft-lit shader | Small, pure Python, works on integrated graphics (OpenGL 2-era shaders) |
 | Geometry | **Manifold** (`manifold3d`), Apache-2.0 | Fast, robust Boolean operations whose results are **always watertight**. That is exactly what an STL needs. It is a small pip wheel with no system dependencies |
-| Project files | Versioned JSON (`"format": "3dn00b-project", "version": 6`) | Human-readable, diffable, forward-compatible |
+| Project files | Versioned JSON (`"format": "3dn00b-project", "version": 7`) | Human-readable, diffable, forward-compatible |
 
 **Why not CadQuery or build123d (OpenCascade)?** They are excellent, but they
 bring a large binary dependency (OCP), a slower and more fragile pipeline for

@@ -128,8 +128,16 @@ SCREWS = {
     "M4": Screw(pilot=3.5, post=9.0, nominal=4.0),
 }
 
-PUSH_ON, SCREWED = "push", "screwed"
-LID_STYLE_LABELS = {PUSH_ON: "Push-on (friction fit)", SCREWED: "Screwed down"}
+PUSH_ON, SNAP, SLIDING, SCREWED = "push", "snap", "sliding", "screwed"
+LID_STYLE_LABELS = {
+    PUSH_ON: "Push-on (friction fit)",
+    SNAP: "Snap-on (clicks into place)",
+    SLIDING: "Sliding (boxes only)",
+    SCREWED: "Screwed down",
+}
+SNAP_BUMP = 0.5        # how far the snap-on lid's ridges stick out from its lip
+SNAP_RIDGE = 1.2       # height of those ridges
+SLIDE_TOP = 1.2        # wall left above a sliding lid's groove
 
 
 @dataclass
@@ -256,7 +264,9 @@ class Project:
     @property
     def closed_height(self) -> float:
         """Total height with the lid on."""
-        return self.outer_height + (self.lid.thickness if self.lid.enabled else 0.0)
+        if not self.lid.enabled or self.lid.style == SLIDING:
+            return self.outer_height           # a sliding lid sits inside the walls
+        return self.outer_height + self.lid.thickness
 
     def surfaces(self) -> tuple[str, ...]:
         surfaces = BOX_SURFACES if self.shape == BOX else CYLINDER_SURFACES
@@ -318,8 +328,52 @@ def comfortable_margin(project: Project) -> float:
 
 
 def has_lip(project: Project) -> bool:
-    """Push-on lids have a lip that reaches down inside the walls."""
-    return project.lid.enabled and project.lid.style == PUSH_ON
+    """Push-on and snap-on lids have a lip that reaches down inside the walls."""
+    return project.lid.enabled and project.lid.style in (PUSH_ON, SNAP)
+
+
+def has_snap_lid(project: Project) -> bool:
+    return project.lid.enabled and project.lid.style == SNAP
+
+
+def has_sliding_lid(project: Project) -> bool:
+    return project.lid.enabled and project.lid.style == SLIDING
+
+
+def slide_engage(project: Project) -> float:
+    """How far a sliding lid reaches into each side wall."""
+    return round(project.wall / 2, 2)
+
+
+def slide_groove(project: Project) -> tuple[float, float]:
+    """(bottom, top) height of the groove a sliding lid runs in."""
+    top = project.outer_height - SLIDE_TOP
+    return top - project.lid.thickness - 2 * project.lid.gap, top
+
+
+def lid_top_z(project: Project) -> float:
+    """Height of the top face of the lid when it is on."""
+    if has_sliding_lid(project):
+        return slide_groove(project)[0] + project.lid.gap + project.lid.thickness
+    return project.outer_height + project.lid.thickness
+
+
+def lid_ceiling(project: Project) -> float:
+    """Highest point things inside the box may reach without touching the lid."""
+    if has_sliding_lid(project):
+        return slide_groove(project)[0] - project.lid.gap    # under the sliding panel
+    if project.lid.enabled:
+        return project.outer_height - project.lid.gap * 2   # just below the lid
+    return project.outer_height
+
+
+def wall_top_free(project: Project) -> float:
+    """Highest point on the walls that holes may reach (below lips and grooves)."""
+    if has_lip(project):
+        return project.outer_height - project.lid.lip_height
+    if has_sliding_lid(project):
+        return slide_groove(project)[0]
+    return project.outer_height
 
 
 def has_screw_lid(project: Project) -> bool:
@@ -396,7 +450,7 @@ def surface_frame(project: Project, surface: str):
         LEFT: ((-w / 2, 0, zc), (-1, 0, 0), (0, -1, 0), (0, 0, 1)),
         RIGHT: ((w / 2, 0, zc), (1, 0, 0), (0, 1, 0), (0, 0, 1)),
         BOTTOM: ((0, 0, 0), (0, 0, -1), (1, 0, 0), (0, 1, 0)),
-        LID: ((0, 0, h + project.lid.thickness), (0, 0, 1), (1, 0, 0), (0, 1, 0)),
+        LID: ((0, 0, lid_top_z(project)), (0, 0, 1), (1, 0, 0), (0, 1, 0)),
     }
     return frames[surface]
 
@@ -440,10 +494,8 @@ def extent_limits(project: Project, surface: str, half_u: float, half_v: float,
     """
     if surface in (FRONT, BACK, LEFT, RIGHT, SIDE):
         z_lo = project.bottom + half_v + margin
-        z_hi = project.outer_height - half_v - margin
-        if has_lip(project):
-            # The lid's lip covers the top of the wall on the inside.
-            z_hi -= project.lid.lip_height
+        # Stay below the lid's lip or groove.
+        z_hi = wall_top_free(project) - half_v - margin
         v_lo, v_hi = z_lo - project.outer_height / 2, z_hi - project.outer_height / 2
         if surface == SIDE:
             u_lo, u_hi = -180.0, 180.0
@@ -511,7 +563,7 @@ def hole_edge_clearance(project: Project, hole: Hole) -> float:
         return _flat_hole_clearance(project, hole, hole.u, hole.v)
     z = project.outer_height / 2 + hole.v
     z_lo = project.bottom
-    z_hi = project.outer_height - (project.lid.lip_height if has_lip(project) else 0.0)
+    z_hi = wall_top_free(project)
     clear = min(z - hv - z_lo, z_hi - (z + hv))
     if hole.surface != SIDE:
         span = project.inner_width if hole.surface in (FRONT, BACK) else project.inner_depth
@@ -623,9 +675,7 @@ def divider_positions(project: Project) -> tuple[list[float], list[float]]:
 
 def divider_top(project: Project) -> float:
     """Height (z) of the top of the dividers."""
-    top = project.outer_height
-    if project.lid.enabled:
-        top -= project.lid.gap * 2            # stop just below the lid
+    top = lid_ceiling(project)
     if project.dividers.height > 0:
         top = min(top, project.bottom + project.dividers.height)
     return top

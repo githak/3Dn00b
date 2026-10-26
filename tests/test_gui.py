@@ -434,3 +434,14 @@ def test_lid_type_controls(window):
     window.undo_stack.undo()
     window.undo_stack.undo()
     assert window.project.lid.style == "push"
+
+
+def test_snap_and_sliding_lid_controls(window):
+    window.lid_check.setChecked(True)
+    form = window.lid_form
+    for style, lip in (("snap", True), ("sliding", False)):
+        window.lid_style.setCurrentIndex(window.lid_style.findData(style))
+        window.lid_style.activated.emit(window.lid_style.currentIndex())
+        assert window.project.lid.style == style
+        assert form.isRowVisible(window.fit_combo) and form.isRowVisible(window.lip_height) == lip
+        assert not validation_errors(window)

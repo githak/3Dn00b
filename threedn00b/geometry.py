@@ -12,9 +12,11 @@ from dataclasses import dataclass
 import numpy as np
 from manifold3d import CrossSection, Error, JoinType, Manifold, OpType
 
-from .model import (BACK, BOTTOM, CYLINDER, FRONT, LEFT, LID, RECT, RIGHT, SIDE, VENT,
+from .model import (BACK, BOTTOM, BOX, CYLINDER, FRONT, LEFT, LID, RECT, RIGHT, SIDE, VENT,
                     SCREWS, Hole, Project, divider_positions, divider_top, has_dividers, has_lip,
-                    has_screw_lid, lid_pilot_depth, lid_screw_positions,
+                    has_screw_lid, has_sliding_lid, has_snap_lid, lid_pilot_depth,
+                    lid_screw_positions, lid_top_z, slide_engage, slide_groove, SNAP_BUMP,
+                    SNAP_RIDGE,
                     lip_outer_offset, lip_wall, vent_openings)
 
 
@@ -91,6 +93,9 @@ def build_body(project: Project) -> Manifold:
     columns = build_lid_columns(project)
     if columns is not None:
         body = body + columns
+    lid_cut = _lid_cut_in_body(project)
+    if lid_cut is not None:
+        body = body - lid_cut
     cutters = [_hole_cutter(project, hole) for hole in project.holes if hole.surface != LID]
     cutters = [c for c in cutters if c is not None]
     if cutters:
@@ -169,10 +174,70 @@ def build_lid_columns(project: Project) -> Manifold | None:
     return Manifold.batch_boolean(columns, OpType.Add) ^ _prism(footprint(project), h, 0.0)
 
 
+def _snap_selector(project: Project, z0: float, z1: float, extra: float) -> Manifold:
+    """The middle third of every side (plus `extra` mm each way), where snap ridges go."""
+    big = project.outer_width + project.outer_depth
+    sx = project.inner_width / 6 + extra
+    sy = project.inner_depth / 6 + extra
+    a = Manifold.cube([2 * sx, big, z1 - z0]).translate([-sx, -big / 2, z0])
+    b = Manifold.cube([big, 2 * sy, z1 - z0]).translate([-big / 2, -sy, z0])
+    return a + b
+
+
+def _snap_ridge_z(project: Project) -> float:
+    """Height of the bottom of the snap ridges (lid on)."""
+    return project.outer_height - project.lid.lip_height + 1.0
+
+
+def _lid_cut_in_body(project: Project) -> Manifold | None:
+    """What the lid needs cut out of the box: snap grooves, or a sliding lid's slot."""
+    lid = project.lid
+    if has_snap_lid(project):
+        z0 = _snap_ridge_z(project) - 0.2
+        z1 = z0 + SNAP_RIDGE + 0.4
+        outer = footprint(project, project.wall + lid.gap - SNAP_BUMP - 0.15)
+        inner = footprint(project, project.wall + 0.5)
+        if outer is None or inner is None:
+            return None
+        ring = _prism(outer, z1 - z0, z0) - _prism(inner, z1 - z0 + 2, z0 - 1)
+        return ring ^ _snap_selector(project, z0 - 1, z1 + 1, 1.0)
+    if has_sliding_lid(project) and project.shape == BOX:
+        g0, g1 = slide_groove(project)
+        reach_x = project.inner_width / 2 + slide_engage(project) + lid.gap
+        front = -project.outer_depth / 2 - 1.0
+        groove = _prism(_slide_outline(project, slide_engage(project) + lid.gap, front),
+                        g1 - g0, g0)
+        # Lower the front wall so the lid can slide in.
+        opening_h = project.outer_height - g0 + 1.0
+        opening = Manifold.cube([2 * reach_x, project.wall + 1.0 + 0.01, opening_h]).translate(
+            [-reach_x, front, g0])
+        return groove + opening
+    return None
+
+
+def _slide_outline(project: Project, reach: float, front_y: float) -> CrossSection:
+    """Outline of a sliding lid reaching `reach` mm into the walls.
+
+    The back follows the box's corners; the front half is straight so the
+    lid can slide in and out from the front.
+    """
+    back = footprint(project, project.wall - reach)
+    half_x = project.inner_width / 2 + reach
+    straight = CrossSection.square([2 * half_x, -front_y]).translate([-half_x, front_y])
+    return back + straight
+
+
 def build_lid(project: Project) -> Manifold | None:
     lid_opts = project.lid
     if not lid_opts.enabled:
         return None
+    if has_sliding_lid(project):
+        if project.shape != BOX:
+            return None
+        g0, _ = slide_groove(project)
+        outline = _slide_outline(project, slide_engage(project), -project.outer_depth / 2)
+        panel = _prism(outline, lid_opts.thickness, g0 + lid_opts.gap)
+        return _cut_lid_holes(project, panel)
     h = project.outer_height
     lid = _prism(footprint(project), lid_opts.thickness, h)
     if has_screw_lid(project):
@@ -190,6 +255,13 @@ def build_lid(project: Project) -> Manifold | None:
                            lid_opts.lip_height + 1.0, h - lid_opts.lip_height - 0.5)
         lip = lip_outer - lip_inner if lip_inner is not None else lip_outer
         lid = lid + lip
+    if has_snap_lid(project):
+        z0 = _snap_ridge_z(project)
+        outer = footprint(project, project.wall + lid_opts.gap - SNAP_BUMP)
+        inner = footprint(project, lip_out_inset + 0.5)      # reaches into the lip
+        if outer is not None and inner is not None:
+            ridge = _prism(outer, SNAP_RIDGE, z0) - _prism(inner, SNAP_RIDGE + 2, z0 - 1)
+            lid = lid + (ridge ^ _snap_selector(project, z0 - 1, z0 + SNAP_RIDGE + 1, 0.0))
     return _cut_lid_holes(project, lid)
 
 
@@ -249,7 +321,7 @@ def _hole_cutter(project: Project, hole: Hole) -> Manifold | None:
         return plug(project.bottom + 2.0).translate([hole.u, hole.v, project.bottom / 2])
     if hole.surface == LID:
         t = project.lid.thickness
-        return plug(t + 2.0).translate([hole.u, hole.v, project.outer_height + t / 2])
+        return plug(t + 2.0).translate([hole.u, hole.v, lid_top_z(project) - t / 2])
     return None
 
 

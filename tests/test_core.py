@@ -919,3 +919,106 @@ def test_screwed_lid_round_trip(tmp_path):
         project_io.from_dict(data)
     del data["project"]["lid"]["style"]           # older files: push-on lid
     assert project_io.from_dict(data).lid.style == "push"
+
+
+# ---- snap-on and sliding lids ----------------------------------------------------
+
+from threedn00b.model import SLIDING, SNAP, slide_groove  # noqa: E402
+
+
+def lid_box(style, **kw):
+    p = box_with_lid(**kw)
+    p.lid.style = style
+    return p
+
+
+@pytest.mark.parametrize("fit", ["tight", "normal", "loose"])
+@pytest.mark.parametrize("shape,corner", [(BOX, 0.0), (BOX, 4.0), (BOX, 20.0), (CYLINDER, 0.0)])
+def test_snap_lid_fits_without_collision(fit, shape, corner):
+    p = default_project(shape)
+    p.corner_radius = corner
+    p.lid.enabled, p.lid.style, p.lid.fit = True, SNAP, fit
+    parts = geometry.build_parts(p)
+    for solid in (parts.body, parts.lid):
+        assert geometry.piece_count(solid) == 1 and _edges_shared_twice(solid)
+    assert geometry.overlap_volume(parts.body, parts.lid) < 1e-6
+    assert not validation.has_errors(validation.check(p, parts))
+
+
+def test_snap_ridges_sit_in_the_middle_of_each_side():
+    p = lid_box(SNAP, corner_radius=0)          # lip outside face at y = -(30 - 2 - 0.25)
+    lid, body = geometry.build_lid(p), geometry.build_body(p)
+    z = p.outer_height - p.lid.lip_height + 1.6  # middle of the ridge
+    lip_face = -(p.inner_depth / 2 - p.lid.gap)
+
+    def lid_front(x):
+        return lid.ray_cast([x, -100, z], [x, 0, z])[0].position[1]
+    assert lid_front(0) == pytest.approx(lip_face - (0.5 - 0.0), abs=1e-6)   # ridge in the middle
+    assert lid_front(30) == pytest.approx(lip_face, abs=1e-6)                # no ridge near corners
+    # The matching groove is cut into the inside of the wall.
+    inside = body.ray_cast([0, 0, z], [0, -100, z])[0].position[1]
+    assert inside < -p.inner_depth / 2 - 0.2
+    plain = body.ray_cast([30, 0, z], [30, -100, z])[0].position[1]
+    assert plain == pytest.approx(-p.inner_depth / 2)
+
+
+def test_snap_lid_checks():
+    p = lid_box(SNAP)
+    p.lid.lip_height = 2.5
+    assert any("too short for the snap" in i.message for i in validation.check(p))
+    p = lid_box(SNAP, wall=1.2)
+    assert any("too thin for the snap" in i.message for i in validation.check(p))
+
+
+@pytest.mark.parametrize("corner", [0.0, 4.0, 12.0])
+def test_sliding_lid_slides_all_the_way_out(corner):
+    p = lid_box(SLIDING, corner_radius=corner)
+    parts = geometry.build_parts(p)
+    assert geometry.piece_count(parts.body) == 1 and _edges_shared_twice(parts.body)
+    assert p.closed_height == p.outer_height             # the lid sits inside the walls
+    for dy in range(0, -int(p.outer_depth) - 2, -4):     # pull it out step by step
+        assert geometry.overlap_volume(parts.body, parts.lid.translate([0, dy, 0])) < 1e-6
+    # It can't come out upwards or sideways: the walls hold it.
+    assert geometry.overlap_volume(parts.body, parts.lid.translate([0, 0, 1.0])) > 1
+    assert geometry.overlap_volume(parts.body, parts.lid.translate([1.0, 0, 0])) > 1
+    assert not validation.has_errors(validation.check(p, parts))
+
+
+def test_sliding_lid_checks_and_limits():
+    p = default_project(CYLINDER)
+    p.lid.enabled, p.lid.style = True, SLIDING
+    assert any("only work on boxes" in i.message for i in validation.check(p))
+    p = lid_box(SLIDING, wall=1.2)
+    assert any("too thin to hold a sliding lid" in i.message for i in validation.check(p))
+    p = lid_box(SLIDING, height=8)
+    assert any("too low for a sliding lid" in i.message for i in validation.check(p))
+    p = lid_box(SLIDING)
+    g0, _ = slide_groove(p)
+    hole = Hole(FRONT, 6, 0, g0 - p.outer_height / 2)    # reaching into the groove
+    p.holes = [hole]
+    issue = next(i for i in validation.check(p) if i.hole_id)
+    assert "sliding lid's groove" in issue.message
+    hole.u, hole.v = issue.fix
+    assert not validation.has_errors(validation.check(p))
+
+
+def test_sliding_lid_keeps_dividers_and_boards_below_it():
+    p = lid_box(SLIDING, width=110, depth=80, dividers=Dividers(across=2))
+    g0, _ = slide_groove(p)
+    assert divider_top(p) < g0
+    parts = geometry.build_parts(p)
+    assert geometry.overlap_volume(parts.body, parts.lid) < 1e-6
+    m = mounts.new_mount(p, "rpi-zero")
+    m.u = 25
+    m.length = g0 - p.bottom - 1.0
+    p.mounts = [m]
+    p.dividers = Dividers()
+    assert any("stick out" in i.message for i in validation.check(p))
+
+
+def test_new_lid_types_round_trip(tmp_path):
+    for style in (SNAP, SLIDING):
+        p = lid_box(style)
+        path = tmp_path / f"{style}.3dn00b"
+        project_io.save_project(p, path)
+        assert project_io.load_project(path) == p

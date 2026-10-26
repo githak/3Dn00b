@@ -12,8 +12,9 @@ from dataclasses import dataclass
 
 from . import geometry, mounts
 from .model import (ALONG_V, BACK, BOTTOM, BOX, CYLINDER, FRONT, LEFT, LID, MIN_EDGE, RIGHT,
-                    SCREWS, SIDE, SURFACE_LABELS, VENT, Hole, Project, has_lip, has_screw_lid,
-                    lid_pilot_depth, lid_screw_positions, wall_corner_zone, clamp_hole, comfortable_margin,
+                    SCREWS, SIDE, SNAP_BUMP, SURFACE_LABELS, VENT, Hole, Project, has_lip,
+                    has_screw_lid, has_sliding_lid, has_snap_lid, slide_engage, slide_groove,
+                    lid_ceiling, lid_pilot_depth, lid_screw_positions, wall_corner_zone, clamp_hole, comfortable_margin,
                     compartment_size, divider_positions, divider_top, has_dividers,
                     hole_edge_clearance, hole_limits, lip_outer_offset, lip_wall, opening_gap,
                     point_near_opening)
@@ -110,6 +111,8 @@ def _check_lid(p: Project) -> list[Issue]:
         return []
     if has_screw_lid(p):
         return _check_screw_lid(p)
+    if has_sliding_lid(p):
+        return _check_sliding_lid(p)
     lid = p.lid
     out = []
     lip_inside = min(p.inner_width, p.inner_depth) - 2 * (lip_outer_offset(p) + lip_wall(p))
@@ -119,20 +122,57 @@ def _check_lid(p: Project) -> list[Issue]:
     if lid.lip_height > p.inner_height - 1:
         out.append(Issue(ERROR, "The lid's lip is deeper than the box.",
                          "Make the lip shorter or the box taller."))
-    if lid.gap < 0.1:
-        out.append(Issue(WARNING, f"A fit gap of {lid.gap:.2f} mm is very tight. The lid may not go on at all.",
-                         "Try the Normal fit first."))
-    elif lid.gap > 0.6:
-        out.append(Issue(WARNING, f"A fit gap of {lid.gap:.2f} mm is loose. The lid may fall off.",
-                         "Try the Normal or Loose fit."))
     if lid.thickness < 1.2:
         out.append(Issue(WARNING, f"A lid top of {_mm(lid.thickness)} is thin and may bend.",
                          "1.6 mm or more is recommended."))
     if lid.lip_height < 2:
         out.append(Issue(WARNING, "A very short lip won't hold the lid in place well.",
                          "3 to 6 mm works well for most boxes."))
-    out.append(Issue(INFO, "How well the lid fits depends on your printer and material.",
-                     "If it's too tight or too loose, change the Fit and reprint just the lid."))
+    out += _check_fit_gap(lid)
+    if has_snap_lid(p):
+        if lid.lip_height < 3.0:
+            out.append(Issue(ERROR, "The lip is too short for the snap-on ridges.",
+                             "Make the lip at least 3 mm deep."))
+        left = p.wall - (SNAP_BUMP - lid.gap + 0.15)
+        if left < 0.8:
+            out.append(Issue(ERROR, f"The walls are too thin for the snap-on grooves "
+                             f"(only {_mm(left)} would be left).", "Use walls of 2 mm or more."))
+        out.append(Issue(INFO, "Press the lid down until it clicks into place.",
+                         "If it's too hard to close or open, choose a looser fit and reprint "
+                         "just the lid."))
+    else:
+        out.append(Issue(INFO, "How well the lid fits depends on your printer and material.",
+                         "If it's too tight or too loose, change the Fit and reprint just the lid."))
+    return out
+
+
+def _check_fit_gap(lid) -> list[Issue]:
+    if lid.gap < 0.1:
+        return [Issue(WARNING, f"A fit gap of {lid.gap:.2f} mm is very tight. The lid may not go "
+                      "on at all.", "Try the Normal fit first.")]
+    if lid.gap > 0.6:
+        return [Issue(WARNING, f"A fit gap of {lid.gap:.2f} mm is loose. The lid may fall off.",
+                      "Try the Normal or Loose fit.")]
+    return []
+
+
+def _check_sliding_lid(p: Project) -> list[Issue]:
+    lid = p.lid
+    if p.shape != BOX:
+        return [Issue(ERROR, "Sliding lids only work on boxes.", "Choose another type of lid.")]
+    out = []
+    left = p.wall - slide_engage(p) - lid.gap
+    if left < 0.6:
+        out.append(Issue(ERROR, f"The walls are too thin to hold a sliding lid (only {_mm(left)} "
+                         "would be left beside the groove).", "Use walls of 2 mm or more."))
+    if slide_groove(p)[0] - p.bottom < 5:
+        out.append(Issue(ERROR, "The box is too low for a sliding lid.", "Make it taller."))
+    if lid.thickness < 1.2:
+        out.append(Issue(WARNING, f"A lid of {_mm(lid.thickness)} is thin and may bend.",
+                         "1.6 mm or more is recommended."))
+    out += _check_fit_gap(lid)
+    out.append(Issue(INFO, "Slide the lid in from the front.",
+                     "If it's stiff, choose a looser fit and reprint just the lid."))
     return out
 
 
@@ -220,7 +260,10 @@ def _check_holes(p: Project) -> list[Issue]:
         clearance = hole_edge_clearance(p, hole)
         fix = clamp_hole(p, hole, margin)
         fix_label = "Move to the nearest safe spot"
-        if _behind_lip(p, hole):
+        if _in_slide_groove(p, hole):
+            out.append(Issue(ERROR, f"{name} is where the sliding lid's groove is.",
+                             "Move the hole lower.", hole.id, fix, fix_label))
+        elif _behind_lip(p, hole):
             out.append(Issue(ERROR, f"{name} is behind the lid's lip, so the lid would cover it from inside.",
                              "Move the hole lower, or make the lid's lip shorter.", hole.id, fix, fix_label))
         elif clearance < MIN_EDGE and _near_screw_column(p, hole):
@@ -314,7 +357,7 @@ def _check_mounts(p: Project) -> list[Issue]:
         screw = mounts.SCREWS[m.screw]
         size = mounts.board_size(m)
         top = mounts.board_bottom(p, m) + (mounts.BOARD_THICKNESS if size else 0.0)
-        ceiling = p.outer_height - (p.lid.gap * 2 if p.lid.enabled else 0.0)
+        ceiling = lid_ceiling(p)
         if m.board == "custom" and (m.spacing_x >= m.board_width or m.spacing_y >= m.board_depth):
             out.append(Issue(ERROR, f"{name}: the holes are further apart than the board is big.",
                              "Check the board size and the hole spacing.", mount_id=m.id))
@@ -443,6 +486,13 @@ def _near_screw_column(p: Project, hole: Hole) -> bool:
     room_with_column = span / 2 - wall_corner_zone(p, hole.surface) - reach
     room_without = span / 2 - p.inner_corner_radius - reach
     return room_with_column < MIN_EDGE <= room_without
+
+
+def _in_slide_groove(p: Project, hole: Hole) -> bool:
+    if not has_sliding_lid(p) or hole.surface in (BOTTOM, LID):
+        return False
+    z = p.outer_height / 2 + hole.v
+    return z + hole.half_extents[1] > slide_groove(p)[0]
 
 
 def _behind_lip(p: Project, hole: Hole) -> bool:
