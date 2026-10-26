@@ -292,3 +292,733 @@ def test_find_and_snap():
 def test_examples_open_without_problems(path):
     p = project_io.load_project(path)
     assert not validation.has_errors(validation.check(p))
+
+
+def test_missing_xcb_cursor_gives_friendly_message(monkeypatch):
+    from threedn00b import app
+    monkeypatch.setattr(app.sys, "platform", "linux")
+    monkeypatch.setattr(app.ctypes.util, "find_library", lambda name: None)
+    env = {}
+    monkeypatch.setattr(app.os, "environ", env)   # keep the real environment untouched
+    assert "sudo apt install libxcb-cursor0" in app.check_display_libraries()
+    # On Wayland the app switches to Qt's Wayland backend instead.
+    env["WAYLAND_DISPLAY"] = "wayland-0"
+    assert app.check_display_libraries() is None
+    assert env["QT_QPA_PLATFORM"] == "wayland"
+    del env["QT_QPA_PLATFORM"]
+    # With the library present nothing changes.
+    monkeypatch.setattr(app.ctypes.util, "find_library", lambda name: "libxcb-cursor.so.0")
+    assert app.check_display_libraries() is None
+
+
+# ---- dragging ------------------------------------------------------------
+
+def test_ray_meets_front_wall():
+    p = default_project(BOX)   # front wall at y = -30, height 40
+    t, u, v, exact = picking.surface_hit(p, FRONT, (5, -100, 25), (0, 1, 0))
+    assert exact and t == pytest.approx(70) and (u, v) == pytest.approx((5, 5))
+    assert picking.surface_hit(p, FRONT, (5, -100, 25), (0, -1, 0)) is None   # behind
+
+
+def test_ray_meets_round_wall_and_handles_misses():
+    p = default_project(CYLINDER)   # radius 30
+    t, u, v, exact = picking.surface_hit(p, SIDE, (100, 0, 40), (-1, 0, 0))
+    assert exact and t == pytest.approx(70) and u == pytest.approx(90)
+    *_, exact = picking.surface_hit(p, SIDE, (100, 50, 40), (-1, 0, 0))
+    assert not exact      # missed, but still gives a usable position for dragging
+
+
+def test_hole_under_ray_ignores_hidden_holes():
+    p = default_project(BOX)
+    front, back = Hole(FRONT, 8, 0, 0), Hole(BACK, 8, 0, 0)
+    p.holes = [back, front]
+    origin, direction = (0, -100, 20), (0, 1, 0)
+    assert picking.hole_under_ray(p, origin, direction, mesh_distance=None) is front
+    p.holes = [back]
+    # The ray hits the front wall 70 mm away; the back hole is hidden behind it.
+    assert picking.hole_under_ray(p, origin, direction, mesh_distance=70.0) is None
+    assert picking.hole_under_ray(p, (30, -100, 20), direction, None) is None   # off to the side
+
+
+def test_drag_snaps_to_centre_and_other_holes():
+    p = default_project(BOX)
+    a, b = Hole(FRONT, 6, -20, 5), Hole(FRONT, 6, 10, 0)
+    p.holes = [a, b]
+    u, v, note = picking.snap_drag(p, b, 1.5, 4.0)
+    assert (u, v) == (0.0, 5.0) and "centre" in note and "Hole 1" in note
+    assert picking.snap_drag(p, b, 12.0, -10.0)[:2] == (12.0, -10.0)
+    side = default_project(CYLINDER)
+    h = Hole(SIDE, 6, 0, 0)
+    side.holes = [h]
+    assert abs(picking.snap_drag(side, h, 178.0, 20.0)[0]) == 180.0   # straight at the back
+
+
+def test_broken_pyside_version_is_reported(monkeypatch):
+    import PySide6
+    from threedn00b import app
+    monkeypatch.setattr(app.sys, "version_info", (3, 11, 9))
+    monkeypatch.setattr(PySide6, "__version__", "6.12.0")
+    assert "pip install -e ." in app.check_pyside_version()
+    monkeypatch.setattr(PySide6, "__version__", "6.11.2")
+    assert app.check_pyside_version() is None
+    monkeypatch.setattr(app.sys, "version_info", (3, 13, 0))
+    monkeypatch.setattr(PySide6, "__version__", "6.12.0")
+    assert app.check_pyside_version() is None
+
+
+# ---- rectangular holes -----------------------------------------------------
+
+from threedn00b.model import RECT, opening_gap, surface_frame  # noqa: E402
+
+
+def _wall_is_open(solid, project, surface, u, v):
+    """Shoot a ray straight at the surface at (u, v); True if it passes through that wall."""
+    c, n, right, up = surface_frame(project, surface)
+    p = np.array(c) + np.array(right) * u + np.array(up) * v
+    hits = solid.ray_cast(list(p + np.array(n) * 5), list(p - np.array(n) * 0.5))
+    return not hits
+
+
+@pytest.mark.parametrize("surface", [FRONT, BACK, LEFT, RIGHT, BOTTOM, LID])
+def test_rectangle_is_oriented_along_its_surface(surface):
+    p = box_with_lid(corner_radius=0)
+    hole = Hole(surface, kind=RECT, width=20, height=6, u=4, v=-2)
+    p.holes = [hole]
+    parts = geometry.build_parts(p)
+    solid = parts.lid if surface == LID else parts.body
+    assert _wall_is_open(solid, p, surface, 4 + 9, -2)        # near the end of the long side
+    assert _wall_is_open(solid, p, surface, 4 - 9, -2 + 2.5)
+    assert not _wall_is_open(solid, p, surface, 4, -2 + 4)    # just past the short side
+    assert not _wall_is_open(solid, p, surface, 4 + 11, -2)   # just past the long side
+    assert geometry.piece_count(solid) == 1 and _edges_shared_twice(solid)
+
+
+def test_rectangle_on_round_wall():
+    p = default_project(CYLINDER)
+    p.holes = [Hole(SIDE, kind=RECT, width=12, height=5, u=90, v=0)]
+    body = geometry.build_body(p)
+    assert body.ray_cast([60, 0, 40], [-60, 0, 40])[0].position[0] < 0   # passes into the far wall
+    assert body.ray_cast([60, 0, 44], [-60, 0, 44])[0].position[0] > 0   # above the slot: solid
+    assert not validation.has_errors(validation.check(p))
+
+
+def test_rectangle_limits_and_clamp():
+    p = default_project(BOX)    # inner 76 wide, 38 tall walls
+    hole = Hole(FRONT, kind=RECT, width=30, height=10, u=40, v=0)
+    p.holes = [hole]
+    issues = validation.check(p)
+    assert validation.has_errors(issues)
+    fix = next(i.fix for i in issues if i.fix)
+    hole.u, hole.v = fix
+    assert not validation.has_errors(validation.check(p))
+    assert hole.u + 15 <= 76 / 2 - 2 + 1e-6      # keeps the comfortable margin
+    p.holes = [Hole(FRONT, kind=RECT, width=80, height=5)]
+    assert any("too big" in i.message for i in validation.check(p))
+
+
+def test_rectangle_in_rounded_corner_of_bottom_is_detected():
+    p = Project(corner_radius=20)                 # inner corner radius 18
+    hole = Hole(BOTTOM, kind=RECT, width=10, height=10, u=31, v=21)
+    p.holes = [hole]
+    assert validation.has_errors(validation.check(p))
+
+
+def test_gaps_between_mixed_shapes():
+    p = default_project(BOX)
+    rect = Hole(FRONT, kind=RECT, width=10, height=4, u=0, v=0)
+    near = Hole(FRONT, diameter=4, u=9, v=0)        # circle edge 2 mm from the rectangle
+    corner = Hole(FRONT, diameter=2, u=8, v=5)     # diagonal from the corner
+    other = Hole(FRONT, kind=RECT, width=4, height=4, u=0, v=6)
+    assert opening_gap(p, rect, near) == pytest.approx(2.0)
+    assert opening_gap(p, rect, corner) == pytest.approx(math.hypot(3, 3) - 1)
+    assert opening_gap(p, rect, other) == pytest.approx(2.0)
+    assert opening_gap(p, rect, Hole(FRONT, diameter=2, u=1, v=1)) < 0
+
+
+def test_rectangle_round_trip_and_old_files(tmp_path):
+    p = box_with_lid()
+    p.holes = [Hole(LEFT, kind=RECT, width=9.5, height=3.6, u=2, v=-4)]
+    path = tmp_path / "usb.3dn00b"
+    project_io.save_project(p, path)
+    assert project_io.load_project(path) == p
+    data = project_io.to_dict(p)
+    assert data["version"] == project_io.FORMAT_VERSION
+    data["version"] = 1                        # files from 0.1/0.2 have no "kind"
+    for h in data["project"]["holes"]:
+        for key in ("kind", "width", "height"):
+            del h[key]
+    assert project_io.from_dict(data).holes[0].kind == "round"
+
+
+# ---- air vents ---------------------------------------------------------------
+
+from threedn00b.model import ALONG_U, VENT  # noqa: E402
+
+
+def test_vent_fits_as_many_slots_as_possible():
+    v = Hole(kind=VENT, width=30, height=15, slot=2, gap=2)
+    assert v.slot_count == 8                      # 8 * 2 + 7 * 2 = 30
+    v.width = 29.9
+    assert v.slot_count == 7
+    offsets = [du for du, *_ in Hole(kind=VENT, width=30, height=15).slot_rects()]
+    assert offsets[0] == pytest.approx(-offsets[-1])   # centred
+    v.slot_direction = ALONG_U
+    assert v.slot_count == 4 and v.slot_rects()[0][2:] == (29.9, 2)
+
+
+@pytest.mark.parametrize("surface", [FRONT, LEFT, BOTTOM, LID])
+@pytest.mark.parametrize("direction", ["along_v", "along_u"])
+def test_vent_slots_are_cut_where_expected(surface, direction):
+    p = box_with_lid(corner_radius=0)
+    vent = Hole(surface, kind=VENT, width=20, height=12, slot=2, gap=2, u=3, v=-1,
+                slot_direction=direction)
+    p.holes = [vent]
+    parts = geometry.build_parts(p)
+    solid = parts.lid if surface == LID else parts.body
+    first, second = vent.slot_rects()[:2]
+    # Centre of a slot is open; the strip between two slots is solid.
+    assert _wall_is_open(solid, p, surface, 3 + first[0], -1 + first[1])
+    between = ((first[0] + second[0]) / 2, (first[1] + second[1]) / 2)
+    assert not _wall_is_open(solid, p, surface, 3 + between[0], -1 + between[1])
+    assert geometry.piece_count(solid) == 1 and _edges_shared_twice(solid)
+
+
+def test_vent_on_round_wall_follows_the_curve():
+    p = default_project(CYLINDER)
+    vent = Hole(SIDE, kind=VENT, width=40, height=20, u=0, v=0)
+    p.holes = [vent]
+    body = geometry.build_body(p)
+    before = geometry.build_body(default_project(CYLINDER)).volume()
+    # Every slot cuts all the way through the curved wall.
+    assert before - body.volume() == pytest.approx(vent.slot_count * 2 * 20 * p.wall, rel=0.08)
+    assert not validation.has_errors(validation.check(p))
+
+
+def test_vent_checks():
+    p = default_project(BOX)
+    p.holes = [Hole(FRONT, kind=VENT, width=20, height=10, slot=1.0, gap=1.0)]
+    messages_ = messages(validation.check(p))
+    assert "may break" in messages_ and "close up" in messages_
+    p.holes = [Hole(FRONT, kind=VENT, width=4, height=10, slot=6)]
+    assert validation.has_errors(validation.check(p))
+    p.holes = [Hole(FRONT, kind=VENT, width=80, height=10)]          # wall is 76 mm inside
+    assert any("runs off" in i.message or "too big" in i.message for i in validation.check(p))
+
+
+def test_vent_overlapping_a_hole_is_reported():
+    p = default_project(BOX)
+    p.holes = [Hole(FRONT, kind=VENT, width=30, height=15), Hole(FRONT, diameter=6, u=17, v=0)]
+    assert any("overlap" in i.message for i in validation.check(p))
+
+
+def test_vent_round_trip_and_unknown_kinds(tmp_path):
+    p = box_with_lid()
+    p.holes = [Hole(LID, kind=VENT, width=25, height=10, slot=1.6, gap=2.4,
+                    slot_direction="along_u")]
+    path = tmp_path / "vent.3dn00b"
+    project_io.save_project(p, path)
+    assert project_io.load_project(path) == p
+    data = project_io.to_dict(p)
+    data["project"]["holes"][0]["kind"] = "hexagon"
+    with pytest.raises(project_io.ProjectFileError):
+        project_io.from_dict(data)
+
+
+# ---- dividers --------------------------------------------------------------
+
+from threedn00b.model import (Dividers, TRAY_TEMPLATE, compartment_size,  # noqa: E402
+                              divider_positions, divider_top)
+
+
+def test_compartments_are_evenly_sized():
+    p = Project(width=100, depth=60, wall=2, corner_radius=0, dividers=Dividers(across=3, deep=2,
+                                                                                 thickness=2))
+    w, d = compartment_size(p)
+    assert w == pytest.approx((96 - 2 * 2) / 3) and d == pytest.approx((56 - 2) / 2)
+    xs, ys = divider_positions(p)
+    edges = [-48] + [x for x in xs for x in (x - 1, x + 1)] + [48]
+    widths = [b - a for a, b in zip(edges[::2], edges[1::2])]
+    assert widths == pytest.approx([w] * 3) and ys == pytest.approx([0])
+
+
+def test_dividers_add_the_expected_material():
+    p = Project(width=100, depth=60, height=30, wall=2, bottom=2, corner_radius=0)
+    plain = geometry.build_body(p).volume()
+    p.dividers = Dividers(across=2, deep=1, thickness=2)
+    body = geometry.build_body(p)
+    assert body.volume() - plain == pytest.approx(2 * 56 * 28, rel=1e-6)
+    assert geometry.piece_count(body) == 1 and _edges_shared_twice(body)
+
+
+@pytest.mark.parametrize("fit", ["tight", "normal", "loose"])
+@pytest.mark.parametrize("corner", [0.0, 4.0, 15.0])
+def test_dividers_leave_room_for_the_lid(fit, corner):
+    p = box_with_lid(corner_radius=corner, dividers=Dividers(across=3, deep=3))
+    p.lid.fit = fit
+    parts = geometry.build_parts(p)
+    assert geometry.overlap_volume(parts.body, parts.lid) < 1e-6
+    assert geometry.piece_count(parts.body) == 1 and _edges_shared_twice(parts.body)
+    assert not validation.has_errors(validation.check(p, parts))
+
+
+def test_lower_dividers():
+    p = default_project(BOX)
+    p.dividers = Dividers(across=2, height=10)
+    assert divider_top(p) == pytest.approx(p.bottom + 10)
+    xs, _ = divider_positions(p)
+    body = geometry.build_body(p)
+    hits = body.ray_cast([xs[0], 0, 100], [xs[0], 0, 0])
+    assert hits[0].position[2] == pytest.approx(p.bottom + 10)
+
+
+def test_hole_where_divider_meets_wall_or_floor_is_reported():
+    p = default_project(BOX)
+    p.dividers = Dividers(across=2, deep=2)
+    p.holes = [Hole(FRONT, 6, 0, 0), Hole(BOTTOM, 5, 10, 0), Hole(LEFT, 5, 10, 0)]
+    blocked = {i.hole_id for i in validation.check(p) if "divider meets" in i.message}
+    assert blocked == {p.holes[0].id, p.holes[1].id}
+    p.dividers.height = 5                       # low dividers stay below the front hole
+    blocked = {i.hole_id for i in validation.check(p) if "divider meets" in i.message}
+    assert blocked == {p.holes[1].id}
+
+
+def test_too_many_compartments_is_an_error():
+    p = default_project(BOX)
+    p.dividers = Dividers(across=12, thickness=5)
+    issues = validation.check(p)
+    assert validation.has_errors(issues) and validation.has_errors(validation.check_size(p))
+    p.dividers = Dividers(across=6)
+    assert any("hard to reach" in i.message for i in validation.check(p))
+
+
+def test_round_containers_ignore_dividers():
+    p = default_project(BOX)
+    p.dividers = Dividers(across=3)
+    p.set_shape(CYLINDER)
+    assert geometry.build_dividers(p) is None
+    assert any("only for boxes" in i.message for i in validation.check(p))
+
+
+def test_tray_template_is_ready_to_print():
+    p = default_project(TRAY_TEMPLATE)
+    assert p.dividers.across * p.dividers.deep == 6
+    issues = validation.check(p)
+    assert not validation.has_errors(issues) and "warning" not in levels(issues)
+
+
+def test_dividers_round_trip_and_type_checks(tmp_path):
+    p = box_with_lid(dividers=Dividers(across=4, deep=2, thickness=1.2, height=12))
+    path = tmp_path / "organiser.3dn00b"
+    project_io.save_project(p, path)
+    assert project_io.load_project(path) == p
+    data = project_io.to_dict(p)
+    data["project"]["dividers"]["across"] = 2.5
+    with pytest.raises(project_io.ProjectFileError):
+        project_io.from_dict(data)
+    del data["project"]["dividers"]           # files from before dividers existed
+    assert project_io.from_dict(data).dividers == Dividers()
+
+
+# ---- screw posts -------------------------------------------------------------
+
+from threedn00b import mounts  # noqa: E402
+from threedn00b.model import Mount  # noqa: E402
+
+
+def _spacing(m):
+    pts = mounts.post_positions(m)
+    xs, ys = sorted({round(x, 2) for x, _ in pts}), sorted({round(y, 2) for _, y in pts})
+    return round(xs[-1] - xs[0], 2), round(ys[-1] - ys[0], 2)
+
+
+def test_board_hole_patterns_match_the_datasheets():
+    assert _spacing(Mount(board="rpi-ab")) == (58.0, 49.0)
+    assert _spacing(Mount(board="rpi-3a")) == (58.0, 49.0)
+    assert _spacing(Mount(board="rpi-zero")) == (58.0, 23.0)
+    assert _spacing(Mount(board="pico")) == (47.0, 11.4)
+    assert _spacing(Mount(board="custom", spacing_x=50, spacing_y=30)) == (50.0, 30.0)
+    for key, board in mounts.BOARDS.items():
+        m = Mount(board=key)
+        size = mounts.board_size(m)
+        if size:   # every hole lies inside its board
+            assert all(abs(x) < size[0] / 2 and abs(y) < size[1] / 2
+                       for x, y in mounts.post_positions(m)), key
+
+
+def test_turning_keeps_the_pattern():
+    m = Mount(board="uno", u=5, v=-3)
+    before = mounts.post_positions(m)
+    m.rotation = 90
+    after = mounts.post_positions(m)
+    dist = lambda pts: sorted(round(math.dist(a, b), 6) for a in pts for b in pts)  # noqa: E731
+    assert dist(before) == dist(after)
+    assert mounts.half_extents(m) == pytest.approx((53.3 / 2, 68.6 / 2))
+
+
+def test_posts_have_pilot_holes_that_stop_at_the_floor():
+    p = Project(width=110, depth=80, height=40)
+    m = mounts.new_mount(p, "rpi-ab")
+    p.mounts = [m]
+    body = geometry.build_body(p)
+    assert geometry.piece_count(body) == 1 and _edges_shared_twice(body)
+    x, y = mounts.post_positions(m)[0]
+    pilot = mounts.SCREWS["M2.5"].pilot / 2
+    assert body.ray_cast([x, y, 100], [x, y, -5])[0].position[2] == pytest.approx(p.bottom)
+    assert body.ray_cast([x + pilot + 0.2, y, 100], [x + pilot + 0.2, y, -5])[0].position[2] == \
+        pytest.approx(p.bottom + m.length)
+    assert body.ray_cast([x, y, -5], [x, y, 100])[0].position[2] == pytest.approx(0)  # floor intact
+    assert mounts.max_screw_length(m) == 7.0
+
+
+def test_board_that_does_not_fit_is_an_error():
+    p = default_project(BOX)                     # 76 x 56 inside: a Pi 4 (85 x 56) can't fit
+    p.mounts = [mounts.new_mount(p, "rpi-ab")]
+    assert validation.has_errors(validation.check(p))
+    p.width = 110
+    p.mounts = [mounts.new_mount(p, "rpi-ab")]
+    assert not validation.has_errors(validation.check(p))
+
+
+def test_board_near_a_wall_gets_a_fix():
+    p = Project(width=110, depth=80, height=40)
+    m = mounts.new_mount(p, "rpi-ab")
+    m.u = 12
+    p.mounts = [m]
+    issue = next(i for i in validation.check(p) if i.mount_id)
+    assert issue.level == "error" and issue.fix
+    m.u, m.v = issue.fix
+    assert not any(i.mount_id for i in validation.check(p) if i.level != "info")
+    m.u += 1.0     # now only 0.5 mm from the wall
+    assert any(i.level == "warning" and "touches the wall" in i.message for i in validation.check(p))
+
+
+def test_board_too_high_or_hitting_the_lid_lip():
+    p = Project(width=110, depth=80, height=30)
+    p.lid.enabled = True
+    m = mounts.new_mount(p, "rpi-zero")
+    p.mounts = [m]
+    m.length = 30
+    assert any("stick out" in i.message for i in validation.check(p))
+    m.length = 23                                # board top 26.6: level with the lid's lip
+    lim = p.inner_width / 2 - 65 / 2
+    m.u = lim - 1.5                              # 1.5 mm from the wall: fine without a lid
+    assert any("lip" in i.message for i in validation.check(p))
+    p.lid.enabled = False
+    assert not any(i.mount_id for i in validation.check(p) if i.level != "info")
+
+
+def test_posts_and_dividers_holes_and_other_boards():
+    p = Project(width=150, depth=100, height=40, dividers=Dividers(across=2))
+    pico = mounts.new_mount(p, "single")
+    p.mounts = [pico]
+    assert any("stands on a divider" in i.message for i in validation.check(p))
+    zero = mounts.new_mount(p, "rpi-zero")
+    p.mounts = [zero]
+    assert any("rest on a divider" in i.message for i in validation.check(p))
+    p.dividers.height = 3                        # low dividers stay under the board
+    assert not any("divider" in i.message for i in validation.check(p))
+    x, y = mounts.post_positions(zero)[0]
+    p.holes = [Hole(BOTTOM, 3, x, y)]
+    assert any("under a post" in i.message for i in validation.check(p))
+    p.holes = []
+    p.mounts = [zero, mounts.new_mount(p, "pico")]
+    assert any("overlap" in i.message for i in validation.check(p))
+
+
+def test_screw_warnings_and_custom_board_errors():
+    p = Project(width=110, depth=80, height=60)
+    single = mounts.new_mount(p, "single")
+    single.screw, single.length = "M1", 30
+    p.mounts = [single]
+    msgs = messages(validation.check(p))
+    assert "tiny" in msgs and "tall and thin" in msgs
+    p.mounts = [Mount(board="custom", spacing_x=70, board_width=60)]
+    assert validation.has_errors(validation.check(p))
+
+
+def test_posts_in_round_container():
+    p = default_project(CYLINDER)               # 56 mm across inside
+    p.mounts = [mounts.new_mount(p, "pico")]
+    assert not validation.has_errors(validation.check(p))
+    p.mounts = [mounts.new_mount(p, "rpi-ab")]
+    assert validation.has_errors(validation.check(p))
+
+
+def test_posts_round_trip_and_bad_values(tmp_path):
+    p = Project(width=110, depth=80, height=40)
+    m = mounts.new_mount(p, "uno")
+    m.rotation, m.length = 270, 8
+    p.mounts = [m, Mount(board="custom", spacing_x=40, spacing_y=20, board_width=50, board_depth=30)]
+    path = tmp_path / "board.3dn00b"
+    project_io.save_project(p, path)
+    assert project_io.load_project(path) == p
+    for key, bad in (("board", "rpi-99"), ("screw", "M7"), ("rotation", 45)):
+        data = project_io.to_dict(p)
+        data["project"]["mounts"][0][key] = bad
+        with pytest.raises(project_io.ProjectFileError):
+            project_io.from_dict(data)
+
+
+# ---- stacked boards ----------------------------------------------------------
+
+def _stack(lower_board, upper_board, upper_length, turn=90, box=(110, 100, 45)):
+    p = Project(width=box[0], depth=box[1], height=box[2])
+    lower, upper = mounts.new_mount(p, lower_board), mounts.new_mount(p, upper_board)
+    upper.rotation, upper.length = turn, upper_length
+    p.mounts = [lower, upper]
+    return p, [i for i in validation.check(p) if i.mount_id]
+
+
+def test_flat_boards_can_cross_when_there_is_room():
+    # Pi Zero on 6 mm posts: board top at 7.6 mm above the floor, needs 4 + 1 mm above it.
+    _, issues = _stack("rpi-zero", "rpi-zero", 12.6)
+    assert issues == []
+    _, issues = _stack("rpi-zero", "rpi-zero", 12.0)
+    assert issues[0].level == "error" and "0.6 mm taller" in issues[0].hint
+
+
+def test_same_height_overlap_is_an_error():
+    _, issues = _stack("rpi-zero", "rpi-zero", 6.0)
+    assert issues[0].level == "error" and "same height" in issues[0].message
+
+
+def _zero_reaching_over_pi4(length):
+    # The Pi Zero's posts stand just behind the Pi 4 (their edges at y 3.25), while
+    # its board reaches over the Pi 4's back edge (from y 2.75).
+    p = Project(width=110, depth=140, height=60)
+    pi4 = Mount(board="rpi-ab", v=-25)                       # spans y -53 .. 3
+    zero = Mount(board="rpi-zero", v=17.75, length=length)   # posts at y 6.25 and 29.25
+    p.mounts = [pi4, zero]
+    return [i for i in validation.check(p) if i.mount_id]
+
+
+def test_boards_with_tall_sockets_only_get_a_reminder():
+    issues = _zero_reaching_over_pi4(30.0)
+    assert [i.level for i in issues] == ["warning"]
+    assert "USB and network sockets" in issues[0].message
+    issues = _zero_reaching_over_pi4(15.0)                 # Pi 4 needs 17 mm above its top
+    assert [i.level for i in issues] == ["error"]
+
+
+def test_posts_may_not_go_through_the_lower_board():
+    # Same direction, stacked straight above: the upper posts land on the lower board.
+    _, issues = _stack("rpi-zero", "rpi-zero", 20.0, turn=0)
+    assert issues[0].level == "error" and "go through" in issues[0].message
+
+
+def test_parts_height_can_be_changed():
+    p, _ = _stack("rpi-zero", "rpi-zero", 12.6)
+    p.mounts[0].parts_height = 8.5               # GPIO header soldered on
+    assert any("needs 9.5 mm" in i.message for i in validation.check(p))
+    data = project_io.to_dict(p)
+    del data["project"]["mounts"][0]["parts_height"]     # files from 0.6.0
+    assert mounts.parts_height(project_io.from_dict(data).mounts[0]) == 4.0
+
+
+# ---- screwed-down lid --------------------------------------------------------
+
+from threedn00b.model import SCREWED, lid_screw_positions  # noqa: E402
+
+
+def screwed_box(**kw):
+    p = box_with_lid(**kw)
+    p.lid.style = SCREWED
+    return p
+
+
+def test_screw_columns_sit_in_the_corners():
+    p = screwed_box(corner_radius=0)              # inside 76 x 56, M3 column radius 3.5
+    assert sorted(lid_screw_positions(p)) == [(-34.5, -24.5), (-34.5, 24.5), (34.5, -24.5), (34.5, 24.5)]
+    p = screwed_box(corner_radius=15)             # inside corner radius 13: tangent to the curve
+    x, y = lid_screw_positions(p)[0]
+    arc_centre = (-(38 - 13), -(28 - 13))
+    assert math.dist((x, y), arc_centre) == pytest.approx(13 - 3.5)
+
+
+@pytest.mark.parametrize("shape,corner", [(BOX, 0.0), (BOX, 4.0), (BOX, 20.0), (CYLINDER, 0.0)])
+def test_screwed_lid_geometry(shape, corner):
+    p = default_project(shape)
+    p.corner_radius = corner
+    p.lid.enabled, p.lid.style = True, SCREWED
+    parts = geometry.build_parts(p)
+    body, lid = parts.body, parts.lid
+    for solid in (body, lid):
+        assert geometry.piece_count(solid) == 1 and _edges_shared_twice(solid)
+    assert body.bounding_box() == pytest.approx(geometry.build_body(default_project(shape)).bounding_box())
+    assert lid.bounding_box()[2] == pytest.approx(p.outer_height)        # flat: no lip
+    assert geometry.overlap_volume(body, lid) < 1e-6
+    for x, y in lid_screw_positions(p):
+        # Pilot hole from the top, 16 mm deep; the lid's hole goes right through.
+        assert body.ray_cast([x, y, 200], [x, y, -5])[0].position[2] == pytest.approx(p.outer_height - 16)
+        assert not lid.ray_cast([x, y, 200], [x, y, p.outer_height - 0.5])
+    assert not validation.has_errors(validation.check(p, parts))
+
+
+def test_screwed_lid_checks():
+    p = screwed_box(width=18, depth=18, corner_radius=0)       # 14 mm inside, columns need 16
+    assert any("too small for the lid's screw columns" in i.message for i in validation.check(p))
+    p = screwed_box(height=7)                                  # 4 mm for the screws to bite into
+    assert any("only have" in i.message for i in validation.check(p))
+    p = screwed_box()
+    info = next(i for i in validation.check(p) if "screws, up to" in i.message)
+    assert "4 M3 screws, up to 17.5 mm" in info.message
+
+
+def test_wall_hole_near_a_screw_column():
+    p = screwed_box(corner_radius=0)
+    hole = Hole(FRONT, 6, 33, 0)                  # column covers 31 .. 38 along the front wall
+    p.holes = [hole]
+    issue = next(i for i in validation.check(p) if i.hole_id)
+    assert issue.level == "error" and "screw column" in issue.message
+    hole.u, hole.v = issue.fix
+    assert not validation.has_errors(validation.check(p))
+    hole.v = 14                     # high up is fine: a screwed lid has no lip
+    assert not validation.has_errors(validation.check(p))
+    hole.v = 18                     # off the top edge: not blamed on the column
+    issue = next(i for i in validation.check(p) if i.hole_id)
+    assert "runs off the edge" in issue.message
+
+
+def test_round_wall_hole_between_columns():
+    p = default_project(CYLINDER)
+    p.lid.enabled, p.lid.style = True, SCREWED
+    p.holes = [Hole(SIDE, 6, 45, 0)]
+    assert any("screw columns" in i.message for i in validation.check(p))
+    p.holes = [Hole(SIDE, 6, 0, 0)]               # columns are at 45°, 135° ...
+    assert not validation.has_errors(validation.check(p))
+
+
+def test_floor_and_lid_holes_near_columns():
+    p = screwed_box(corner_radius=0)
+    p.holes = [Hole(BOTTOM, 4, 34, 24), Hole(LID, 4, 32, 22)]
+    msgs = messages(validation.check(p))
+    assert "under one of the lid's screw columns" in msgs and "too close to a screw hole" in msgs
+
+
+def test_board_hitting_a_screw_column_gets_a_fix():
+    p = screwed_box(width=100, depth=74, height=40, corner_radius=0)
+    m = mounts.new_mount(p, "rpi-ab")
+    p.mounts = [m]
+    assert not validation.has_errors(validation.check(p))   # placed clear of the columns
+    m.u, m.v = 4, 4                 # still clear of the walls, but a corner hits a column
+    issues = [i for i in validation.check(p) if i.mount_id]
+    assert issues and "screw columns" in issues[0].message
+    m.u, m.v = issues[0].fix
+    assert not validation.has_errors(validation.check(p))
+
+
+def test_screwed_lid_round_trip(tmp_path):
+    p = screwed_box()
+    p.lid.screw = "M2.5"
+    path = tmp_path / "screwed.3dn00b"
+    project_io.save_project(p, path)
+    assert project_io.load_project(path) == p
+    data = project_io.to_dict(p)
+    data["project"]["lid"]["style"] = "magnetic"
+    with pytest.raises(project_io.ProjectFileError):
+        project_io.from_dict(data)
+    del data["project"]["lid"]["style"]           # older files: push-on lid
+    assert project_io.from_dict(data).lid.style == "push"
+
+
+# ---- snap-on and sliding lids ----------------------------------------------------
+
+from threedn00b.model import SLIDING, SNAP, slide_groove  # noqa: E402
+
+
+def lid_box(style, **kw):
+    p = box_with_lid(**kw)
+    p.lid.style = style
+    return p
+
+
+@pytest.mark.parametrize("fit", ["tight", "normal", "loose"])
+@pytest.mark.parametrize("shape,corner", [(BOX, 0.0), (BOX, 4.0), (BOX, 20.0), (CYLINDER, 0.0)])
+def test_snap_lid_fits_without_collision(fit, shape, corner):
+    p = default_project(shape)
+    p.corner_radius = corner
+    p.lid.enabled, p.lid.style, p.lid.fit = True, SNAP, fit
+    parts = geometry.build_parts(p)
+    for solid in (parts.body, parts.lid):
+        assert geometry.piece_count(solid) == 1 and _edges_shared_twice(solid)
+    assert geometry.overlap_volume(parts.body, parts.lid) < 1e-6
+    assert not validation.has_errors(validation.check(p, parts))
+
+
+def test_snap_ridges_sit_in_the_middle_of_each_side():
+    p = lid_box(SNAP, corner_radius=0)          # lip outside face at y = -(30 - 2 - 0.25)
+    lid, body = geometry.build_lid(p), geometry.build_body(p)
+    z = p.outer_height - p.lid.lip_height + 1.6  # middle of the ridge
+    lip_face = -(p.inner_depth / 2 - p.lid.gap)
+
+    def lid_front(x):
+        return lid.ray_cast([x, -100, z], [x, 0, z])[0].position[1]
+    assert lid_front(0) == pytest.approx(lip_face - (0.5 - 0.0), abs=1e-6)   # ridge in the middle
+    assert lid_front(30) == pytest.approx(lip_face, abs=1e-6)                # no ridge near corners
+    # The matching groove is cut into the inside of the wall.
+    inside = body.ray_cast([0, 0, z], [0, -100, z])[0].position[1]
+    assert inside < -p.inner_depth / 2 - 0.2
+    plain = body.ray_cast([30, 0, z], [30, -100, z])[0].position[1]
+    assert plain == pytest.approx(-p.inner_depth / 2)
+
+
+def test_snap_lid_checks():
+    p = lid_box(SNAP)
+    p.lid.lip_height = 2.5
+    assert any("too short for the snap" in i.message for i in validation.check(p))
+    p = lid_box(SNAP, wall=1.2)
+    assert any("too thin for the snap" in i.message for i in validation.check(p))
+
+
+@pytest.mark.parametrize("corner", [0.0, 4.0, 12.0])
+def test_sliding_lid_slides_all_the_way_out(corner):
+    p = lid_box(SLIDING, corner_radius=corner)
+    parts = geometry.build_parts(p)
+    assert geometry.piece_count(parts.body) == 1 and _edges_shared_twice(parts.body)
+    assert p.closed_height == p.outer_height             # the lid sits inside the walls
+    for dy in range(0, -int(p.outer_depth) - 2, -4):     # pull it out step by step
+        assert geometry.overlap_volume(parts.body, parts.lid.translate([0, dy, 0])) < 1e-6
+    # It can't come out upwards or sideways: the walls hold it.
+    assert geometry.overlap_volume(parts.body, parts.lid.translate([0, 0, 1.0])) > 1
+    assert geometry.overlap_volume(parts.body, parts.lid.translate([1.0, 0, 0])) > 1
+    assert not validation.has_errors(validation.check(p, parts))
+
+
+def test_sliding_lid_checks_and_limits():
+    p = default_project(CYLINDER)
+    p.lid.enabled, p.lid.style = True, SLIDING
+    assert any("only work on boxes" in i.message for i in validation.check(p))
+    p = lid_box(SLIDING, wall=1.2)
+    assert any("too thin to hold a sliding lid" in i.message for i in validation.check(p))
+    p = lid_box(SLIDING, height=8)
+    assert any("too low for a sliding lid" in i.message for i in validation.check(p))
+    p = lid_box(SLIDING)
+    g0, _ = slide_groove(p)
+    hole = Hole(FRONT, 6, 0, g0 - p.outer_height / 2)    # reaching into the groove
+    p.holes = [hole]
+    issue = next(i for i in validation.check(p) if i.hole_id)
+    assert "sliding lid's groove" in issue.message
+    hole.u, hole.v = issue.fix
+    assert not validation.has_errors(validation.check(p))
+
+
+def test_sliding_lid_keeps_dividers_and_boards_below_it():
+    p = lid_box(SLIDING, width=110, depth=80, dividers=Dividers(across=2))
+    g0, _ = slide_groove(p)
+    assert divider_top(p) < g0
+    parts = geometry.build_parts(p)
+    assert geometry.overlap_volume(parts.body, parts.lid) < 1e-6
+    m = mounts.new_mount(p, "rpi-zero")
+    m.u = 25
+    m.length = g0 - p.bottom - 1.0
+    p.mounts = [m]
+    p.dividers = Dividers()
+    assert any("stick out" in i.message for i in validation.check(p))
+
+
+def test_new_lid_types_round_trip(tmp_path):
+    for style in (SNAP, SLIDING):
+        p = lid_box(style)
+        path = tmp_path / f"{style}.3dn00b"
+        project_io.save_project(p, path)
+        assert project_io.load_project(path) == p

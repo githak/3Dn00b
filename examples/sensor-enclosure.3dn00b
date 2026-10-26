@@ -1,16 +1,16 @@
 {
   "format": "3dn00b-project",
-  "version": 1,
+  "version": 3,
   "project": {
     "shape": "box",
     "size_mode": "inside",
-    "width": 60,
-    "depth": 40,
+    "width": 60.0,
+    "depth": 40.0,
     "diameter": 60.0,
-    "height": 25,
-    "wall": 2,
+    "height": 25.0,
+    "wall": 2.0,
     "bottom": 2.0,
-    "corner_radius": 3,
+    "corner_radius": 3.0,
     "lid": {
       "enabled": true,
       "fit": "normal",
@@ -21,45 +21,29 @@
     "holes": [
       {
         "surface": "left",
-        "diameter": 5,
-        "u": 0,
-        "v": -4,
-        "id": "0775202f"
+        "diameter": 5.0,
+        "u": 0.0,
+        "v": -2.0,
+        "id": "0775202f",
+        "kind": "rect",
+        "width": 12.5,
+        "height": 7.0,
+        "slot": 2.0,
+        "gap": 2.0,
+        "slot_direction": "along_v"
       },
       {
         "surface": "lid",
-        "diameter": 3,
-        "u": -12,
-        "v": 0,
-        "id": "0c53343a"
-      },
-      {
-        "surface": "lid",
-        "diameter": 3,
-        "u": -6,
-        "v": 0,
-        "id": "72c3b5b4"
-      },
-      {
-        "surface": "lid",
-        "diameter": 3,
-        "u": 0,
-        "v": 0,
-        "id": "8eb8eff9"
-      },
-      {
-        "surface": "lid",
-        "diameter": 3,
-        "u": 6,
-        "v": 0,
-        "id": "fec31117"
-      },
-      {
-        "surface": "lid",
-        "diameter": 3,
-        "u": 12,
-        "v": 0,
-        "id": "4d0179e5"
+        "diameter": 8.0,
+        "u": 0.0,
+        "v": 0.0,
+        "id": "1e923a7e",
+        "kind": "vent",
+        "width": 30,
+        "height": 16,
+        "slot": 2.0,
+        "gap": 2.0,
+        "slot_direction": "along_v"
       }
     ],
     "name": "Sensor enclosure"

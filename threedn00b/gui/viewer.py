@@ -12,8 +12,9 @@ from PySide6.QtCore import QCoreApplication, QPoint, Qt, Signal
 from PySide6.QtGui import QSurfaceFormat, QVector4D
 from PySide6.QtWidgets import QLabel
 
-from .. import geometry
-from ..model import BOTTOM, LID, SIDE, Project, hole_center_3d, surface_frame
+from .. import geometry, mounts
+from ..model import (BOTTOM, LID, RECT, SIDE, VENT, Hole, Project, hole_center_3d,
+                     surface_frame, vent_openings)
 
 # Soft two-sided lighting: a light near the camera plus a fill light and ambient,
 # so the inside of the box and faces turned away are still readable.
@@ -53,6 +54,7 @@ LID_COLOR = (0.98, 0.73, 0.35, 1.0)
 HOLE_COLOR = (0.15, 0.15, 0.15, 0.9)
 SELECTED_COLOR = (1.0, 0.25, 0.55, 1.0)
 PROBLEM_COLOR = (0.9, 0.1, 0.1, 1.0)
+BOARD_COLOR = (0.1, 0.6, 0.25, 1.0)
 BACKGROUND = (236, 239, 243)
 LID_LIFT = 15.0   # extra space between body and lid in the preview
 
@@ -76,7 +78,6 @@ class Viewer(gl.GLViewWidget):
     coordinates, i.e. as if the lid were sitting on the box.
     """
 
-    surfaceClicked = Signal(str, tuple, tuple)
     surfaceDoubleClicked = Signal(str, tuple, tuple)
 
     def __init__(self, parent=None):
@@ -84,10 +85,14 @@ class Viewer(gl.GLViewWidget):
         self.setBackgroundColor(BACKGROUND)
         self.setMinimumSize(420, 360)
         self._press_pos: QPoint | None = None
+        self._dragging = False
+        self.drag_handler = None
+        self.setMouseTracking(True)
         self._solids: dict[str, object] = {}
         self._lid_offset = 0.0
         self._mesh_items: list = []
         self._marker_items: list = []
+        self._mount_items: list = []
         self._grid = gl.GLGridItem()
         self._grid.setColor((150, 160, 175, 120))
         self.addItem(self._grid)
@@ -96,7 +101,7 @@ class Viewer(gl.GLViewWidget):
 
         self.hint = QLabel(
             "Drag to turn  ·  Right-drag or scroll to zoom  ·  Middle-drag to move\n"
-            "Click a hole to select it  ·  Double-click a wall to add a hole", self)
+            "Drag a hole to move it  ·  Double-click a wall to add a hole", self)
         self.hint.setStyleSheet("color: #445; background: rgba(255,255,255,170);"
                                 "padding: 4px 8px; border-radius: 4px;")
         self.hint.move(8, 8)
@@ -123,6 +128,10 @@ class Viewer(gl.GLViewWidget):
         if self._fitted_size is None:
             self.reset_view(project)
         self._fitted_size = key
+
+    def release_geometry(self):
+        """Forget the solids used for click picking (see release_window)."""
+        self._solids.clear()
 
     def _add_mesh(self, solid, color, z_offset):
         verts, tris = geometry.mesh_arrays(solid)
@@ -156,6 +165,33 @@ class Viewer(gl.GLViewWidget):
                 self.addItem(item)
                 self._marker_items.append(item)
 
+    def set_mount_markers(self, project: Project, selected_id: str | None, problem_ids: set):
+        """Board outlines (where the board will sit, not printed) and post rings."""
+        for item in self._mount_items:
+            self.removeItem(item)
+        self._mount_items.clear()
+        for m in project.mounts:
+            if m.id == selected_id:
+                color, width = SELECTED_COLOR, 3.5
+            elif m.id in problem_ids:
+                color, width = PROBLEM_COLOR, 3
+            else:
+                color, width = BOARD_COLOR, 2
+            z = mounts.board_bottom(project, m) + 0.05
+            lines = []
+            corners = mounts.board_corners(m)
+            if corners:
+                lines.append(np.array([(x, y, z) for x, y in corners + corners[:1]]))
+            t = np.linspace(0, 2 * np.pi, 33)
+            r = mounts.post_radius(m) + 0.5
+            for x, y in mounts.post_positions(m):
+                lines.append(np.column_stack([x + r * np.cos(t), y + r * np.sin(t), np.full_like(t, z)]))
+            for line in lines:
+                item = gl.GLLinePlotItem(pos=line, color=color, width=width, antialias=True,
+                                         glOptions="translucent")
+                self.addItem(item)
+                self._mount_items.append(item)
+
     def reset_view(self, project: Project):
         size = max(project.outer_width, project.outer_depth, project.closed_height)
         center_z = (project.closed_height + (LID_LIFT + project.lid.lip_height
@@ -164,19 +200,84 @@ class Viewer(gl.GLViewWidget):
                                elevation=28, azimuth=-62)
 
     # ---- picking --------------------------------------------------------
+    # ---- mouse: drag holes, otherwise turn the view ------------------------
+    # `drag_handler` (the main window) decides what can be dragged. It provides:
+    #   hole_at(origin, direction, mesh_distance) -> bool
+    #   drag_begin(origin, direction, mesh_distance) -> bool
+    #   drag_move(origin, direction), drag_end()
     def mousePressEvent(self, ev):
         self._press_pos = ev.position().toPoint()
+        if ev.button() == Qt.MouseButton.LeftButton and self.drag_handler is not None:
+            ray = self.mouse_ray(ev)
+            if ray and self.drag_handler.drag_begin(*ray, self.mesh_distance(*ray)):
+                self._dragging = True
+                self.setCursor(Qt.CursorShape.ClosedHandCursor)
+                ev.accept()
+                return
         super().mousePressEvent(ev)
 
+    def mouseMoveEvent(self, ev):
+        if self._dragging:
+            ray = self.mouse_ray(ev)
+            if ray:
+                self.drag_handler.drag_move(*ray)
+            ev.accept()
+            return
+        if ev.buttons() == Qt.MouseButton.NoButton and self.drag_handler is not None:
+            ray = self.mouse_ray(ev)
+            over = bool(ray) and self.drag_handler.hole_at(*ray, self.mesh_distance(*ray))
+            if over:
+                self.setCursor(Qt.CursorShape.OpenHandCursor)
+            else:
+                self.unsetCursor()
+        super().mouseMoveEvent(ev)
+
     def mouseReleaseEvent(self, ev):
+        if self._dragging:
+            self._dragging = False
+            self.setCursor(Qt.CursorShape.OpenHandCursor)
+            self.drag_handler.drag_end()
+            ev.accept()
+            return
         super().mouseReleaseEvent(ev)
-        pos = ev.position().toPoint()
-        if (ev.button() == Qt.MouseButton.LeftButton and self._press_pos is not None
-                and (pos - self._press_pos).manhattanLength() < 5):
-            hit = self.pick(pos.x(), pos.y())
-            if hit:
-                self.surfaceClicked.emit(*hit)
         self._press_pos = None
+
+    def mouse_ray(self, ev):
+        """Normalised (origin, direction) of the ray under the mouse."""
+        pos = ev.position()
+        ray = self.ray(pos.x(), pos.y())
+        if ray is None:
+            return None
+        origin, end = ray
+        direction = end - origin
+        length = np.linalg.norm(direction)
+        if length == 0:
+            return None
+        return origin, direction / length
+
+    def mesh_distance(self, origin, direction):
+        """Distance along a ray to the first visible part of the model, or None."""
+        best = None
+        far = origin + direction * 1e5
+        for part, solid in self._solids.items():
+            shift = np.array([0, 0, self._lid_offset if part == "lid" else 0.0])
+            hits = solid.ray_cast(list(origin - shift), list(far - shift))
+            if hits:
+                d = float(np.linalg.norm(np.array(hits[0].position) - (origin - shift)))
+                best = d if best is None else min(best, d)
+        return best
+
+    def project_point(self, point):
+        """Widget pixel position of a 3D point (used by tests)."""
+        viewport = self.getViewport()
+        mvp = self.projectionMatrix(viewport, viewport) * self.viewMatrix()
+        p = mvp.map(QVector4D(float(point[0]), float(point[1]), float(point[2]), 1.0))
+        x, y = p.x() / p.w(), p.y() / p.w()
+        return (x + 1) / 2 * self.width(), (1 - y) / 2 * self.height()
+
+    @property
+    def lid_offset(self) -> float:
+        return self._lid_offset
 
     def mouseDoubleClickEvent(self, ev):
         if ev.button() == Qt.MouseButton.LeftButton:
@@ -218,21 +319,44 @@ class Viewer(gl.GLViewWidget):
         return part, tuple(float(c) for c in hit.position), tuple(float(c) for c in hit.normal)
 
 
+def _outline(hole, steps: int = 48):
+    """Outline of an opening as (du, dv) offsets in mm, a little larger than the opening."""
+    if hole.kind == RECT:
+        hu, hv = hole.width / 2 + 0.6, hole.height / 2 + 0.6
+        return (np.array([-hu, hu, hu, -hu, -hu]), np.array([-hv, -hv, hv, hv, -hv]))
+    r = hole.diameter / 2 + 0.6
+    t = np.linspace(0, 2 * np.pi, steps + 1)
+    return r * np.cos(t), r * np.sin(t)
+
+
 def _hole_rings(project: Project, hole) -> list[np.ndarray]:
     """Outline(s) of a hole, drawn just outside the surface it is on."""
-    r = hole.diameter / 2 + 0.6
-    t = np.linspace(0, 2 * np.pi, 49)
+    if hole.kind == VENT:
+        # The vent's whole area (what you grab and move) plus each slot.
+        area = Hole(surface=hole.surface, kind=RECT, width=hole.width, height=hole.height,
+                    u=hole.u, v=hole.v)
+        rings = _hole_rings(project, area)
+        for slot in vent_openings(project, hole):
+            # Undo the outline's extra margin so slot outlines match the slots.
+            slot.width, slot.height = max(slot.width - 1.2, 0.2), max(slot.height - 1.2, 0.2)
+            rings += _hole_rings(project, slot)
+        return rings
+    du, dv = _outline(hole)
     rings = []
     if hole.surface == SIDE:
         big_r = project.outer_diameter / 2 + 0.3
-        angles = np.radians(hole.u) + (r * np.cos(t)) / big_r
-        z = project.outer_height / 2 + hole.v + r * np.sin(t)
+        if hole.kind == RECT:
+            # Add points along the long edges so they follow the curve.
+            du = np.concatenate([np.linspace(a, b, 12, endpoint=False) for a, b in zip(du[:-1], du[1:])] + [du[-1:]])
+            dv = np.concatenate([np.linspace(a, b, 12, endpoint=False) for a, b in zip(dv[:-1], dv[1:])] + [dv[-1:]])
+        angles = np.radians(hole.u) + du / big_r
+        z = project.outer_height / 2 + hole.v + dv
         rings.append(np.column_stack([np.sin(angles) * big_r, -np.cos(angles) * big_r, z]))
         return rings
     center, _ = hole_center_3d(project, hole)
     _, n, right, up = surface_frame(project, hole.surface)
     c = np.array(center) + np.array(n) * 0.3
-    ring = c + np.outer(np.cos(t) * r, right) + np.outer(np.sin(t) * r, up)
+    ring = c + np.outer(du, right) + np.outer(dv, up)
     rings.append(ring)
     if hole.surface == BOTTOM:
         # Also show it on the inside floor, which is what you usually see.

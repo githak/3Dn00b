@@ -1,0 +1,75 @@
+{
+  "format": "3dn00b-project",
+  "version": 6,
+  "project": {
+    "shape": "box",
+    "size_mode": "inside",
+    "width": 80,
+    "depth": 45,
+    "diameter": 60.0,
+    "height": 25,
+    "wall": 2.0,
+    "bottom": 2.0,
+    "corner_radius": 3,
+    "lid": {
+      "enabled": true,
+      "style": "screwed",
+      "screw": "M3",
+      "fit": "normal",
+      "custom_gap": 0.25,
+      "thickness": 2.0,
+      "lip_height": 5.0
+    },
+    "holes": [
+      {
+        "surface": "front",
+        "diameter": 8.0,
+        "u": 0,
+        "v": 0,
+        "id": "f414c42d",
+        "kind": "rect",
+        "width": 12.5,
+        "height": 7.0,
+        "slot": 2.0,
+        "gap": 2.0,
+        "slot_direction": "along_v"
+      },
+      {
+        "surface": "lid",
+        "diameter": 8.0,
+        "u": 0.0,
+        "v": 0.0,
+        "id": "8fe171bc",
+        "kind": "vent",
+        "width": 30,
+        "height": 12,
+        "slot": 2.0,
+        "gap": 2.0,
+        "slot_direction": "along_v"
+      }
+    ],
+    "name": "Pi Zero box with screwed lid",
+    "dividers": {
+      "across": 1,
+      "deep": 1,
+      "thickness": 1.6,
+      "height": 0.0
+    },
+    "mounts": [
+      {
+        "board": "rpi-zero",
+        "screw": "M2.5",
+        "length": 6.0,
+        "u": 0.0,
+        "v": 0.0,
+        "rotation": 0,
+        "board_width": 60.0,
+        "board_depth": 40.0,
+        "spacing_x": 52.0,
+        "spacing_y": 32.0,
+        "id": "286b021e",
+        "parts_height": -1.0
+      }
+    ]
+  }
+}

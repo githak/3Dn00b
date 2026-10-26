@@ -16,7 +16,7 @@ FreeCAD, Blender, Fusion or Onshape.
 | First lid type | **Push-on (friction-fit) lid** with a lip and a fit setting (Tight 0.15 / Normal 0.25 / Loose 0.40 mm per side, or custom) |
 | Outside or inside sizes | **A simple switch, outside size by default.** The other measurement is always shown, and switching never changes the object |
 | How holes stay put when the object is resized | **Offset from the centre of their surface.** A centred hole stays centred; a hole that no longer fits is flagged with a fix |
-| How holes are placed | **Choose a surface (or double-click it in 3D) and set the position with numbers.** Position ranges are limited to valid values, and dragging in 3D is postponed |
+| How holes are placed | **Choose a surface (or double-click it in 3D) and set the position with numbers, or drag the hole in 3D** (added in 0.2). Position ranges are limited to valid values |
 
 Defaults I chose myself, which are easy to change:
 
@@ -25,12 +25,57 @@ Defaults I chose myself, which are easy to change:
   Closer than 0.4 mm is an error, and anything in between is a warning.
 - Common hole sizes are offered: M3 and M4 screw clearance, and cables.
 
-## Must-haves in 0.1 (done)
+## Must-haves (done)
 
 - Box (with rounded corners) and round container, with outside or inside sizes,
   wall and bottom thickness.
-- Live 3D preview: rotate, zoom, click to select holes, double-click to add one.
+- Live 3D preview: rotate, zoom, double-click a wall to add a hole.
+- Drag holes in 3D along their own surface, with snapping to centre lines and
+  to other holes, and a safe margin from the edges. Each drag is one undo step.
 - Round holes on walls, the bottom and the lid: add, edit, remove, centre.
+- Rectangular holes (0.3) with the same placement rules, for USB ports and
+  switches, with common sizes and a reminder to measure the real part. Sharp
+  corners only; rounded corners were left out to keep the controls minimal.
+- Air vents (0.4): one feature with a size, slot width, gap and direction; the
+  app fits the slots. For placement it behaves like one rectangle, so all the
+  usual rules apply. Up-and-down slots are the default on walls because they
+  print without long bridges.
+- Compartments (0.5): evenly spaced dividers in boxes (left to right and front
+  to back), full height or lower. With a lid they are notched at the ends for
+  the lip and stop just below the lid, automatically. Holes where a divider
+  meets a wall or the floor are flagged. A "Shallow tray with compartments"
+  template is in the New menu. Round containers have no dividers yet.
+- Screw posts (0.6), requested by the project owner: posts on the floor for
+  M1, M2, M2.5, M3 or M4 screws, with a chosen length. Decisions: the screw
+  **cuts its own thread** (pilot hole slightly smaller than the screw, ending at
+  the floor), and the **board outline is shown and checked** against the walls,
+  the lid's lip, the top of the box, dividers, floor holes and other boards.
+  Board presets (from the manufacturers' drawings): Raspberry Pi Zero / Zero W /
+  Zero 2 W, 3 B / 3 B+ / 4 / 5, 3 A+, Pico, Arduino Uno, plus a custom 4-hole
+  board and a single post. A board's posts move and turn (90° steps) as one
+  group. Posts stand on the floor only for now.
+- Stacked boards (0.6.1), requested by the project owner: boards may overlap
+  when one sits higher. Each board has a "Parts on top" height (preset default,
+  editable); the board above needs that much room plus 1 mm. Flat boards
+  (Pi Zero family, Pico) with enough room are approved; boards with tall
+  sockets (Pi 3/4/5, 3 A+, Arduino Uno, custom) get a reminder to check, since
+  their parts vary. Too little room, or a post that would have to pass through
+  the lower board, is an error.
+- Screwed-down lid (0.7): a lid type next to the push-on lid. Flat lid, no lip,
+  clearance holes in the corners; the box gets a full-height column in each
+  corner (tangent to the walls or the rounded corner; four columns spaced around
+  a round container) with a pilot hole the screw cuts its own thread into,
+  16 mm deep at most and never into the floor. Wall holes, floor holes, lid
+  holes and circuit boards are kept clear of the columns, with fixes where
+  possible.
+- Snap-on and sliding lids (0.8). Snap-on: the push-on lid plus 0.5 mm ridges
+  on the middle third of each side of the lip, clicking into matching grooves
+  in the walls; works for boxes and round containers; checks lip depth and
+  wall thickness. Sliding (boxes only): a flat panel in grooves in the left,
+  right and back walls, entering from the front where the wall is lowered; the
+  back of the groove follows rounded corners so it never breaks through. The
+  panel sits inside the walls. Tests slide it all the way out to prove the path
+  is clear.
 - Push-on lid that follows the box size, with fit presets.
 - Plain-language checks covering impossible sizes, thin walls, holes off the
   edge, holes behind the lid lip, overlapping or too-close holes, a lid that
@@ -48,14 +93,9 @@ STL import and editing.
 
 ## Postponed (candidates for later, in rough priority order)
 
-1. Drag holes directly in the 3D view, with snapping.
-2. Rectangular cutouts (USB ports, switches, displays).
-3. Ventilation slot patterns.
-4. Dividers and compartments, and a shallow tray preset.
-5. Screw-mounting bosses, and a screw-fastened lid.
-6. Snap-fit and sliding lids. A threaded lid for round containers may come later.
-7. 3MF export, if users need it. STEP is unlikely, since the geometry engine is mesh-based.
-8. A packaged app (Flatpak or AppImage).
+1. A threaded lid for round containers.
+2. 3MF export, if users need it. STEP is unlikely, since the geometry engine is mesh-based.
+3. A packaged app (Flatpak or AppImage).
 
 Each addition must pass the brief's test: does it make a common beginner task
 much easier, without CAD vocabulary, and without making the interface busier?
@@ -68,7 +108,7 @@ much easier, without CAD vocabulary, and without making the interface busier?
 | GUI | PySide6 (Qt 6), LGPL | Native-looking Linux desktop app, installs from pip |
 | 3D preview | pyqtgraph `GLViewWidget` with a custom soft-lit shader | Small, pure Python, works on integrated graphics (OpenGL 2-era shaders) |
 | Geometry | **Manifold** (`manifold3d`), Apache-2.0 | Fast, robust Boolean operations whose results are **always watertight**. That is exactly what an STL needs. It is a small pip wheel with no system dependencies |
-| Project files | Versioned JSON (`"format": "3dn00b-project", "version": 1`) | Human-readable, diffable, forward-compatible |
+| Project files | Versioned JSON (`"format": "3dn00b-project", "version": 7`) | Human-readable, diffable, forward-compatible |
 
 **Why not CadQuery or build123d (OpenCascade)?** They are excellent, but they
 bring a large binary dependency (OCP), a slower and more fragile pipeline for
