@@ -445,3 +445,17 @@ def test_snap_and_sliding_lid_controls(window):
         assert window.project.lid.style == style
         assert form.isRowVisible(window.fit_combo) and form.isRowVisible(window.lip_height) == lip
         assert not validation_errors(window)
+
+
+def test_threaded_lid_controls(window):
+    window.shape_buttons[CYLINDER].click()
+    window.lid_check.setChecked(True)
+    window.lid_style.setCurrentIndex(window.lid_style.findData("threaded"))
+    window.lid_style.activated.emit(window.lid_style.currentIndex())
+    assert window.project.lid.style == "threaded"
+    form = window.lid_form
+    assert form.isRowVisible(window.fit_combo) and not form.isRowVisible(window.lip_height)
+    assert "jar" in window.lid_style_hint.text()
+    assert not validation_errors(window)
+    window.shape_buttons[BOX].click()
+    assert any("round containers" in m for m in validation_errors(window))

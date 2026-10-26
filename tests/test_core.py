@@ -1022,3 +1022,87 @@ def test_new_lid_types_round_trip(tmp_path):
         path = tmp_path / f"{style}.3dn00b"
         project_io.save_project(p, path)
         assert project_io.load_project(path) == p
+
+
+# ---- threaded lid ------------------------------------------------------------
+
+from threedn00b.model import THREAD_DEPTH, THREAD_PITCH, THREADED, thread_sizes  # noqa: E402
+
+
+def jar(diameter=60.0, height=80.0, fit="normal"):
+    p = default_project(CYLINDER)
+    p.diameter, p.height = diameter, height
+    p.lid.enabled, p.lid.style, p.lid.fit = True, THREADED, fit
+    return p
+
+
+def test_thread_flanks_print_without_support():
+    # The steepest part of the rounded thread rises pi * depth / pitch mm per mm.
+    assert math.pi * THREAD_DEPTH / THREAD_PITCH <= 1.0
+
+
+@pytest.mark.parametrize("fit", ["tight", "normal", "loose"])
+@pytest.mark.parametrize("diameter", [40.0, 60.0, 100.0])
+def test_threaded_lid_unscrews_without_collision(fit, diameter):
+    p = jar(diameter, fit=fit)
+    parts = geometry.build_parts(p)
+    body, lid = parts.body, parts.lid
+    for solid in (body, lid):
+        assert geometry.is_valid_solid(solid) and geometry.piece_count(solid) == 1
+    for deg in range(0, 721, 30):                       # two full turns, turning and lifting
+        moved = lid.rotate([0, 0, deg]).translate([0, 0, THREAD_PITCH * deg / 360])
+        assert geometry.overlap_volume(body, moved) < 0.05, deg
+    # The thread holds: pulling straight up, or turning the wrong way, is blocked.
+    assert geometry.overlap_volume(body, lid.translate([0, 0, 2])) > 10
+    assert geometry.overlap_volume(body, lid.rotate([0, 0, -90]).translate([0, 0, 1])) > 10
+    assert not validation.has_errors(validation.check(p, parts))
+
+
+def test_threaded_lid_is_flush_and_prints_flat():
+    p = jar()
+    parts = geometry.build_parts(p)
+    lo, hi = parts.lid.bounding_box()[:3], parts.lid.bounding_box()[3:]
+    assert hi[0] - lo[0] == pytest.approx(p.outer_diameter, abs=0.01)   # same width as the jar
+    assert parts.body.bounding_box()[3] == pytest.approx(p.outer_diameter / 2, abs=0.01)
+    assert p.closed_height == pytest.approx(hi[2], abs=1e-6)
+    lid_print = parts.printable()["lid"]
+    assert lid_print.bounding_box()[2] == pytest.approx(0)
+    t = thread_sizes(p)
+    # Inside: full width low down, narrowing at 45 degrees to the neck's opening.
+    body = parts.body
+    assert body.ray_cast([0, 0, 10], [40, 0, 10])[0].position[0] == pytest.approx(30 - p.wall, abs=0.05)
+    assert body.ray_cast([0, 0, p.outer_height - 1], [40, 0, p.outer_height - 1])[0].position[0] == \
+        pytest.approx(t.opening, abs=0.05)
+
+
+def test_threaded_lid_checks():
+    p = jar()
+    p.shape = BOX
+    assert any("only work on round containers" in i.message for i in validation.check(p))
+    assert geometry.build_lid(p) is None
+    assert any("too narrow" in i.message for i in validation.check(jar(diameter=22)))
+    assert any("too short" in i.message for i in validation.check(jar(height=15)))
+    p = jar()
+    hole = Hole(SIDE, 6, 0, 30)                         # up on the neck
+    p.holes = [hole]
+    issue = next(i for i in validation.check(p) if i.hole_id)
+    assert "on the neck" in issue.message
+    hole.u, hole.v = issue.fix
+    assert not validation.has_errors(validation.check(p))
+
+
+def test_holes_in_threaded_lid():
+    p = jar()
+    p.holes = [Hole(LID, 8, 0, 0)]
+    parts = geometry.build_parts(p)
+    assert not parts.lid.ray_cast([0, 0, 200], [0, 0, p.outer_height])
+    assert not validation.has_errors(validation.check(p, parts))
+    p.holes = [Hole(LID, 8, 26, 0)]                     # outside the opening
+    assert validation.has_errors(validation.check(p))
+
+
+def test_threaded_lid_round_trip(tmp_path):
+    p = jar()
+    path = tmp_path / "jar.3dn00b"
+    project_io.save_project(p, path)
+    assert project_io.load_project(path) == p

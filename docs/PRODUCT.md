@@ -76,6 +76,13 @@ Defaults I chose myself, which are easy to change:
   back of the groove follows rounded corners so it never breaks through. The
   panel sits inside the walls. Tests slide it all the way out to prove the path
   is clear.
+- Threaded lid (0.9), round containers only: the container's top becomes a neck
+  with a rounded, right-hand thread (4 mm per turn, 1.2 mm deep, so the flanks
+  stay under 45° and print without supports); inside, the wall narrows to the
+  neck at 45°. The lid is a flush cap with the matching thread, its clearance
+  set by the usual fit. Tests unscrew the lid through two turns for several
+  sizes and fits and check it never collides, and that pulling straight up or
+  turning the wrong way is blocked. Holes are kept off the neck.
 - Push-on lid that follows the box size, with fit presets.
 - Plain-language checks covering impossible sizes, thin walls, holes off the
   edge, holes behind the lid lip, overlapping or too-close holes, a lid that
@@ -93,9 +100,8 @@ STL import and editing.
 
 ## Postponed (candidates for later, in rough priority order)
 
-1. A threaded lid for round containers.
-2. 3MF export, if users need it. STEP is unlikely, since the geometry engine is mesh-based.
-3. A packaged app (Flatpak or AppImage).
+1. 3MF export, if users need it. STEP is unlikely, since the geometry engine is mesh-based.
+2. A packaged app (Flatpak or AppImage).
 
 Each addition must pass the brief's test: does it make a common beginner task
 much easier, without CAD vocabulary, and without making the interface busier?
@@ -108,7 +114,7 @@ much easier, without CAD vocabulary, and without making the interface busier?
 | GUI | PySide6 (Qt 6), LGPL | Native-looking Linux desktop app, installs from pip |
 | 3D preview | pyqtgraph `GLViewWidget` with a custom soft-lit shader | Small, pure Python, works on integrated graphics (OpenGL 2-era shaders) |
 | Geometry | **Manifold** (`manifold3d`), Apache-2.0 | Fast, robust Boolean operations whose results are **always watertight**. That is exactly what an STL needs. It is a small pip wheel with no system dependencies |
-| Project files | Versioned JSON (`"format": "3dn00b-project", "version": 7`) | Human-readable, diffable, forward-compatible |
+| Project files | Versioned JSON (`"format": "3dn00b-project", "version": 8`) | Human-readable, diffable, forward-compatible |
 
 **Why not CadQuery or build123d (OpenCascade)?** They are excellent, but they
 bring a large binary dependency (OCP), a slower and more fragile pipeline for

@@ -21,7 +21,7 @@ from ..model import (ALONG_U, ALONG_V, BOTTOM, BOX, CYLINDER, FIT_LABELS, FIT_PR
                      FRONT, HOLE_DIAMETER_RANGE, HOLE_KIND_LABELS, INSIDE, LID, MIN_EDGE,
                      OUTSIDE, RECT, ROUND, SIDE, SIZE_RANGE, SURFACE_LABELS, VENT,
                      DIVIDER_RANGE, LID_STYLE_LABELS, MAX_COMPARTMENTS, PUSH_ON, SCREWED, SCREWS, SLIDING,
-                     SNAP, TRAY_TEMPLATE, WALL_RANGE, Hole, Project,
+                     SNAP, THREADED, TRAY_TEMPLATE, WALL_RANGE, Hole, Project,
                      clamp_hole, compartment_size, default_project, hole_limits)
 from .viewer import Viewer
 
@@ -52,6 +52,8 @@ LID_STYLE_HINTS = {
              "Only for boxes.",
     SCREWED: "A flat lid held by a screw in each corner. The box gets a column in each corner "
              "for the screws to bite into.",
+    THREADED: "A screw-on lid, like a jar. The top of the container becomes a narrower neck "
+              "with a thread. Only for round containers.",
 }
 CHECK_TAB_TITLE = "5 Check && Export"
 
@@ -667,6 +669,8 @@ class MainWindow(QMainWindow):
         self.lid_form.setRowVisible(self.lid_screw, style == SCREWED)
         self.lid_form.setRowVisible(self.fit_combo, style != SCREWED)
         self.lid_form.setRowVisible(self.gap_spin, style != SCREWED)
+        self.gap_spin.setToolTip("Extra room between the threads" if style == THREADED else
+                                 "Space between the lid and the walls, on each side")
         self.lid_form.setRowVisible(self.lip_height, style in (PUSH_ON, SNAP))
         self.lid_style_hint.setText(LID_STYLE_HINTS[style])
         upside_down = "\n\nThe lid is exported upside down, which is the best way to print it."
@@ -678,6 +682,8 @@ class MainWindow(QMainWindow):
             SLIDING: fit_tip + "\n\nThe lid is printed flat. Slide it in from the front.",
             SCREWED: "Screws cut their own thread into the plastic. Tighten them gently, just "
                      "until the lid is snug." + upside_down,
+            THREADED: fit_tip + " Screw it on clockwise; the thread rises 4 mm per turn."
+                      + upside_down,
         }[style])
         set_quietly(self.fit_combo, p.lid.fit)
         set_quietly(self.gap_spin, p.lid.gap)

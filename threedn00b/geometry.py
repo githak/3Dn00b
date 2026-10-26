@@ -14,7 +14,8 @@ from manifold3d import CrossSection, Error, JoinType, Manifold, OpType
 
 from .model import (BACK, BOTTOM, BOX, CYLINDER, FRONT, LEFT, LID, RECT, RIGHT, SIDE, VENT,
                     SCREWS, Hole, Project, divider_positions, divider_top, has_dividers, has_lip,
-                    has_screw_lid, has_sliding_lid, has_snap_lid, lid_pilot_depth,
+                    CAP_TOP_GAP, THREAD_DEPTH, THREAD_PITCH, THREADED, has_screw_lid,
+                    has_sliding_lid, has_snap_lid, has_threaded_lid, lid_pilot_depth, thread_sizes,
                     lid_screw_positions, lid_top_z, slide_engage, slide_groove, SNAP_BUMP,
                     SNAP_RIDGE,
                     lip_outer_offset, lip_wall, vent_openings)
@@ -80,10 +81,13 @@ def _prism(section: CrossSection | None, height: float, z0: float) -> Manifold |
 
 def build_body(project: Project) -> Manifold:
     h = project.outer_height
-    body = _prism(footprint(project), h, 0.0)
-    cavity = _prism(footprint(project, project.wall), h - project.bottom + 1.0, project.bottom)
-    if cavity is not None:
-        body = body - cavity
+    if has_threaded_lid(project):
+        body = _threaded_container(project)
+    else:
+        body = _prism(footprint(project), h, 0.0)
+        cavity = _prism(footprint(project, project.wall), h - project.bottom + 1.0, project.bottom)
+        if cavity is not None:
+            body = body - cavity
     dividers = build_dividers(project)
     if dividers is not None:
         body = body + dividers
@@ -227,10 +231,60 @@ def _slide_outline(project: Project, reach: float, front_y: float) -> CrossSecti
     return back + straight
 
 
+def _helix(radius: float, z_from: float, z_to: float) -> Manifold:
+    """A right-hand thread: an off-centre disc twisted as it rises.
+
+    Its surface swings between radius - THREAD_DEPTH and radius (outermost
+    point). Every helix uses the same phase at the same height, so a neck's
+    thread and its lid's thread always line up.
+    """
+    e = THREAD_DEPTH / 2
+    disc = CrossSection.circle(radius - e, _circle_segments(radius, 0.8, 64, 240)).translate([e, 0])
+    turn = 360.0 / THREAD_PITCH
+    disc = disc.rotate(turn * z_from)
+    height = z_to - z_from
+    # Between slices the surface is straight; keep the slices close enough that it
+    # stays within 0.05 mm of the true curve, however wide the container (well
+    # inside the thread clearance, which is 0.35 mm or more).
+    step = math.degrees(2 * math.acos(1 - 0.05 / radius))
+    slices = max(8, math.ceil(turn * height / step))
+    return Manifold.extrude(disc, height, slices, turn * height).translate([0.0, 0.0, z_from])
+
+
+def _threaded_container(project: Project) -> Manifold:
+    """A round container whose top narrows into a neck with a thread on the outside."""
+    t = thread_sizes(project)
+    h, inside = project.outer_height, project.outer_diameter / 2 - project.wall
+    profile = CrossSection([[
+        (0.0, 0.0), (t.outer, 0.0), (t.outer, t.shoulder), (t.root, t.shoulder), (t.root, h),
+        (t.opening, h), (t.opening, t.shoulder), (inside, t.slope_bottom),
+        (inside, project.bottom), (0.0, project.bottom)]])
+    body = Manifold.revolve(profile, _circle_segments(t.outer))
+    thread = _helix(t.crest, t.thread_from, t.thread_to)
+    opening = Manifold.cylinder(h - t.shoulder + 2, t.opening, -1.0, _circle_segments(t.opening))
+    return (body + thread) - opening.translate([0.0, 0.0, t.shoulder - 0.01])
+
+
+def _threaded_lid(project: Project) -> Manifold:
+    """A cap whose skirt has the matching thread on the inside."""
+    t = thread_sizes(project)
+    top_inside = project.outer_height + CAP_TOP_GAP
+    skirt_from = t.shoulder + 0.5
+    cap = Manifold.cylinder(top_inside + project.lid.thickness - skirt_from, t.outer, -1.0,
+                            _circle_segments(t.outer)).translate([0.0, 0.0, skirt_from])
+    # The inside is the neck's outside grown by the clearance, thread included.
+    room = Manifold.cylinder(top_inside - skirt_from + 1.0, t.root + t.clearance, -1.0,
+                             _circle_segments(t.root)).translate([0.0, 0.0, skirt_from - 1.0])
+    room = room + _helix(t.crest + t.clearance, skirt_from - 1.0, top_inside)
+    return cap - room
+
+
 def build_lid(project: Project) -> Manifold | None:
     lid_opts = project.lid
     if not lid_opts.enabled:
         return None
+    if lid_opts.style == THREADED:
+        return _cut_lid_holes(project, _threaded_lid(project)) if has_threaded_lid(project) else None
     if has_sliding_lid(project):
         if project.shape != BOX:
             return None
