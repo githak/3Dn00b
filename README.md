@@ -63,7 +63,7 @@ Download `3dn00b_<version>-1_amd64.deb` from the
 [Releases page](https://github.com/githak/3Dn00b/releases) and install it:
 
 ```bash
-sudo apt install ./3dn00b_0.12.0-1_amd64.deb
+sudo apt install ./3dn00b_0.12.1-1_amd64.deb
 ```
 
 That's all: 3Dn00b appears in your applications menu, `.3dn00b` project files open
@@ -74,11 +74,12 @@ To remove it: `sudo apt remove 3dn00b`.
 | Works on | Tested automatically |
 | --- | --- |
 | Debian 12 (bookworm) and 13 (trixie) | yes |
-| Ubuntu 22.04 and 24.04, and versions in between | 22.04 and 24.04 |
+| Ubuntu 22.04 to 26.10 (Python 3.10 to 3.14) | 22.04, 24.04 and 26.04 |
 | Linux Mint 21 and 22, Pop!_OS, Zorin and other Ubuntu-based systems | through Ubuntu |
 
 The package is for 64-bit PCs (amd64) and contains its own copies of the
-libraries Debian doesn't provide, for Python 3.10 to 3.13.
+libraries Debian doesn't provide, for Python 3.10 to 3.14. A future Linux release
+with a newer Python needs a new package version.
 
 To build the package yourself: `python3 packaging/build_deb.py` (it downloads the
 libraries from PyPI and writes `dist/3dn00b_<version>-1_amd64.deb`).

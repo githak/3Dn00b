@@ -89,10 +89,10 @@ Defaults I chose myself, which are easy to change:
   triangle with the built parts; PrusaSlicer opens and slices every example.
 - Debian package (0.11): `packaging/build_deb.py` builds one amd64 .deb for
   Debian 12/13, Ubuntu 22.04+ and derivatives. It bundles the libraries Debian
-  lacks for Python 3.10–3.13 (shared parts stored once, unused Qt parts left
+  lacks for Python 3.10–3.14 (shared parts stored once, unused Qt parts left
   out), declares Qt's system libraries as dependencies, adds a menu entry, icon
   and .3dn00b file type, and pre-compiles Python files on install. CI installs
-  it on clean Debian 12/13 and Ubuntu 22.04/24.04 and runs the app's
+  it on clean Debian 12/13 and Ubuntu 22.04/24.04/26.04 and runs the app's
   `--smoke-test` (window, 3D view, geometry, STL/3MF export).
 - Custom boards with 1 or 2 holes (0.12), requested by the project owner (for
   example a DRV8833 motor driver with two holes, or fastening something with a
