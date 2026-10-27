@@ -502,3 +502,15 @@ def test_custom_board_fields_follow_the_board(window):
     assert not form.isRowVisible(window.spacing_x)
     # All three were added in the middle, so the only problems are the overlaps.
     assert all("overlap" in m for m in validation_errors(window))
+
+
+def test_about_box(window, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    shown = []
+    monkeypatch.setattr(QMessageBox, "exec", lambda self: shown.append(self.text()))
+    assert window.about_action.text() == "About"
+    window.about_action.trigger()
+    assert len(shown) == 1
+    text = shown[0]
+    assert "3Dn00b" in text and "beginners" in text
+    assert text.endswith("<p><br>Vibe-coded by TheSpork, 2026</p>")   # last, after a blank line

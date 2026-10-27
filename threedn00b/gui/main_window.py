@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox,
                                QSplitter, QStyle, QTabWidget, QToolBar, QToolButton,
                                QVBoxLayout, QWidget)
 
-from .. import APP_NAME, geometry, mounts, picking, project_io, validation
+from .. import APP_NAME, __version__, geometry, mounts, picking, project_io, validation
 from ..model import (ALONG_U, ALONG_V, BOTTOM, BOX, CYLINDER, FIT_LABELS, FIT_PRESETS,
                      FRONT, HOLE_DIAMETER_RANGE, HOLE_KIND_LABELS, INSIDE, LID, MIN_EDGE,
                      OUTSIDE, RECT, ROUND, SIDE, SIZE_RANGE, SURFACE_LABELS, VENT,
@@ -242,6 +242,9 @@ class MainWindow(QMainWindow):
         self.export_action = action("Export for printing…", QStyle.StandardPixmap.SP_DriveHDIcon,
                                     self.export_stl, QKeySequence("Ctrl+E"),
                                     "Save STL files you can open in your slicer")
+        bar.addSeparator()
+        self.about_action = action("About", QStyle.StandardPixmap.SP_MessageBoxInformation,
+                                   self.show_about, tip="About 3Dn00b")
         delete = QAction(self, shortcut=QKeySequence.StandardKey.Delete)
         delete.triggered.connect(self.remove_selected_hole)
         self.addAction(delete)
@@ -1410,6 +1413,23 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, APP_NAME, "Saved for printing:\n\n"
                                 + "\n".join(f.name for f in files)
                                 + f"\n\nin {folder}\n\nOpen these in your slicer to print them.")
+
+    def about_text(self) -> str:
+        return (f"<h3>{APP_NAME} {__version__}</h3>"
+                "<p>A simple designer for 3D printing, made for beginners. Pick a box or a "
+                "round container, type the sizes, add holes, vents, compartments, screw "
+                "posts and a lid, and export files for your slicer. No CAD knowledge "
+                "needed: the app checks your design and explains problems in plain words.</p>"
+                "<p>Free software under the GNU GPL version 3.</p>"
+                "<p><br>Vibe-coded by TheSpork, 2026</p>")
+
+    def show_about(self):
+        box = QMessageBox(self)
+        box.setWindowTitle(f"About {APP_NAME}")
+        box.setTextFormat(Qt.TextFormat.RichText)
+        box.setText(self.about_text())
+        box.setIconPixmap(QApplication.windowIcon().pixmap(64, 64))
+        box.exec()
 
     def _update_title(self, clean: bool | None = None):
         if clean is None:
