@@ -5,6 +5,7 @@ from __future__ import annotations
 import ctypes.util
 import os
 import sys
+from pathlib import Path
 
 MISSING_XCB_CURSOR = """\
 3Dn00b can't open its window: a system library Qt needs (libxcb-cursor) is missing.
@@ -99,9 +100,54 @@ def main() -> int:
     app.setApplicationName(APP_NAME)
     app.setApplicationVersion(__version__)
     app.setDesktopFileName("3dn00b")
+    from PySide6.QtGui import QIcon
+    icon = QIcon.fromTheme("3dn00b")
+    app.setWindowIcon(icon if not icon.isNull() else
+                      QIcon(str(Path(__file__).parent / "resources" / "3dn00b.svg")))
 
     from .gui.main_window import main_window_app
+    if "--smoke-test" in sys.argv:
+        return smoke_test(app)
     return main_window_app(sys.argv)
+
+
+def smoke_test(app) -> int:
+    """Check an installation works: window, 3D view, geometry and export. Used by packaging."""
+    import tempfile
+
+    from PySide6.QtCore import QTimer
+
+    from . import project_io
+    from .gui.main_window import MainWindow, release_window
+    from .model import FRONT, default_project
+
+    result = {"code": 1}
+    window = MainWindow()
+    window.show()
+
+    def check():
+        try:
+            window.lid_check.setChecked(True)
+            window.add_hole(FRONT)
+            window.rebuild()
+            image = window.viewer.grabFramebuffer()
+            assert not image.isNull() and image.width() > 100, "the 3D view didn't draw"
+            with tempfile.TemporaryDirectory() as tmp:
+                stl = project_io.export_stl_files(window.project, tmp)
+                three_mf = project_io.export_3mf_file(window.project, tmp)
+                assert all(f.stat().st_size > 1000 for f in stl + [three_mf]), "export failed"
+                project_io.save_project(default_project(), Path(tmp) / "test.3dn00b")
+            print("3Dn00b smoke test: OK")
+            result["code"] = 0
+        except Exception as exc:          # report and fail, but don't hang
+            print(f"3Dn00b smoke test FAILED: {exc!r}", file=sys.stderr)
+        window.undo_stack.setClean()
+        app.quit()
+
+    QTimer.singleShot(500, check)
+    app.exec()
+    release_window(window)
+    return result["code"]
 
 
 if __name__ == "__main__":

@@ -1,0 +1,4 @@
+#!/bin/sh
+# Start 3Dn00b with the libraries bundled in its package.
+# THREEDN00B_PYTHON lets the package tests try other Python versions.
+exec "${THREEDN00B_PYTHON:-/usr/bin/python3}" -s /usr/lib/3dn00b/launch.py "$@"

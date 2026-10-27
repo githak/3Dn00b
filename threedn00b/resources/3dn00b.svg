@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <!-- A box with its lid lifted: the 3Dn00b app icon. -->
+  <rect x="4" y="4" width="120" height="120" rx="26" fill="#eef2f7"/>
+  <path d="M28 62 L64 78 L100 62 L100 98 L64 114 L28 98 Z" fill="#3f78ad"/>
+  <path d="M28 62 L64 78 L64 114 L28 98 Z" fill="#5a9bd6"/>
+  <path d="M28 62 L64 46 L100 62 L64 78 Z" fill="#2c5b85"/>
+  <path d="M24 38 L64 20 L104 38 L64 56 Z" fill="#f2b45a"/>
+  <path d="M24 38 L64 56 L64 63 L24 45 Z" fill="#d9963a"/>
+  <path d="M104 38 L64 56 L64 63 L104 45 Z" fill="#c2832d"/>
+  <circle cx="46" cy="92" r="5" fill="#1f3f5c"/>
+</svg>

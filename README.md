@@ -8,7 +8,7 @@ Software for people getting into 3D printing and want to start with something ea
 sizes in millimetres, add holes and a lid, and export files your slicer can
 print. No sketches, no constraints, no feature trees.
 
-## What it can do (version 0.10)
+## What it can do (version 0.11)
 
 - **Box** (with rounded corners) or **round container**.
 - Sizes as **outside size** or **inside space**, with a single switch.
@@ -57,7 +57,35 @@ print. No sketches, no constraints, no feature trees.
   side down and ready for your slicer (the lid comes out upside down, which is how
   it prints best). Every exported part is guaranteed to be watertight.
 
-## Install and run (Linux)
+## Install on Debian, Ubuntu and Linux Mint
+
+Download `3dn00b_<version>-1_amd64.deb` from the
+[Releases page](https://github.com/githak/3Dn00b/releases) and install it:
+
+```bash
+sudo apt install ./3dn00b_0.11.0-1_amd64.deb
+```
+
+That's all: 3Dn00b appears in your applications menu, `.3dn00b` project files open
+in it, and the examples are in `/usr/share/3dn00b/examples/`. Nothing is
+downloaded while installing; apt adds the few system libraries it needs.
+To remove it: `sudo apt remove 3dn00b`.
+
+| Works on | Tested automatically |
+| --- | --- |
+| Debian 12 (bookworm) and 13 (trixie) | yes |
+| Ubuntu 22.04 and 24.04, and versions in between | 22.04 and 24.04 |
+| Linux Mint 21 and 22, Pop!_OS, Zorin and other Ubuntu-based systems | through Ubuntu |
+
+The package is for 64-bit PCs (amd64) and contains its own copies of the
+libraries Debian doesn't provide, for Python 3.10 to 3.13.
+
+To build the package yourself: `python3 packaging/build_deb.py` (it downloads the
+libraries from PyPI and writes `dist/3dn00b_<version>-1_amd64.deb`).
+`packaging/test_deb.sh dist/*.deb` installs it in clean Debian and Ubuntu
+containers (Docker) and runs a smoke test.
+
+## Run from source (any Linux)
 
 You need Python 3.10 or newer and a working OpenGL driver (any normal
 desktop, including integrated graphics).

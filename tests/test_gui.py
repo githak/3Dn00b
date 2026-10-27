@@ -476,3 +476,12 @@ def test_export_3mf_from_the_window(window, tmp_path, monkeypatch):
     window.format_combo.setCurrentIndex(window.format_combo.findData("stl"))
     window.export_button.click()
     assert (tmp_path / "my-box-body.stl").exists() and (tmp_path / "my-box-lid.stl").exists()
+
+
+def test_smoke_test_option():
+    """The check the Debian package tests run after installing."""
+    import subprocess
+    result = subprocess.run([sys.executable, "-m", "threedn00b", "--smoke-test"],
+                            capture_output=True, text=True, timeout=120)
+    assert result.returncode == 0, result.stderr
+    assert "smoke test: OK" in result.stdout

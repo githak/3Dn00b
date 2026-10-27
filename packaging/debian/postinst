@@ -1,0 +1,8 @@
+#!/bin/sh
+set -e
+# Pre-compile the Python files for this computer's Python so 3Dn00b starts quickly.
+if [ "$1" = "configure" ]; then
+    py=$(python3 -c 'import sys; print("py%d.%d" % sys.version_info[:2])')
+    python3 -m compileall -q -j 0 /usr/lib/3dn00b/app /usr/lib/3dn00b/vendor/common \
+        "/usr/lib/3dn00b/vendor/$py" >/dev/null 2>&1 || true
+fi

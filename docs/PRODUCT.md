@@ -87,6 +87,13 @@ Defaults I chose myself, which are easy to change:
   one 3MF file, laid out side by side 10 mm apart and centred, with millimetres
   stated in the file. Tests read the file back and compare every vertex and
   triangle with the built parts; PrusaSlicer opens and slices every example.
+- Debian package (0.11): `packaging/build_deb.py` builds one amd64 .deb for
+  Debian 12/13, Ubuntu 22.04+ and derivatives. It bundles the libraries Debian
+  lacks for Python 3.10–3.13 (shared parts stored once, unused Qt parts left
+  out), declares Qt's system libraries as dependencies, adds a menu entry, icon
+  and .3dn00b file type, and pre-compiles Python files on install. CI installs
+  it on clean Debian 12/13 and Ubuntu 22.04/24.04 and runs the app's
+  `--smoke-test` (window, 3D view, geometry, STL/3MF export).
 - Push-on lid that follows the box size, with fit presets.
 - Plain-language checks covering impossible sizes, thin walls, holes off the
   edge, holes behind the lid lip, overlapping or too-close holes, a lid that
@@ -104,7 +111,8 @@ STL import and editing.
 
 ## Postponed (candidates for later, in rough priority order)
 
-1. A packaged app (Flatpak or AppImage).
+1. Packages for other systems (Flatpak or AppImage, Fedora, arm64 such as the
+   Raspberry Pi) if people ask for them.
 
 Each addition must pass the brief's test: does it make a common beginner task
 much easier, without CAD vocabulary, and without making the interface busier?
