@@ -30,7 +30,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        system: ["debian:12", "debian:13", "ubuntu:22.04", "ubuntu:24.04"]
+        system: ["debian:12", "debian:13", "ubuntu:22.04", "ubuntu:24.04", "ubuntu:26.04"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -55,4 +55,4 @@ jobs:
         run: |
           gh release create "$GITHUB_REF_NAME" dist/*.deb --repo "$GITHUB_REPOSITORY" \
             --title "3Dn00b $GITHUB_REF_NAME" \
-            --notes "Install on Debian 12/13, Ubuntu 22.04/24.04, Linux Mint 21/22: download the .deb and run: sudo apt install ./$(basename dist/*.deb)"
+            --notes "Install on Debian 12/13, Ubuntu 22.04 to 26.04 and later, Linux Mint 21/22: download the .deb and run: sudo apt install ./$(basename dist/*.deb)"

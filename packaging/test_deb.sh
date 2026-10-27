@@ -3,7 +3,7 @@
 #   packaging/test_deb.sh dist/3dn00b_*.deb [debian:12 ubuntu:22.04 ...]
 set -e
 DEB=$(realpath "$1"); shift
-IMAGES=${*:-"debian:12 debian:13 ubuntu:22.04 ubuntu:24.04"}
+IMAGES=${*:-"debian:12 debian:13 ubuntu:22.04 ubuntu:24.04 ubuntu:26.04"}
 # Behind an HTTPS-only proxy: APT_PROXY=http://host:port (and APT_CA=/path/ca.crt if it
 # re-signs TLS) make apt in the containers use HTTPS mirrors through it.
 # DOCKER_NETWORK=host shares the host's network (when containers have none of their own).

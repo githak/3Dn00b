@@ -5,7 +5,7 @@
 
 Some of 3Dn00b's libraries (PySide6, manifold3d) are not packaged by Debian, so
 the package carries its own copies, for every Python version those
-distributions use (3.10 to 3.13). A small launcher picks the right set. Parts of
+distributions use (3.10 to 3.14). A small launcher picks the right set. Parts of
 Qt the app never uses are left out to keep the download small.
 
 Needs: Python 3.11+, pip, dpkg-deb and readelf (binutils), and internet access
@@ -28,7 +28,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 HERE = Path(__file__).resolve().parent / "debian"
-PYTHONS = ("3.10", "3.11", "3.12", "3.13")
+PYTHONS = ("3.10", "3.11", "3.12", "3.13", "3.14")
 # Oldest glibc we support is 2.35 (Ubuntu 22.04; Debian 12 has 2.36).
 PLATFORMS = ["manylinux2014_x86_64"] + [f"manylinux_2_{n}_x86_64"
                                         for n in (17, 24, 27, 28, 31, 34, 35)]
@@ -48,7 +48,7 @@ QT_PLUGINS_UNUSED = ("libqvnc.so", "libqeglfs.so", "libqlinuxfb.so", "libqvkkhrd
 
 # System libraries Qt needs; apt installs them together with 3Dn00b.
 DEPENDS = [
-    "python3 (>= 3.10)", "python3 (<< 3.14)",
+    "python3 (>= 3.10)", "python3 (<< 3.15)",
     "libegl1", "libgl1", "libopengl0", "libfontconfig1", "libfreetype6", "libdbus-1-3",
     "libglib2.0-0t64 | libglib2.0-0", "libx11-6", "libx11-xcb1", "libxkbcommon0",
     "libxkbcommon-x11-0", "libxcb1", "libxcb-cursor0", "libxcb-glx0", "libxcb-icccm4",
