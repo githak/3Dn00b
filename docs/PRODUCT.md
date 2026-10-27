@@ -94,6 +94,11 @@ Defaults I chose myself, which are easy to change:
   and .3dn00b file type, and pre-compiles Python files on install. CI installs
   it on clean Debian 12/13 and Ubuntu 22.04/24.04 and runs the app's
   `--smoke-test` (window, 3D view, geometry, STL/3MF export).
+- Custom boards with 1 or 2 holes (0.12), requested by the project owner (for
+  example a DRV8833 motor driver with two holes, or fastening something with a
+  single screw). The 2-hole board has its holes in a line by default; a depth
+  spacing makes them diagonal (negative flips the diagonal). The 1-hole board's
+  hole can sit anywhere on the board. Both keep the board outline checks.
 - Push-on lid that follows the box size, with fit presets.
 - Plain-language checks covering impossible sizes, thin walls, holes off the
   edge, holes behind the lid lip, overlapping or too-close holes, a lid that

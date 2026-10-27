@@ -485,3 +485,20 @@ def test_smoke_test_option():
                             capture_output=True, text=True, timeout=120)
     assert result.returncode == 0, result.stderr
     assert "smoke test: OK" in result.stdout
+
+
+def test_custom_board_fields_follow_the_board(window):
+    window.width_spin.setValue(100)
+    window.depth_spin.setValue(70)
+    form = window.mount_form
+    window.add_mount("custom2")
+    assert form.isRowVisible(window.spacing_x)
+    assert form.labelForField(window.spacing_x).text() == "Holes apart (width)"
+    window.spacing_y.setValue(-8)                        # negative allowed: other diagonal
+    assert window.project.mounts[0].spacing_y == -8
+    window.add_mount("custom1")
+    assert form.labelForField(window.spacing_x).text() == "Hole from middle (width)"
+    window.add_mount("rpi-zero")
+    assert not form.isRowVisible(window.spacing_x)
+    # All three were added in the middle, so the only problems are the overlaps.
+    assert all("overlap" in m for m in validation_errors(window))

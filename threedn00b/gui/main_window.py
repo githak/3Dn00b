@@ -44,6 +44,19 @@ COMMON_RECTS = [
 ]
 RECT_SIZE_RANGE = (1.0, 150.0)
 TAB_SHAPE, TAB_HOLES, TAB_POSTS, TAB_LID, TAB_CHECK = range(5)
+# Labels and tips for the two spacing fields of each custom board.
+CUSTOM_HOLE_LABELS = {
+    "custom": (("Holes apart (width)", "Holes apart (depth)"),
+               ("Centre to centre, left to right, measured on your board",
+                "Centre to centre, front to back, measured on your board")),
+    "custom2": (("Holes apart (width)", "Holes apart (depth)"),
+                ("Centre to centre, left to right, measured on your board",
+                 "0 if the holes are in a straight line; otherwise how far apart they are "
+                 "front to back (negative flips the diagonal)")),
+    "custom1": (("Hole from middle (width)", "Hole from middle (depth)"),
+                ("How far the hole is from the middle of the board, left (-) or right (+)",
+                 "How far the hole is from the middle of the board, front (-) or back (+)")),
+}
 LID_STYLE_HINTS = {
     PUSH_ON: "A flat top with a lip that slides into the box and holds by friction.",
     SNAP: "Like the push-on lid, with small ridges on its lip that click into grooves "
@@ -481,8 +494,10 @@ class MainWindow(QMainWindow):
         form.addRow("Parts on top", self.parts_height)
         self.board_w = spin(5.0, 300.0)
         self.board_d = spin(5.0, 300.0)
-        self.spacing_x = spin(1.0, 300.0, step=0.5)
-        self.spacing_y = spin(1.0, 300.0, step=0.5)
+        # Negative values are allowed: for a 2-hole board they flip the diagonal, for a
+        # 1-hole board they move the hole left or towards the front.
+        self.spacing_x = spin(-300.0, 300.0, step=0.5)
+        self.spacing_y = spin(-300.0, 300.0, step=0.5)
         for widget, attr, text in ((self.board_w, "board_width", "Board width"),
                                    (self.board_d, "board_depth", "Board depth"),
                                    (self.spacing_x, "spacing_x", "Holes apart (width)"),
@@ -857,7 +872,11 @@ class MainWindow(QMainWindow):
                 self.mount_form.setRowVisible(widget, False)
             return
         set_quietly(self.screw_combo, m.screw)
-        is_custom = m.board == "custom"
+        is_custom = mounts.is_custom(m)
+        labels, tips = CUSTOM_HOLE_LABELS.get(m.board, CUSTOM_HOLE_LABELS["custom"])
+        for widget, text, tip in zip((self.spacing_x, self.spacing_y), labels, tips):
+            self.mount_form.labelForField(widget).setText(text)
+            widget.setToolTip(tip)
         self.mount_form.setRowVisible(self.parts_height, mounts.board_size(m) is not None)
         for widget, value in ((self.post_length, m.length), (self.parts_height, mounts.parts_height(m)),
                               (self.board_w, m.board_width),
@@ -880,7 +899,7 @@ class MainWindow(QMainWindow):
         if mounts.board_size(m):
             info += (f" Another board can sit above this one if there is "
                      f"{mounts.room_above(m):g} mm of room.")
-        if m.screw != mounts.BOARDS[m.board].screw and m.board not in ("single", "custom"):
+        if m.screw != mounts.BOARDS[m.board].screw and not (m.board == "single" or is_custom):
             info += f" This board is usually fixed with {mounts.BOARDS[m.board].screw} screws."
         self.mount_info.setText(info)
         msgs = [i.message for i in self.issues if i.mount_id == m.id and i.level != validation.INFO]

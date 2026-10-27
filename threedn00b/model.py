@@ -189,11 +189,12 @@ class Mount:
     u: float = 0.0                 # centre of the set: left/right
     v: float = 0.0                 # centre of the set: towards the back
     rotation: int = 0              # 0, 90, 180 or 270 degrees, seen from above
-    # Only for the "custom" board:
+    # Only for custom boards (see mounts.CUSTOM_BOARDS):
     board_width: float = 60.0
     board_depth: float = 40.0
     spacing_x: float = 52.0        # distance between the holes, left to right
     spacing_y: float = 32.0        # distance between the holes, front to back
+    #   (for a 1-hole board: where the hole is, measured from the board's middle)
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
     # Height of the tallest part on top of the board; boards stacked above need
     # this much room plus a little air. Negative = the board's usual value.

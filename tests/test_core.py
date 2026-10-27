@@ -638,7 +638,7 @@ def test_board_hole_patterns_match_the_datasheets():
     assert _spacing(Mount(board="pico")) == (47.0, 11.4)
     assert _spacing(Mount(board="custom", spacing_x=50, spacing_y=30)) == (50.0, 30.0)
     for key, board in mounts.BOARDS.items():
-        m = Mount(board=key)
+        m = mounts.new_mount(Project(width=200, depth=200), key)   # with its starting sizes
         size = mounts.board_size(m)
         if size:   # every hole lies inside its board
             assert all(abs(x) < size[0] / 2 and abs(y) < size[1] / 2
@@ -1152,3 +1152,60 @@ def test_3mf_with_one_part_and_awkward_names(tmp_path):
     assert parts[0]["offset"][0] == pytest.approx(0)
     with zipfile.ZipFile(path) as zf:
         assert {"[Content_Types].xml", "_rels/.rels", "3D/3dmodel.model"} <= set(zf.namelist())
+
+
+# ---- custom boards with 1 or 2 holes -------------------------------------------
+
+def test_two_hole_board_in_a_line_or_diagonal():
+    p = Project(width=100, depth=70, height=35)
+    m = mounts.new_mount(p, "custom2")
+    assert (m.board_width, m.board_depth, m.spacing_x, m.spacing_y) == (30, 20, 24, 0)
+    assert sorted(mounts.post_positions(m)) == [(-12.0, 0.0), (12.0, 0.0)]
+    m.spacing_y = 10                                      # diagonal holes
+    assert sorted(mounts.post_positions(m)) == [(-12.0, -5.0), (12.0, 5.0)]
+    m.spacing_y = -10                                     # the other diagonal
+    assert sorted(mounts.post_positions(m)) == [(-12.0, 5.0), (12.0, -5.0)]
+    p.mounts = [m]
+    body = geometry.build_body(p)
+    assert geometry.piece_count(body) == 1
+    for x, y in mounts.post_positions(m):                # a post with a pilot hole at each
+        assert body.ray_cast([x, y, 100], [x, y, -5])[0].position[2] == pytest.approx(p.bottom)
+    assert not validation.has_errors(validation.check(p))
+
+
+def test_one_hole_board():
+    p = Project(width=100, depth=70, height=35)
+    m = mounts.new_mount(p, "custom1")
+    assert mounts.post_positions(m) == [(0.0, 0.0)]
+    m.spacing_x, m.spacing_y = 6, -4                      # hole off-centre on the board
+    m.u, m.v = 10, 5
+    assert mounts.post_positions(m) == [(16.0, 1.0)]
+    m.rotation = 90
+    assert mounts.post_positions(m)[0] == pytest.approx((14.0, 11.0))
+    p.mounts = [m]
+    assert not validation.has_errors(validation.check(p))
+    assert mounts.board_corners(m)                        # the outline is still checked
+
+
+def test_custom_board_hole_checks():
+    p = Project(width=100, depth=70, height=35)
+    two = mounts.new_mount(p, "custom2")
+    two.spacing_x = 40                                    # wider than the 30 mm board
+    p.mounts = [two]
+    assert any("don't fit on the board" in i.message for i in validation.check(p))
+    two.spacing_x = two.spacing_y = 0
+    assert any("same place" in i.message for i in validation.check(p))
+    one = mounts.new_mount(p, "custom1")
+    one.spacing_y = 12                                    # beyond the 20 mm board's edge
+    p.mounts = [one]
+    assert any("hole is outside the board" in i.message for i in validation.check(p))
+
+
+def test_custom_boards_round_trip(tmp_path):
+    p = Project(width=100, depth=70, height=35)
+    a, b = mounts.new_mount(p, "custom2"), mounts.new_mount(p, "custom1")
+    a.spacing_y, b.spacing_x, a.u, b.u = -6, 3, -25, 25
+    p.mounts = [a, b]
+    path = tmp_path / "boards.3dn00b"
+    project_io.save_project(p, path)
+    assert project_io.load_project(path) == p

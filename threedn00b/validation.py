@@ -387,9 +387,14 @@ def _check_mounts(p: Project) -> list[Issue]:
         size = mounts.board_size(m)
         top = mounts.board_bottom(p, m) + (mounts.BOARD_THICKNESS if size else 0.0)
         ceiling = lid_ceiling(p)
-        if m.board == "custom" and (m.spacing_x >= m.board_width or m.spacing_y >= m.board_depth):
-            out.append(Issue(ERROR, f"{name}: the holes are further apart than the board is big.",
-                             "Check the board size and the hole spacing.", mount_id=m.id))
+        if mounts.is_custom(m) and not mounts.holes_on_board(m):
+            what = "the hole is outside" if m.board == "custom1" else "the holes don't fit on"
+            out.append(Issue(ERROR, f"{name}: {what} the board.",
+                             "Check the board size and where the holes are.", mount_id=m.id))
+            continue
+        if m.board == "custom2" and m.spacing_x == 0 and m.spacing_y == 0:
+            out.append(Issue(ERROR, f"{name}: both holes are in the same place.",
+                             "Set how far apart the holes are.", mount_id=m.id))
             continue
         if top > ceiling:
             what = "board" if size else "posts"

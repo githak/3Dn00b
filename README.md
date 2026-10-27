@@ -8,7 +8,7 @@ Software for people getting into 3D printing and want to start with something ea
 sizes in millimetres, add holes and a lid, and export files your slicer can
 print. No sketches, no constraints, no feature trees.
 
-## What it can do (version 0.11)
+## What it can do (version 0.12)
 
 - **Box** (with rounded corners) or **round container**.
 - Sizes as **outside size** or **inside space**, with a single switch.
@@ -28,7 +28,7 @@ print. No sketches, no constraints, no feature trees.
   with other holes, and always keeps a safe distance from the edges. Common
   sizes are built in (M3/M4 screws, cables).
 - **Screw posts for circuit boards**: pick a board (Raspberry Pi Zero / Zero 2 W,
-  3 / 4 / 5, 3 A+, Pico, Arduino Uno, or your own 4-hole board) and all its posts
+  3 / 4 / 5, 3 A+, Pico, Arduino Uno, or your own board with 1, 2 or 4 holes) and all its posts
   appear in the right pattern. Choose the screw size (M1 to M4) and how tall the
   posts are; the screw cuts its own thread into the post. Drag the board's green
   outline to move all its posts together, or turn it in 90° steps. The app checks
@@ -63,7 +63,7 @@ Download `3dn00b_<version>-1_amd64.deb` from the
 [Releases page](https://github.com/githak/3Dn00b/releases) and install it:
 
 ```bash
-sudo apt install ./3dn00b_0.11.0-1_amd64.deb
+sudo apt install ./3dn00b_0.12.0-1_amd64.deb
 ```
 
 That's all: 3Dn00b appears in your applications menu, `.3dn00b` project files open
