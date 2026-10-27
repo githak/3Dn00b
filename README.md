@@ -8,7 +8,7 @@ Software for people getting into 3D printing and want to start with something ea
 sizes in millimetres, add holes and a lid, and export files your slicer can
 print. No sketches, no constraints, no feature trees.
 
-## What it can do (version 0.8)
+## What it can do (version 0.12)
 
 - **Box** (with rounded corners) or **round container**.
 - Sizes as **outside size** or **inside space**, with a single switch.
@@ -28,7 +28,7 @@ print. No sketches, no constraints, no feature trees.
   with other holes, and always keeps a safe distance from the edges. Common
   sizes are built in (M3/M4 screws, cables).
 - **Screw posts for circuit boards**: pick a board (Raspberry Pi Zero / Zero 2 W,
-  3 / 4 / 5, 3 A+, Pico, Arduino Uno, or your own 4-hole board) and all its posts
+  3 / 4 / 5, 3 A+, Pico, Arduino Uno, or your own board with 1, 2 or 4 holes) and all its posts
   appear in the right pattern. Choose the screw size (M1 to M4) and how tall the
   posts are; the screw cuts its own thread into the post. Drag the board's green
   outline to move all its posts together, or turn it in 90° steps. The app checks
@@ -41,6 +41,8 @@ print. No sketches, no constraints, no feature trees.
   into grooves inside the walls.
 - Or a **sliding lid** (boxes): a flat panel that slides in from the front along
   grooves in the walls, so the box gets no taller.
+- Or a **threaded lid** (round containers): screws on like a jar. The top of the
+  container becomes a neck with a thread that prints without supports.
 - Or a **screwed-down lid**: a flat lid held by a screw in each corner (M2 to M4).
   The box gets a column in each corner for the screws to cut their own thread
   into, and the app tells you how many screws you need and how long they can be.
@@ -50,11 +52,40 @@ print. No sketches, no constraints, no feature trees.
   you can undo.
 - **Undo / redo** for every change.
 - **Save and reopen** editable projects (`.3dn00b` files, plain JSON).
-- **Export STL** files: one per printable part, flat side down and ready for
-  your slicer (the lid comes out upside down, which is how it prints best).
-  Every exported part is guaranteed to be watertight.
+- **Export for printing** as **STL** (one file per part) or **3MF** (all parts in
+  one file, laid out side by side, with the size in millimetres). Parts are flat
+  side down and ready for your slicer (the lid comes out upside down, which is how
+  it prints best). Every exported part is guaranteed to be watertight.
 
-## Install and run (Linux)
+## Install on Debian, Ubuntu and Linux Mint
+
+Download `3dn00b_<version>-1_amd64.deb` from the
+[Releases page](https://github.com/githak/3Dn00b/releases) and install it:
+
+```bash
+sudo apt install ./3dn00b_0.12.0-1_amd64.deb
+```
+
+That's all: 3Dn00b appears in your applications menu, `.3dn00b` project files open
+in it, and the examples are in `/usr/share/3dn00b/examples/`. Nothing is
+downloaded while installing; apt adds the few system libraries it needs.
+To remove it: `sudo apt remove 3dn00b`.
+
+| Works on | Tested automatically |
+| --- | --- |
+| Debian 12 (bookworm) and 13 (trixie) | yes |
+| Ubuntu 22.04 and 24.04, and versions in between | 22.04 and 24.04 |
+| Linux Mint 21 and 22, Pop!_OS, Zorin and other Ubuntu-based systems | through Ubuntu |
+
+The package is for 64-bit PCs (amd64) and contains its own copies of the
+libraries Debian doesn't provide, for Python 3.10 to 3.13.
+
+To build the package yourself: `python3 packaging/build_deb.py` (it downloads the
+libraries from PyPI and writes `dist/3dn00b_<version>-1_amd64.deb`).
+`packaging/test_deb.sh dist/*.deb` installs it in clean Debian and Ubuntu
+containers (Docker) and runs a smoke test.
+
+## Run from source (any Linux)
 
 You need Python 3.10 or newer and a working OpenGL driver (any normal
 desktop, including integrated graphics).
@@ -97,9 +128,9 @@ app on Python 3.11, and 3Dn00b now avoids that version.)
    are measured from the middle of the surface, so `0` means centred.
 3. **Posts** (optional): add screw posts for a circuit board.
 4. **Lid**: tick **Add a lid** and choose its type: push-on, snap-on, sliding
-   or screwed down.
-5. **Check & Export**: read the checks, fix anything marked ✖ and click
-   **Export for printing**.
+   screwed down or threaded.
+5. **Check & Export**: read the checks, fix anything marked ✖, pick the file
+   type and click **Export for printing**.
 
 In the 3D view: drag a hole to move it, drag anywhere else to turn the view,
 scroll or right-drag to zoom, middle-drag to pan, and double-click a wall to
@@ -107,7 +138,7 @@ add a hole. Each drag is one step for Undo.
 
 ## Examples
 
-The `examples/` folder has a Raspberry Pi box, a Pi Zero box with a screwed-down lid, a screw box with a snap-on lid, a pencil box with a sliding lid, a screw tray with six compartments,
+The `examples/` folder has a Raspberry Pi box, a Pi Zero box with a screwed-down lid, a screw box with a snap-on lid, a pencil box with a sliding lid, a spice jar with a threaded lid, a screw tray with six compartments,
 a pencil cup and a small sensor enclosure with a USB-C opening and an air vent
 in the lid.
 

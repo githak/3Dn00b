@@ -13,7 +13,8 @@ from dataclasses import dataclass
 from . import geometry, mounts
 from .model import (ALONG_V, BACK, BOTTOM, BOX, CYLINDER, FRONT, LEFT, LID, MIN_EDGE, RIGHT,
                     SCREWS, SIDE, SNAP_BUMP, SURFACE_LABELS, VENT, Hole, Project, has_lip,
-                    has_screw_lid, has_sliding_lid, has_snap_lid, slide_engage, slide_groove,
+                    THREADED, has_screw_lid, has_sliding_lid, has_snap_lid, has_threaded_lid,
+                    slide_engage, slide_groove, thread_sizes,
                     lid_ceiling, lid_pilot_depth, lid_screw_positions, wall_corner_zone, clamp_hole, comfortable_margin,
                     compartment_size, divider_positions, divider_top, has_dividers,
                     hole_edge_clearance, hole_limits, lip_outer_offset, lip_wall, opening_gap,
@@ -113,6 +114,8 @@ def _check_lid(p: Project) -> list[Issue]:
         return _check_screw_lid(p)
     if has_sliding_lid(p):
         return _check_sliding_lid(p)
+    if p.lid.style == THREADED:
+        return _check_threaded_lid(p)
     lid = p.lid
     out = []
     lip_inside = min(p.inner_width, p.inner_depth) - 2 * (lip_outer_offset(p) + lip_wall(p))
@@ -154,6 +157,29 @@ def _check_fit_gap(lid) -> list[Issue]:
         return [Issue(WARNING, f"A fit gap of {lid.gap:.2f} mm is loose. The lid may fall off.",
                       "Try the Normal or Loose fit.")]
     return []
+
+
+def _check_threaded_lid(p: Project) -> list[Issue]:
+    lid = p.lid
+    if p.shape != CYLINDER:
+        return [Issue(ERROR, "Threaded lids only work on round containers.",
+                      "Choose another type of lid, or make it a round container.")]
+    out = []
+    t = thread_sizes(p)
+    if t.opening < 8:                                  # under 16 mm across is hardly usable
+        out.append(Issue(ERROR, "The container is too narrow for a threaded lid.",
+                         "Make it at least 30 mm across."))
+    if t.slope_bottom - p.bottom < 5:
+        out.append(Issue(ERROR, "The container is too short for a threaded lid.",
+                         f"Make it at least {_mm(p.outer_height - t.slope_bottom + p.bottom + 5)} tall."))
+    if lid.thickness < 1.2:
+        out.append(Issue(WARNING, f"A lid of {_mm(lid.thickness)} is thin and may bend.",
+                         "1.6 mm or more is recommended."))
+    out += _check_fit_gap(lid)
+    out.append(Issue(INFO, f"Screw the lid on clockwise. The opening at the top is "
+                     f"{2 * t.opening:.0f} mm across, a little narrower than the inside.",
+                     "If it's stiff, choose a looser fit and reprint just the lid."))
+    return out
 
 
 def _check_sliding_lid(p: Project) -> list[Issue]:
@@ -260,7 +286,10 @@ def _check_holes(p: Project) -> list[Issue]:
         clearance = hole_edge_clearance(p, hole)
         fix = clamp_hole(p, hole, margin)
         fix_label = "Move to the nearest safe spot"
-        if _in_slide_groove(p, hole):
+        if _on_neck(p, hole):
+            out.append(Issue(ERROR, f"{name} is on the neck, where the lid screws on.",
+                             "Move the hole lower.", hole.id, fix, fix_label))
+        elif _in_slide_groove(p, hole):
             out.append(Issue(ERROR, f"{name} is where the sliding lid's groove is.",
                              "Move the hole lower.", hole.id, fix, fix_label))
         elif _behind_lip(p, hole):
@@ -358,9 +387,14 @@ def _check_mounts(p: Project) -> list[Issue]:
         size = mounts.board_size(m)
         top = mounts.board_bottom(p, m) + (mounts.BOARD_THICKNESS if size else 0.0)
         ceiling = lid_ceiling(p)
-        if m.board == "custom" and (m.spacing_x >= m.board_width or m.spacing_y >= m.board_depth):
-            out.append(Issue(ERROR, f"{name}: the holes are further apart than the board is big.",
-                             "Check the board size and the hole spacing.", mount_id=m.id))
+        if mounts.is_custom(m) and not mounts.holes_on_board(m):
+            what = "the hole is outside" if m.board == "custom1" else "the holes don't fit on"
+            out.append(Issue(ERROR, f"{name}: {what} the board.",
+                             "Check the board size and where the holes are.", mount_id=m.id))
+            continue
+        if m.board == "custom2" and m.spacing_x == 0 and m.spacing_y == 0:
+            out.append(Issue(ERROR, f"{name}: both holes are in the same place.",
+                             "Set how far apart the holes are.", mount_id=m.id))
             continue
         if top > ceiling:
             what = "board" if size else "posts"
@@ -486,6 +520,13 @@ def _near_screw_column(p: Project, hole: Hole) -> bool:
     room_with_column = span / 2 - wall_corner_zone(p, hole.surface) - reach
     room_without = span / 2 - p.inner_corner_radius - reach
     return room_with_column < MIN_EDGE <= room_without
+
+
+def _on_neck(p: Project, hole: Hole) -> bool:
+    if not has_threaded_lid(p) or hole.surface in (BOTTOM, LID):
+        return False
+    z = p.outer_height / 2 + hole.v
+    return z + hole.half_extents[1] > thread_sizes(p).slope_bottom
 
 
 def _in_slide_groove(p: Project, hole: Hole) -> bool:

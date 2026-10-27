@@ -21,7 +21,7 @@ from ..model import (ALONG_U, ALONG_V, BOTTOM, BOX, CYLINDER, FIT_LABELS, FIT_PR
                      FRONT, HOLE_DIAMETER_RANGE, HOLE_KIND_LABELS, INSIDE, LID, MIN_EDGE,
                      OUTSIDE, RECT, ROUND, SIDE, SIZE_RANGE, SURFACE_LABELS, VENT,
                      DIVIDER_RANGE, LID_STYLE_LABELS, MAX_COMPARTMENTS, PUSH_ON, SCREWED, SCREWS, SLIDING,
-                     SNAP, TRAY_TEMPLATE, WALL_RANGE, Hole, Project,
+                     SNAP, THREADED, TRAY_TEMPLATE, WALL_RANGE, Hole, Project,
                      clamp_hole, compartment_size, default_project, hole_limits)
 from .viewer import Viewer
 
@@ -44,6 +44,19 @@ COMMON_RECTS = [
 ]
 RECT_SIZE_RANGE = (1.0, 150.0)
 TAB_SHAPE, TAB_HOLES, TAB_POSTS, TAB_LID, TAB_CHECK = range(5)
+# Labels and tips for the two spacing fields of each custom board.
+CUSTOM_HOLE_LABELS = {
+    "custom": (("Holes apart (width)", "Holes apart (depth)"),
+               ("Centre to centre, left to right, measured on your board",
+                "Centre to centre, front to back, measured on your board")),
+    "custom2": (("Holes apart (width)", "Holes apart (depth)"),
+                ("Centre to centre, left to right, measured on your board",
+                 "0 if the holes are in a straight line; otherwise how far apart they are "
+                 "front to back (negative flips the diagonal)")),
+    "custom1": (("Hole from middle (width)", "Hole from middle (depth)"),
+                ("How far the hole is from the middle of the board, left (-) or right (+)",
+                 "How far the hole is from the middle of the board, front (-) or back (+)")),
+}
 LID_STYLE_HINTS = {
     PUSH_ON: "A flat top with a lip that slides into the box and holds by friction.",
     SNAP: "Like the push-on lid, with small ridges on its lip that click into grooves "
@@ -52,6 +65,8 @@ LID_STYLE_HINTS = {
              "Only for boxes.",
     SCREWED: "A flat lid held by a screw in each corner. The box gets a column in each corner "
              "for the screws to bite into.",
+    THREADED: "A screw-on lid, like a jar. The top of the container becomes a narrower neck "
+              "with a thread. Only for round containers.",
 }
 CHECK_TAB_TITLE = "5 Check && Export"
 
@@ -479,8 +494,10 @@ class MainWindow(QMainWindow):
         form.addRow("Parts on top", self.parts_height)
         self.board_w = spin(5.0, 300.0)
         self.board_d = spin(5.0, 300.0)
-        self.spacing_x = spin(1.0, 300.0, step=0.5)
-        self.spacing_y = spin(1.0, 300.0, step=0.5)
+        # Negative values are allowed: for a 2-hole board they flip the diagonal, for a
+        # 1-hole board they move the hole left or towards the front.
+        self.spacing_x = spin(-300.0, 300.0, step=0.5)
+        self.spacing_y = spin(-300.0, 300.0, step=0.5)
         for widget, attr, text in ((self.board_w, "board_width", "Board width"),
                                    (self.board_d, "board_depth", "Board depth"),
                                    (self.spacing_x, "spacing_x", "Holes apart (width)"),
@@ -592,10 +609,22 @@ class MainWindow(QMainWindow):
         self.fix_button.clicked.connect(self._apply_fix)
         self.fix_button.setVisible(False)
         layout.addWidget(self.fix_button)
-        self.export_button = QPushButton("Export for printing (STL)…")
+        row = QHBoxLayout()
+        row.addWidget(QLabel("File type"))
+        self.format_combo = QComboBox()
+        self.format_combo.addItem("STL (one file per part)", "stl")
+        self.format_combo.addItem("3MF (all parts in one file)", "3mf")
+        self.format_combo.setToolTip("STL works in every slicer. 3MF keeps the parts together, "
+                                     "stores the size in millimetres and is smaller.")
+        set_quietly(self.format_combo, self.settings.value("export_format", "stl"))
+        self.format_combo.currentIndexChanged.connect(self._on_format_changed)
+        row.addWidget(self.format_combo, 1)
+        layout.addLayout(row)
+        self.export_button = QPushButton()
         self.export_button.setMinimumHeight(40)
         self.export_button.clicked.connect(self.export_stl)
         layout.addWidget(self.export_button)
+        self._on_format_changed()
         self.export_hint = hint("")
         layout.addWidget(self.export_hint)
         layout.addWidget(hint("Checks catch problems in the design. They can't guarantee a "
@@ -667,6 +696,8 @@ class MainWindow(QMainWindow):
         self.lid_form.setRowVisible(self.lid_screw, style == SCREWED)
         self.lid_form.setRowVisible(self.fit_combo, style != SCREWED)
         self.lid_form.setRowVisible(self.gap_spin, style != SCREWED)
+        self.gap_spin.setToolTip("Extra room between the threads" if style == THREADED else
+                                 "Space between the lid and the walls, on each side")
         self.lid_form.setRowVisible(self.lip_height, style in (PUSH_ON, SNAP))
         self.lid_style_hint.setText(LID_STYLE_HINTS[style])
         upside_down = "\n\nThe lid is exported upside down, which is the best way to print it."
@@ -678,6 +709,8 @@ class MainWindow(QMainWindow):
             SLIDING: fit_tip + "\n\nThe lid is printed flat. Slide it in from the front.",
             SCREWED: "Screws cut their own thread into the plastic. Tighten them gently, just "
                      "until the lid is snug." + upside_down,
+            THREADED: fit_tip + " Screw it on clockwise; the thread rises 4 mm per turn."
+                      + upside_down,
         }[style])
         set_quietly(self.fit_combo, p.lid.fit)
         set_quietly(self.gap_spin, p.lid.gap)
@@ -839,7 +872,11 @@ class MainWindow(QMainWindow):
                 self.mount_form.setRowVisible(widget, False)
             return
         set_quietly(self.screw_combo, m.screw)
-        is_custom = m.board == "custom"
+        is_custom = mounts.is_custom(m)
+        labels, tips = CUSTOM_HOLE_LABELS.get(m.board, CUSTOM_HOLE_LABELS["custom"])
+        for widget, text, tip in zip((self.spacing_x, self.spacing_y), labels, tips):
+            self.mount_form.labelForField(widget).setText(text)
+            widget.setToolTip(tip)
         self.mount_form.setRowVisible(self.parts_height, mounts.board_size(m) is not None)
         for widget, value in ((self.post_length, m.length), (self.parts_height, mounts.parts_height(m)),
                               (self.board_w, m.board_width),
@@ -862,7 +899,7 @@ class MainWindow(QMainWindow):
         if mounts.board_size(m):
             info += (f" Another board can sit above this one if there is "
                      f"{mounts.room_above(m):g} mm of room.")
-        if m.screw != mounts.BOARDS[m.board].screw and m.board not in ("single", "custom"):
+        if m.screw != mounts.BOARDS[m.board].screw and not (m.board == "single" or is_custom):
             info += f" This board is usually fixed with {mounts.BOARDS[m.board].screw} screws."
         self.mount_info.setText(info)
         msgs = [i.message for i in self.issues if i.mount_id == m.id and i.level != validation.INFO]
@@ -927,7 +964,7 @@ class MainWindow(QMainWindow):
         self.export_action.setEnabled(not errors)
         self.export_button.setEnabled(not errors)
         self.export_hint.setText("Fix the problems marked ✖ above to export." if errors else
-                                 "Each part is saved as its own STL file, placed flat side down.")
+                                 "Parts are placed flat side down, ready to print.")
         self.tabs.setTabText(TAB_CHECK, CHECK_TAB_TITLE + (" ✖" if errors else " ⚠" if warnings else ""))
         self._refresh_parts_summary()
 
@@ -1336,23 +1373,36 @@ class MainWindow(QMainWindow):
         self.settings.setValue("last_dir", str(path.parent))
         return self.save_project()
 
+    def _on_format_changed(self, _index=None):
+        fmt = self.format_combo.currentData()
+        self.settings.setValue("export_format", fmt)
+        self.export_button.setText(f"Export for printing ({fmt.upper()})…")
+
     def export_stl(self):
+        """Export the printable parts in the chosen file type (STL or 3MF)."""
         if validation.has_errors(self.issues):
             self.tabs.setCurrentIndex(TAB_CHECK)
             return
-        folder = QFileDialog.getExistingDirectory(self, "Choose a folder for the STL files",
-                                                  self._last_dir())
+        fmt = self.format_combo.currentData()
+        folder = QFileDialog.getExistingDirectory(
+            self, f"Choose a folder for the {fmt.upper()} file{'s' * (fmt == 'stl')}", self._last_dir())
         if not folder:
             return
         stem = project_io.safe_file_stem(self.project.name)
-        existing = [Path(folder) / f"{stem}-{part}.stl" for part in ("body", "lid")]
+        if fmt == "3mf":
+            existing = [Path(folder) / f"{stem}.3mf"]
+        else:
+            existing = [Path(folder) / f"{stem}-{part}.stl" for part in ("body", "lid")]
         existing = [f for f in existing if f.exists()]
         if existing and QMessageBox.question(
                 self, APP_NAME, "Replace these files?\n" + "\n".join(f.name for f in existing)
         ) != QMessageBox.StandardButton.Yes:
             return
         try:
-            files = project_io.export_stl_files(self.project, folder)
+            if fmt == "3mf":
+                files = [project_io.export_3mf_file(self.project, folder)]
+            else:
+                files = project_io.export_stl_files(self.project, folder)
         except OSError as exc:
             QMessageBox.warning(self, APP_NAME, f"Couldn't export:\n{exc}")
             return

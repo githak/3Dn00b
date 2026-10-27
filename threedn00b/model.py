@@ -128,13 +128,19 @@ SCREWS = {
     "M4": Screw(pilot=3.5, post=9.0, nominal=4.0),
 }
 
-PUSH_ON, SNAP, SLIDING, SCREWED = "push", "snap", "sliding", "screwed"
+PUSH_ON, SNAP, SLIDING, SCREWED, THREADED = "push", "snap", "sliding", "screwed", "threaded"
 LID_STYLE_LABELS = {
     PUSH_ON: "Push-on (friction fit)",
     SNAP: "Snap-on (clicks into place)",
     SLIDING: "Sliding (boxes only)",
     SCREWED: "Screwed down",
+    THREADED: "Threaded (round containers only)",
 }
+THREAD_PITCH = 4.0     # mm the threaded lid moves per turn
+THREAD_DEPTH = 1.2     # how far the thread stands out; with this pitch the flanks stay under 45°
+THREAD_TURNS = 2.25    # length of the thread on the neck, in turns
+CAP_WALL = 2.0         # wall of the threaded lid's skirt
+CAP_TOP_GAP = 0.3      # room between the neck's rim and the inside of the lid's top
 SNAP_BUMP = 0.5        # how far the snap-on lid's ridges stick out from its lip
 SNAP_RIDGE = 1.2       # height of those ridges
 SLIDE_TOP = 1.2        # wall left above a sliding lid's groove
@@ -183,11 +189,12 @@ class Mount:
     u: float = 0.0                 # centre of the set: left/right
     v: float = 0.0                 # centre of the set: towards the back
     rotation: int = 0              # 0, 90, 180 or 270 degrees, seen from above
-    # Only for the "custom" board:
+    # Only for custom boards (see mounts.CUSTOM_BOARDS):
     board_width: float = 60.0
     board_depth: float = 40.0
     spacing_x: float = 52.0        # distance between the holes, left to right
     spacing_y: float = 32.0        # distance between the holes, front to back
+    #   (for a 1-hole board: where the hole is, measured from the board's middle)
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
     # Height of the tallest part on top of the board; boards stacked above need
     # this much room plus a little air. Negative = the board's usual value.
@@ -266,6 +273,8 @@ class Project:
         """Total height with the lid on."""
         if not self.lid.enabled or self.lid.style == SLIDING:
             return self.outer_height           # a sliding lid sits inside the walls
+        if self.lid.style == THREADED and self.shape == CYLINDER:
+            return self.outer_height + CAP_TOP_GAP + self.lid.thickness
         return self.outer_height + self.lid.thickness
 
     def surfaces(self) -> tuple[str, ...]:
@@ -332,6 +341,39 @@ def has_lip(project: Project) -> bool:
     return project.lid.enabled and project.lid.style in (PUSH_ON, SNAP)
 
 
+def has_threaded_lid(project: Project) -> bool:
+    return project.lid.enabled and project.lid.style == THREADED and project.shape == CYLINDER
+
+
+@dataclass(frozen=True)
+class ThreadSizes:
+    """Measurements of a threaded neck and lid (radii and heights in mm)."""
+    outer: float           # outside of the container and of the lid
+    crest: float           # outside of the neck's thread
+    root: float            # neck surface between the thread turns
+    opening: float         # inside of the neck
+    clearance: float       # room between the threads of neck and lid
+    shoulder: float        # height where the neck starts
+    slope_bottom: float    # height where the inside starts narrowing towards the neck
+    thread_from: float
+    thread_to: float
+
+
+def thread_sizes(project: Project) -> ThreadSizes:
+    outer = project.outer_diameter / 2
+    clearance = project.lid.gap + 0.2           # threads need a bit more room than a lip
+    crest = outer - CAP_WALL - clearance
+    root = crest - THREAD_DEPTH
+    inside = outer - project.wall
+    opening = min(root - max(1.6, project.wall), inside)
+    h = project.outer_height
+    shoulder = h - (THREAD_TURNS * THREAD_PITCH + 2.0)
+    # Inside, the wall narrows towards the neck at 45° so it prints without support.
+    slope_bottom = shoulder - (inside - opening)
+    return ThreadSizes(outer, crest, root, opening, clearance, shoulder, slope_bottom,
+                       shoulder + 1.0, h - 0.8)
+
+
 def has_snap_lid(project: Project) -> bool:
     return project.lid.enabled and project.lid.style == SNAP
 
@@ -353,6 +395,8 @@ def slide_groove(project: Project) -> tuple[float, float]:
 
 def lid_top_z(project: Project) -> float:
     """Height of the top face of the lid when it is on."""
+    if has_threaded_lid(project):
+        return project.outer_height + CAP_TOP_GAP + project.lid.thickness
     if has_sliding_lid(project):
         return slide_groove(project)[0] + project.lid.gap + project.lid.thickness
     return project.outer_height + project.lid.thickness
@@ -362,6 +406,8 @@ def lid_ceiling(project: Project) -> float:
     """Highest point things inside the box may reach without touching the lid."""
     if has_sliding_lid(project):
         return slide_groove(project)[0] - project.lid.gap    # under the sliding panel
+    if has_threaded_lid(project):
+        return thread_sizes(project).slope_bottom          # below the narrower neck
     if project.lid.enabled:
         return project.outer_height - project.lid.gap * 2   # just below the lid
     return project.outer_height
@@ -373,6 +419,8 @@ def wall_top_free(project: Project) -> float:
         return project.outer_height - project.lid.lip_height
     if has_sliding_lid(project):
         return slide_groove(project)[0]
+    if has_threaded_lid(project):
+        return thread_sizes(project).slope_bottom
     return project.outer_height
 
 
@@ -518,6 +566,8 @@ def _flat_half_extents(project: Project, surface: str):
     if surface == LID and has_lip(project):
         inset = lip_outer_offset(project) + lip_wall(project)
         hw, hd = hw - inset, hd - inset
+    if surface == LID and has_threaded_lid(project):
+        hw = hd = thread_sizes(project).opening        # holes go over the opening
     return hw, hd
 
 

@@ -56,20 +56,44 @@ BOARDS = {
                  short="Arduino Uno"),
     "custom": Board("Custom board (4 holes)", None, (), "M3", parts_height=10.0,
                     tall_parts="parts", short="custom board"),
+    "custom2": Board("Custom board (2 holes)", None, (), "M3", parts_height=10.0,
+                     tall_parts="parts", short="custom board"),
+    "custom1": Board("Custom board (1 hole)", None, (), "M3", parts_height=10.0,
+                     tall_parts="parts", short="custom board"),
 }
+# Boards whose size and holes the user types in. For "custom1" the spacing fields
+# say where the single hole is, measured from the middle of the board.
+CUSTOM_BOARDS = ("custom", "custom2", "custom1")
+# Starting sizes for a new custom board: (width, depth, spacing_x, spacing_y).
+CUSTOM_STARTS = {"custom": (60.0, 40.0, 52.0, 32.0), "custom2": (30.0, 20.0, 24.0, 0.0),
+                 "custom1": (20.0, 20.0, 0.0, 0.0)}
+
+
+def is_custom(m: Mount) -> bool:
+    return m.board in CUSTOM_BOARDS
 
 
 def board_size(m: Mount) -> tuple[float, float] | None:
-    if m.board == "custom":
+    if is_custom(m):
         return m.board_width, m.board_depth
     return BOARDS[m.board].size
 
 
 def _local_holes(m: Mount):
+    hx, hy = m.spacing_x / 2, m.spacing_y / 2
     if m.board == "custom":
-        hx, hy = m.spacing_x / 2, m.spacing_y / 2
         return ((-hx, -hy), (hx, -hy), (-hx, hy), (hx, hy))
+    if m.board == "custom2":
+        return ((-hx, -hy), (hx, hy))       # in a line, or diagonal if spacing_y isn't 0
+    if m.board == "custom1":
+        return ((m.spacing_x, m.spacing_y),)
     return BOARDS[m.board].holes
+
+
+def holes_on_board(m: Mount) -> bool:
+    """Do all of a custom board's holes lie inside the board?"""
+    w, d = board_size(m)
+    return all(abs(x) < w / 2 and abs(y) < d / 2 for x, y in _local_holes(m))
 
 
 def _to_floor(m: Mount, x: float, y: float) -> tuple[float, float]:
@@ -227,8 +251,8 @@ def new_mount(project: Project, board: str) -> Mount:
     """A new set of posts, placed in the middle of the floor."""
     spec = BOARDS[board]
     m = Mount(board=board, screw=spec.screw)
-    if board == "single":
-        m.length = 6.0
+    if board in CUSTOM_STARTS:
+        m.board_width, m.board_depth, m.spacing_x, m.spacing_y = CUSTOM_STARTS[board]
     pos = clamp_mount(project, m, 0.0, 0.0)
     if pos is None and board_size(m):
         m.rotation = 90                      # try it the other way round

@@ -30,5 +30,8 @@ version = { attr = "threedn00b.__version__" }
 [tool.setuptools.packages.find]
 include = ["threedn00b*"]
 
+[tool.setuptools.package-data]
+threedn00b = ["resources/*.svg"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

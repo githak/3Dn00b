@@ -76,6 +76,29 @@ Defaults I chose myself, which are easy to change:
   back of the groove follows rounded corners so it never breaks through. The
   panel sits inside the walls. Tests slide it all the way out to prove the path
   is clear.
+- Threaded lid (0.9), round containers only: the container's top becomes a neck
+  with a rounded, right-hand thread (4 mm per turn, 1.2 mm deep, so the flanks
+  stay under 45° and print without supports); inside, the wall narrows to the
+  neck at 45°. The lid is a flush cap with the matching thread, its clearance
+  set by the usual fit. Tests unscrew the lid through two turns for several
+  sizes and fits and check it never collides, and that pulling straight up or
+  turning the wrong way is blocked. Holes are kept off the neck.
+- 3MF export (0.10): next to STL, a "File type" choice exports all parts into
+  one 3MF file, laid out side by side 10 mm apart and centred, with millimetres
+  stated in the file. Tests read the file back and compare every vertex and
+  triangle with the built parts; PrusaSlicer opens and slices every example.
+- Debian package (0.11): `packaging/build_deb.py` builds one amd64 .deb for
+  Debian 12/13, Ubuntu 22.04+ and derivatives. It bundles the libraries Debian
+  lacks for Python 3.10–3.13 (shared parts stored once, unused Qt parts left
+  out), declares Qt's system libraries as dependencies, adds a menu entry, icon
+  and .3dn00b file type, and pre-compiles Python files on install. CI installs
+  it on clean Debian 12/13 and Ubuntu 22.04/24.04 and runs the app's
+  `--smoke-test` (window, 3D view, geometry, STL/3MF export).
+- Custom boards with 1 or 2 holes (0.12), requested by the project owner (for
+  example a DRV8833 motor driver with two holes, or fastening something with a
+  single screw). The 2-hole board has its holes in a line by default; a depth
+  spacing makes them diagonal (negative flips the diagonal). The 1-hole board's
+  hole can sit anywhere on the board. Both keep the board outline checks.
 - Push-on lid that follows the box size, with fit presets.
 - Plain-language checks covering impossible sizes, thin walls, holes off the
   edge, holes behind the lid lip, overlapping or too-close holes, a lid that
@@ -93,9 +116,8 @@ STL import and editing.
 
 ## Postponed (candidates for later, in rough priority order)
 
-1. A threaded lid for round containers.
-2. 3MF export, if users need it. STEP is unlikely, since the geometry engine is mesh-based.
-3. A packaged app (Flatpak or AppImage).
+1. Packages for other systems (Flatpak or AppImage, Fedora, arm64 such as the
+   Raspberry Pi) if people ask for them.
 
 Each addition must pass the brief's test: does it make a common beginner task
 much easier, without CAD vocabulary, and without making the interface busier?
@@ -108,7 +130,7 @@ much easier, without CAD vocabulary, and without making the interface busier?
 | GUI | PySide6 (Qt 6), LGPL | Native-looking Linux desktop app, installs from pip |
 | 3D preview | pyqtgraph `GLViewWidget` with a custom soft-lit shader | Small, pure Python, works on integrated graphics (OpenGL 2-era shaders) |
 | Geometry | **Manifold** (`manifold3d`), Apache-2.0 | Fast, robust Boolean operations whose results are **always watertight**. That is exactly what an STL needs. It is a small pip wheel with no system dependencies |
-| Project files | Versioned JSON (`"format": "3dn00b-project", "version": 7`) | Human-readable, diffable, forward-compatible |
+| Project files | Versioned JSON (`"format": "3dn00b-project", "version": 8`) | Human-readable, diffable, forward-compatible |
 
 **Why not CadQuery or build123d (OpenCascade)?** They are excellent, but they
 bring a large binary dependency (OCP), a slower and more fragile pipeline for

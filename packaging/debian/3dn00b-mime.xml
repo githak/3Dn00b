@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-3dn00b">
+    <comment>3Dn00b project</comment>
+    <icon name="3dn00b"/>
+    <glob pattern="*.3dn00b"/>
+  </mime-type>
+</mime-info>

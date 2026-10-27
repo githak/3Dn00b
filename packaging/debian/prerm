@@ -1,0 +1,4 @@
+#!/bin/sh
+set -e
+# Remove the compiled Python files made by postinst.
+find /usr/lib/3dn00b -name __pycache__ -type d -prune -exec rm -rf {} + 2>/dev/null || true

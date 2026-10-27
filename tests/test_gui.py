@@ -445,3 +445,60 @@ def test_snap_and_sliding_lid_controls(window):
         assert window.project.lid.style == style
         assert form.isRowVisible(window.fit_combo) and form.isRowVisible(window.lip_height) == lip
         assert not validation_errors(window)
+
+
+def test_threaded_lid_controls(window):
+    window.shape_buttons[CYLINDER].click()
+    window.lid_check.setChecked(True)
+    window.lid_style.setCurrentIndex(window.lid_style.findData("threaded"))
+    window.lid_style.activated.emit(window.lid_style.currentIndex())
+    assert window.project.lid.style == "threaded"
+    form = window.lid_form
+    assert form.isRowVisible(window.fit_combo) and not form.isRowVisible(window.lip_height)
+    assert "jar" in window.lid_style_hint.text()
+    assert not validation_errors(window)
+    window.shape_buttons[BOX].click()
+    assert any("round containers" in m for m in validation_errors(window))
+
+
+def test_export_3mf_from_the_window(window, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog, QMessageBox
+    from threedn00b import project_io as io
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: str(tmp_path)))
+    monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda *a, **k: None))
+    window.lid_check.setChecked(True)
+    window.rebuild()
+    window.format_combo.setCurrentIndex(window.format_combo.findData("3mf"))
+    assert "3MF" in window.export_button.text()
+    assert window.settings.value("export_format") == "3mf"
+    window.export_button.click()
+    assert [q["name"] for q in io.read_3mf(tmp_path / "my-box.3mf")] == ["My box body", "My box lid"]
+    window.format_combo.setCurrentIndex(window.format_combo.findData("stl"))
+    window.export_button.click()
+    assert (tmp_path / "my-box-body.stl").exists() and (tmp_path / "my-box-lid.stl").exists()
+
+
+def test_smoke_test_option():
+    """The check the Debian package tests run after installing."""
+    import subprocess
+    result = subprocess.run([sys.executable, "-m", "threedn00b", "--smoke-test"],
+                            capture_output=True, text=True, timeout=120)
+    assert result.returncode == 0, result.stderr
+    assert "smoke test: OK" in result.stdout
+
+
+def test_custom_board_fields_follow_the_board(window):
+    window.width_spin.setValue(100)
+    window.depth_spin.setValue(70)
+    form = window.mount_form
+    window.add_mount("custom2")
+    assert form.isRowVisible(window.spacing_x)
+    assert form.labelForField(window.spacing_x).text() == "Holes apart (width)"
+    window.spacing_y.setValue(-8)                        # negative allowed: other diagonal
+    assert window.project.mounts[0].spacing_y == -8
+    window.add_mount("custom1")
+    assert form.labelForField(window.spacing_x).text() == "Hole from middle (width)"
+    window.add_mount("rpi-zero")
+    assert not form.isRowVisible(window.spacing_x)
+    # All three were added in the middle, so the only problems are the overlaps.
+    assert all("overlap" in m for m in validation_errors(window))
