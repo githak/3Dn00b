@@ -31,7 +31,12 @@ for image in $IMAGES; do
         if [ -n "$missing" ]; then echo "Missing libraries:"; echo "$missing"; exit 1; fi
         test -f /usr/share/applications/3dn00b.desktop
         test -f /usr/share/icons/hicolor/scalable/apps/3dn00b.svg
-        xvfb-run -a 3dn00b --smoke-test 2>&1 | grep -v -E "leaked|nanobind|skipped remainder"
+        # Keep the exit code: a pipe into grep would hide a failing smoke test.
+        if ! xvfb-run -a 3dn00b --smoke-test >/tmp/smoke.log 2>&1 \
+                || ! grep -q "smoke test: OK" /tmp/smoke.log; then
+            cat /tmp/smoke.log; echo "smoke test failed"; exit 1
+        fi
+        grep "smoke test" /tmp/smoke.log
         apt-get remove -y -qq 3dn00b >/dev/null
         test ! -e /usr/lib/3dn00b/app || { echo "files left behind"; exit 1; }
         echo "removed cleanly"
