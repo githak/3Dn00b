@@ -1588,3 +1588,131 @@ def test_set_sizes_are_saved(tmp_path):
         project_io.from_dict(data)
     del data["project"]["dividers"]["widths"]             # older files: all the same size
     assert project_io.from_dict(data).dividers.widths == []
+
+
+# ---- easy-opening tab and finger notch ----------------------------------------------
+
+from threedn00b.model import TAB_REACH, notch_size  # noqa: E402
+
+
+@pytest.mark.parametrize("shape", [BOX, CYLINDER])
+@pytest.mark.parametrize("style", ["push", "snap"])
+def test_lid_tab_and_finger_notch(shape, style):
+    p = default_project(shape)
+    p.lid.enabled, p.lid.style, p.lid.opening = True, style, "both"
+    plain = copy.deepcopy(p)
+    plain.lid.opening = "none"
+    parts, before = geometry.build_parts(p), geometry.build_parts(plain)
+    front = p.outer_depth / 2 if shape == BOX else p.outer_diameter / 2
+    # The tab sticks out at the front, flush with the top of the lid.
+    lo, hi = geometry._bounds(parts.lid)
+    assert lo[1] == pytest.approx(-front - TAB_REACH) and hi[1] == pytest.approx(front, abs=0.01)
+    tab = parts.lid.volume() - before.lid.volume()
+    assert tab == pytest.approx(20 * TAB_REACH * p.lid.thickness, rel=0.15)
+    top = p.outer_height + p.lid.thickness
+    assert parts.lid.ray_cast([0, -front - 3, top + 5], [0, -front - 3, 0])[0].position[2] == \
+        pytest.approx(top)
+    # The notch: the front wall stops lower in the middle.
+    width, depth = notch_size(p)
+
+    def wall_top(x):
+        """Height of the front wall, x mm from the middle (measured mid-wall)."""
+        y = -front + p.wall / 2 if shape == BOX else -math.sqrt((front - p.wall / 2) ** 2 - x * x)
+        return parts.body.ray_cast([x, y, 100], [x, y, 0])[0].position[2]
+    assert wall_top(0) == pytest.approx(p.outer_height - depth, abs=0.01)
+    assert wall_top(width / 2 + 1) == pytest.approx(p.outer_height)
+    assert geometry.overlap_volume(parts.body, parts.lid) < 1e-6
+    assert geometry.piece_count(parts.body) == 1 and geometry.piece_count(parts.lid) == 1
+    assert _edges_shared_twice(parts.body) and _edges_shared_twice(parts.lid)
+    assert not validation.has_errors(validation.check(p, parts))
+    # Printed upside down, the tab lies on the plate with the rest of the top.
+    assert geometry._bounds(parts.printable()["lid"])[0][2] == pytest.approx(0)
+
+
+def test_opening_only_for_lids_with_a_lip(tmp_path):
+    for style in ("sliding", "screwed"):
+        p = default_project(BOX)
+        p.wall = 2.4
+        p.lid.enabled, p.lid.style, p.lid.opening = True, style, "both"
+        plain = copy.deepcopy(p)
+        plain.lid.opening = "none"
+        assert geometry.build_body(p).volume() == pytest.approx(geometry.build_body(plain).volume())
+        assert geometry.build_lid(p).volume() == pytest.approx(geometry.build_lid(plain).volume())
+    p = default_project(BOX)
+    p.lid.enabled, p.lid.opening = True, "tab"
+    path = tmp_path / "tab.3dn00b"
+    project_io.save_project(p, path)
+    assert project_io.load_project(path) == p
+    data = project_io.to_dict(p)
+    data["project"]["lid"]["opening"] = "lever"
+    with pytest.raises(project_io.ProjectFileError):
+        project_io.from_dict(data)
+    del data["project"]["lid"]["opening"]                # older files: nothing extra
+    assert project_io.from_dict(data).lid.opening == "none"
+
+
+# ---- templates --------------------------------------------------------------------
+
+from threedn00b import templates  # noqa: E402
+
+
+@pytest.mark.parametrize("key", list(templates.TEMPLATES))
+def test_templates_are_ready_to_print(key, tmp_path):
+    p = templates.from_template(key)
+    parts = geometry.build_parts(p)
+    issues = validation.check(p, parts)
+    assert [i.message for i in issues if i.level != "info"] == []
+    assert geometry.piece_count(parts.body) == 1 and _edges_shared_twice(parts.body)
+    if parts.lid is not None:
+        assert geometry.overlap_volume(parts.body, parts.lid) < 1e-6
+    path = tmp_path / "t.3dn00b"
+    project_io.save_project(p, path)
+    assert project_io.load_project(path) == p
+    assert templates.from_template(key) is not p      # a fresh copy every time
+
+
+@pytest.mark.parametrize("key", templates.ELECTRONICS)
+def test_board_openings_face_the_sockets(key):
+    """Every wall opening is next to a board edge and at the height of its sockets."""
+    p = templates.from_template(key)
+    walls = [h for h in p.holes if h.surface in (FRONT, BACK, LEFT, RIGHT)]
+    assert walls
+    for hole in walls:
+        z0 = p.outer_height / 2 + hole.v - hole.height / 2
+        z1 = z0 + hole.height
+        near = []
+        for m in p.mounts:
+            low = mounts.board_bottom(p, m)
+            top = low + mounts.BOARD_THICKNESS
+            xs = [c[0] for c in mounts.board_corners(m)]
+            ys = [c[1] for c in mounts.board_corners(m)]
+            # How far the board's nearest edge is from this wall.
+            gap = {FRONT: min(ys) + p.inner_depth / 2, BACK: p.inner_depth / 2 - max(ys),
+                   LEFT: min(xs) + p.inner_width / 2, RIGHT: p.inner_width / 2 - max(xs)}
+            if z0 < top + 3 and z1 > low - 4:
+                near.append(gap[hole.surface])
+        assert near and min(near) <= 20.5, hole
+
+
+def test_stacked_template_is_approved():
+    p = templates.from_template("pi-zero-stack")
+    lower, upper = p.mounts
+    assert upper.rotation == 90 and upper.length > lower.length
+    assert not any(i.mount_id for i in validation.check(p) if i.level != "info")
+
+
+def test_fan_fits_under_the_lid():
+    from manifold3d import Manifold
+    p = templates.from_template("pi5-fan")
+    fan = next(h for h in p.holes if h.surface == LID and h.diameter == 26)
+    body = geometry.build_body(p)
+    h = p.outer_height
+    box = Manifold.cube([30, 30, 10], True).translate([fan.u, fan.v, h - 5])
+    assert geometry.overlap_volume(body, box) == 0             # clear of the walls and lip
+    # ...and of the tall USB and network sockets (from 64 mm along the board).
+    m = p.mounts[0]
+    usb_x = m.u - 42.5 + 64
+    top = mounts.board_bottom(p, m) + mounts.BOARD_THICKNESS
+    assert fan.u + 15 < usb_x or h - 10 > top + 16
+    screws = [x for x in p.holes if x.surface == LID and x.diameter == 3.4]
+    assert sorted({round(abs(s.u - fan.u), 6) for s in screws}) == [12.0]

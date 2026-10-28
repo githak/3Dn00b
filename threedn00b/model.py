@@ -130,6 +130,16 @@ SCREWS = {
     "M4": Screw(pilot=3.5, post=9.0, nominal=4.0),
 }
 
+# Help for opening a push-on or snap-on lid, at the front.
+OPENING_LABELS = {
+    "none": "Nothing extra",
+    "tab": "Tab on the lid",
+    "notch": "Finger notch in the box",
+    "both": "Tab and notch",
+}
+TAB_WIDTH, TAB_REACH = 20.0, 5.0            # lid tab: width, how far it sticks out
+NOTCH_WIDTH, NOTCH_DEPTH = 16.0, 3.0        # finger notch in the top of the front wall
+
 PUSH_ON, SNAP, SLIDING, SCREWED, THREADED = "push", "snap", "sliding", "screwed", "threaded"
 LID_STYLE_LABELS = {
     PUSH_ON: "Push-on (friction fit)",
@@ -157,6 +167,7 @@ class Lid:
     custom_gap: float = 0.25       # used when fit == "custom"
     thickness: float = 2.0         # thickness of the flat top
     lip_height: float = 5.0        # how far the lip reaches down into the box
+    opening: str = "none"          # push-on and snap-on lids: key of OPENING_LABELS
 
     @property
     def gap(self) -> float:
@@ -398,6 +409,25 @@ def floor_inset(project: Project, height: float) -> float:
 def has_lip(project: Project) -> bool:
     """Push-on and snap-on lids have a lip that reaches down inside the walls."""
     return project.lid.enabled and project.lid.style in (PUSH_ON, SNAP)
+
+
+def has_lid_tab(project: Project) -> bool:
+    return has_lip(project) and project.lid.opening in ("tab", "both")
+
+
+def has_finger_notch(project: Project) -> bool:
+    return has_lip(project) and project.lid.opening in ("notch", "both")
+
+
+def front_span(project: Project) -> float:
+    """Width of the front: of the box, or across a round container."""
+    return project.outer_width if project.shape == BOX else project.outer_diameter
+
+
+def notch_size(project: Project) -> tuple[float, float]:
+    """Width and depth of the finger notch (it stays within the lid's lip)."""
+    return (min(NOTCH_WIDTH, 0.4 * front_span(project)),
+            max(0.0, min(NOTCH_DEPTH, project.lid.lip_height - 0.5)))
 
 
 def has_threaded_lid(project: Project) -> bool:

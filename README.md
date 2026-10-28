@@ -8,8 +8,15 @@ Software for people getting into 3D printing and want to start with something ea
 sizes in millimetres, add holes and a lid, and export files your slicer can
 print. No sketches, no constraints, no feature trees.
 
-## What it can do (version 0.15)
+## What it can do (version 0.18)
 
+- **Templates** to start from, already sized to fit: cases for the Raspberry Pi
+  3 / 4 / 5 (also with a 30 mm fan in the lid), the Pi Zero / Zero 2 W, two Pi
+  Zero 2 W boards stacked crosswise, the Pi Pico, the Arduino Uno and 30-pin
+  ESP32 DevKit boards (with posts, openings for the sockets and a lid), plus a
+  storage box, a parts tray, a screw sorter, an AA battery box, a pencil cup, a
+  jar with a screw-on lid and a pencil box. Pick one under **Template** in the
+  Shape tab, then change anything you like; Undo takes you back.
 - **Box** (with rounded corners) or **round container**.
 - Sizes as **outside size** or **inside space**, with a single switch.
   The other measurement is always shown.
@@ -18,6 +25,10 @@ print. No sketches, no constraints, no feature trees.
   angled (45°), where the walls meet the floor and each other, and where
   dividers meet the floor, the walls and each other. That spreads the load where
   printed boxes usually crack, and makes the inside easier to clean.
+- **Easy opening** for push-on and snap-on lids: a tab that sticks out of the lid
+  at the front, so you can push it up with your thumb, and/or a finger notch in
+  the top of the front wall. Both work without prying at the lid, so nothing
+  breaks.
 - **Compartments**: split a box into compartments (for example 3 × 2), full
   height or lower. They're the same size unless you tick **Set each width** or
   **Set each depth** and type the sizes: the last compartment gets the rest of
@@ -73,7 +84,7 @@ Download `3dn00b_<version>-1_amd64.deb` from the
 [Releases page](https://github.com/githak/3Dn00b/releases) and install it:
 
 ```bash
-sudo apt install ./3dn00b_0.15.0-1_amd64.deb
+sudo apt install ./3dn00b_0.18.0-1_amd64.deb
 ```
 
 That's all: 3Dn00b appears in your applications menu, `.3dn00b` project files open

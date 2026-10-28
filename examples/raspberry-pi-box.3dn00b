@@ -1,6 +1,6 @@
 {
   "format": "3dn00b-project",
-  "version": 11,
+  "version": 13,
   "project": {
     "shape": "box",
     "size_mode": "inside",
@@ -20,7 +20,8 @@
       "fit": "normal",
       "custom_gap": 0.25,
       "thickness": 2.0,
-      "lip_height": 5.0
+      "lip_height": 5.0,
+      "opening": "tab"
     },
     "holes": [
       {
@@ -59,7 +60,9 @@
       "across": 1,
       "deep": 1,
       "thickness": 1.6,
-      "height": 0.0
+      "height": 0.0,
+      "widths": [],
+      "depths": []
     },
     "mounts": [
       {

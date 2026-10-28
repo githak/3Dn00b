@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from threedn00b import project_io
+from threedn00b import project_io, templates
 
 SLICER = shutil.which("prusa-slicer")
 EXAMPLES = sorted((Path(__file__).parent.parent / "examples").glob("*.3dn00b"))
@@ -44,3 +44,13 @@ def test_examples_open_as_3mf_in_prusaslicer(path, tmp_path):
     result = subprocess.run([SLICER, "--export-gcode", str(out), "-o", str(gcode)],
                             capture_output=True, text=True, timeout=600)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("key", list(templates.TEMPLATES))
+def test_templates_slice_in_prusaslicer(key, tmp_path):
+    project = templates.from_template(key)
+    for stl in project_io.export_stl_files(project, tmp_path, key):
+        result = subprocess.run([SLICER, "--export-gcode", "--center", "100,100", str(stl),
+                                 "-o", str(stl.with_suffix(".gcode"))],
+                                capture_output=True, text=True, timeout=600)
+        assert result.returncode == 0, result.stdout + result.stderr

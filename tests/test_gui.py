@@ -576,3 +576,28 @@ def test_compartment_size_controls(window):
     assert len(window.project.dividers.widths) == 3
     window.div_deep.setValue(1)
     assert not window.depth_sizes.box.isVisible()     # one row: nothing to size
+
+
+def test_easy_opening_control(window):
+    window.lid_check.setChecked(True)
+    form = window.lid_form
+    assert form.isRowVisible(window.lid_opening)
+    window.lid_opening.setCurrentIndex(window.lid_opening.findData("tab"))
+    window.lid_opening.activated.emit(window.lid_opening.currentIndex())
+    assert window.project.lid.opening == "tab"
+    assert not validation_errors(window)
+    window.lid_style.setCurrentIndex(window.lid_style.findData("screwed"))
+    window.lid_style.activated.emit(window.lid_style.currentIndex())
+    assert not form.isRowVisible(window.lid_opening)     # only for lids with a lip
+
+
+def test_start_from_template(window):
+    combo = window.template_combo
+    combo.activated.emit(combo.findData("pi"))
+    window.rebuild()
+    p = window.project
+    assert p.name == "Raspberry Pi case" and p.mounts and p.holes and p.lid.enabled
+    assert combo.currentIndex() == 0                  # ready to pick again
+    assert not validation_errors(window)
+    window.undo_stack.undo()
+    assert window.project.name == "My box" and not window.project.mounts

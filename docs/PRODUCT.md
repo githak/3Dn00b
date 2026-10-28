@@ -125,6 +125,32 @@ Defaults I chose myself, which are easy to change:
   changing the number of compartments keeps the sizes already set. Sizes that
   don't fit, or a compartment under 3 mm, are errors. The tabs now scroll, so
   many compartments fit on small screens.
+- Easy opening (0.16), requested by the project owner because tight push-on and
+  snap-on lids are hard to get off: an "Easy opening" choice adds a tab to the
+  front of the lid (20 mm wide, sticking out 5 mm, as thick as the lid and flush
+  with its top, so it prints flat; rounded where it joins the lid so it doesn't
+  crack), a finger notch in the top of the front wall (16 mm wide, 3 mm deep and
+  never deeper than the lip, rounded at the bottom), or both. Neither weakens the
+  lid's hold, and both are better than prying with a fingernail or a tool. Off
+  by default so existing designs don't change. A looser fit remains the other
+  answer for a lid that is simply too tight.
+- Templates (0.17), requested by the project owner so beginners don't size a
+  case by trial and error: a Template list in the Shape tab, under the name.
+  Board cases are built from the board catalogue, so the box fits the board with
+  1.5 to 2.5 mm of room (more where a socket sticks out, such as the Arduino's
+  USB socket), the posts match the holes, and openings sit in front of the
+  sockets, made larger than the plugs. One Raspberry Pi 3 / 4 / 5 case works for
+  all three: their power and HDMI sockets share one opening along the front, and
+  USB and network one on the right. The stacked Zero 2 W template crosses the
+  boards like a +, so the upper board's posts miss the lower board; its sockets
+  face the middle, so cables reach them through openings in the walls. Picking a
+  template is one undo step.
+  Added in 0.18: a Pi 5 case with a 30 mm fan in the lid (26 mm opening and four
+  M3 holes 24 mm apart, over the processor and clear of the tall sockets), a Pi
+  Pico case (8 mm posts leave room for pin headers underneath), and an ESP32
+  DevKit case. ESP32 boards differ between makers and many have no mounting
+  holes, so that template uses the custom 4-hole board with a common 30-pin
+  board's size, which the user adjusts after measuring.
 - Push-on lid that follows the box size, with fit presets.
 - Plain-language checks covering impossible sizes, thin walls, holes off the
   edge, holes behind the lid lip, overlapping or too-close holes, a lid that
@@ -156,7 +182,7 @@ much easier, without CAD vocabulary, and without making the interface busier?
 | GUI | PySide6 (Qt 6), LGPL | Native-looking Linux desktop app, installs from pip |
 | 3D preview | pyqtgraph `GLViewWidget` with a custom soft-lit shader | Small, pure Python, works on integrated graphics (OpenGL 2-era shaders) |
 | Geometry | **Manifold** (`manifold3d`), Apache-2.0 | Fast, robust Boolean operations whose results are **always watertight**. That is exactly what an STL needs. It is a small pip wheel with no system dependencies |
-| Project files | Versioned JSON (`"format": "3dn00b-project", "version": 12`) | Human-readable, diffable, forward-compatible |
+| Project files | Versioned JSON (`"format": "3dn00b-project", "version": 13`) | Human-readable, diffable, forward-compatible |
 
 **Why not CadQuery or build123d (OpenCascade)?** They are excellent, but they
 bring a large binary dependency (OCP), a slower and more fragile pipeline for
