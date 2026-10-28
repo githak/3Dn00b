@@ -601,3 +601,31 @@ def test_start_from_template(window):
     assert not validation_errors(window)
     window.undo_stack.undo()
     assert window.project.name == "My box" and not window.project.mounts
+
+
+def test_template_headings_cannot_be_picked(window):
+    combo = window.template_combo
+    headings = [i for i in range(combo.count()) if combo.itemData(i) is None][1:]
+    assert len(headings) == 3
+    assert all(not combo.model().item(i).isEnabled() for i in headings)
+
+
+def test_lid_side_controls(window):
+    window.lid_check.setChecked(True)
+    form = window.lid_form
+    assert not form.isRowVisible(window.opening_side)        # nothing to place yet
+    window.lid_opening.setCurrentIndex(window.lid_opening.findData("tab"))
+    window.lid_opening.activated.emit(window.lid_opening.currentIndex())
+    assert form.isRowVisible(window.opening_side) and not form.isRowVisible(window.slide_from)
+    window.opening_side.setCurrentIndex(window.opening_side.findData("back"))
+    window.opening_side.activated.emit(window.opening_side.currentIndex())
+    assert window.project.lid.opening_side == "back"
+    window.wall_spin.setValue(2.4)
+    window.lid_style.setCurrentIndex(window.lid_style.findData("sliding"))
+    window.lid_style.activated.emit(window.lid_style.currentIndex())
+    assert form.isRowVisible(window.slide_from) and not form.isRowVisible(window.opening_side)
+    window.slide_from.setCurrentIndex(window.slide_from.findData("right"))
+    window.slide_from.activated.emit(window.slide_from.currentIndex())
+    assert window.project.lid.slide_from == "right"
+    assert "from the right" in window.lid_tip.text()
+    assert not validation_errors(window)

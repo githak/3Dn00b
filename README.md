@@ -8,15 +8,21 @@ Software for people getting into 3D printing and want to start with something ea
 sizes in millimetres, add holes and a lid, and export files your slicer can
 print. No sketches, no constraints, no feature trees.
 
-## What it can do (version 0.18)
+## What it can do (version 0.21)
 
-- **Templates** to start from, already sized to fit: cases for the Raspberry Pi
-  3 / 4 / 5 (also with a 30 mm fan in the lid), the Pi Zero / Zero 2 W, two Pi
-  Zero 2 W boards stacked crosswise, the Pi Pico, the Arduino Uno and 30-pin
-  ESP32 DevKit boards (with posts, openings for the sockets and a lid), plus a
-  storage box, a parts tray, a screw sorter, an AA battery box, a pencil cup, a
-  jar with a screw-on lid and a pencil box. Pick one under **Template** in the
-  Shape tab, then change anything you like; Undo takes you back.
+- **Templates** to start from, already sized to fit. Pick one under **What are you making?**
+  in the Shape tab, then change anything you like; Undo takes you back.
+  - *Cases for boards* (posts, openings for the sockets, a lid): Raspberry Pi
+    3 / 4 / 5 (also with a 30 mm fan or a GPIO ribbon-cable slot in the lid),
+    Pi 3 A+, Pi Zero / Zero 2 W, two Pi Zero 2 W stacked crosswise, Pi Pico,
+    Arduino Uno and Mega 2560, 30-pin ESP32 DevKit, a half-size breadboard box,
+    and a project box for your own board.
+  - *Storage*: storage box, parts tray, screw sorter, 4 × 4 parts box, 3 × 3
+    craft box, AA battery box, weekly pill box, business card box, dice box,
+    guitar pick box, small screw-top tin, money box.
+  - *Around the house*: desk organiser, remote control holder, charging box, tea
+    bag box, plant pot with drainage holes, pencil cup, toothbrush cup, soap
+    dish, key tray, jar with a screw-on lid, pencil box.
 - **Box** (with rounded corners) or **round container**.
 - Sizes as **outside size** or **inside space**, with a single switch.
   The other measurement is always shown.
@@ -26,8 +32,8 @@ print. No sketches, no constraints, no feature trees.
   dividers meet the floor, the walls and each other. That spreads the load where
   printed boxes usually crack, and makes the inside easier to clean.
 - **Easy opening** for push-on and snap-on lids: a tab that sticks out of the lid
-  at the front, so you can push it up with your thumb, and/or a finger notch in
-  the top of the front wall. Both work without prying at the lid, so nothing
+  so you can push it up with your thumb, and/or a finger notch in the top of a
+  wall, on the side you choose (front, back, left or right). Both work without prying at the lid, so nothing
   breaks.
 - **Compartments**: split a box into compartments (for example 3 × 2), full
   height or lower. They're the same size unless you tick **Set each width** or
@@ -49,7 +55,7 @@ print. No sketches, no constraints, no feature trees.
   with other holes, and always keeps a safe distance from the edges. Common
   sizes are built in (M3/M4 screws, cables).
 - **Screw posts for circuit boards**: pick a board (Raspberry Pi Zero / Zero 2 W,
-  3 / 4 / 5, 3 A+, Pico, Arduino Uno, or your own board with 1, 2 or 4 holes) and all its posts
+  3 / 4 / 5, 3 A+, Pico, Arduino Uno or Mega 2560, or your own board with 1, 2 or 4 holes) and all its posts
   appear in the right pattern. Choose the screw size (M1 to M4) and how tall the
   posts are; the screw cuts its own thread into the post. Drag the board's green
   outline to move all its posts together, or turn it in 90° steps. The app checks
@@ -60,8 +66,9 @@ print. No sketches, no constraints, no feature trees.
   gap). It resizes itself with the box.
 - Or a **snap-on lid**: like the push-on lid, but small ridges on its lip click
   into grooves inside the walls.
-- Or a **sliding lid** (boxes): a flat panel that slides in from the front along
-  grooves in the walls, so the box gets no taller.
+- Or a **sliding lid** (boxes): a flat panel that slides in along grooves in the
+  walls, from the side you choose (front, back, left or right), so the box gets
+  no taller.
 - Or a **threaded lid** (round containers): screws on like a jar. The top of the
   container becomes a neck with a thread that prints without supports.
 - Or a **screwed-down lid**: a flat lid held by a screw in each corner (M2 to M4).
@@ -84,7 +91,7 @@ Download `3dn00b_<version>-1_amd64.deb` from the
 [Releases page](https://github.com/githak/3Dn00b/releases) and install it:
 
 ```bash
-sudo apt install ./3dn00b_0.18.0-1_amd64.deb
+sudo apt install ./3dn00b_0.21.0-1_amd64.deb
 ```
 
 That's all: 3Dn00b appears in your applications menu, `.3dn00b` project files open

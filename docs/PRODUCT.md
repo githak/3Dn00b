@@ -134,8 +134,14 @@ Defaults I chose myself, which are easy to change:
   lid's hold, and both are better than prying with a fingernail or a tool. Off
   by default so existing designs don't change. A looser fit remains the other
   answer for a lid that is simply too tight.
+- Lid sides (0.21), requested by the project owner: a sliding lid can slide in
+  from the front, back, left or right, and the tab and notch can be on any of
+  those sides. Both are made as if at the front and then turned, so the groove,
+  the lowered wall and the panel always match; tests slide the lid out each way
+  and check it's held in every other direction.
 - Templates (0.17), requested by the project owner so beginners don't size a
-  case by trial and error: a Template list in the Shape tab, under the name.
+  case by trial and error: a template list in the Shape tab, right under the Box
+  and Round container buttons, so a template is the third way to start.
   Board cases are built from the board catalogue, so the box fits the board with
   1.5 to 2.5 mm of room (more where a socket sticks out, such as the Arduino's
   USB socket), the posts match the holes, and openings sit in front of the
@@ -151,6 +157,16 @@ Defaults I chose myself, which are easy to change:
   DevKit case. ESP32 boards differ between makers and many have no mounting
   holes, so that template uses the custom 4-hole board with a common 30-pin
   board's size, which the user adjusts after measuring.
+  Added in 0.19, grouped under headings in the list (Cases for boards, Storage,
+  Around the house): Pi 3 A+ and Arduino Mega 2560 cases (the Mega joins the
+  board catalogue, with its six holes), a project box for the user's own board,
+  a weekly pill box, business card box, dice box, money box (coin slot in a
+  screwed-down lid), desk organiser, charging box and a plant pot with drainage
+  holes.
+  Added in 0.20: a Pi 3 / 4 / 5 case with a ribbon-cable slot in the lid (as close
+  to the GPIO header as the lid's lip allows), a half-size breadboard box, a 4 × 4
+  parts box, 3 × 3 craft box, guitar pick box, small screw-top tin, soap dish,
+  key tray, toothbrush cup, tea bag box and remote control holder (35 templates).
 - Push-on lid that follows the box size, with fit presets.
 - Plain-language checks covering impossible sizes, thin walls, holes off the
   edge, holes behind the lid lip, overlapping or too-close holes, a lid that

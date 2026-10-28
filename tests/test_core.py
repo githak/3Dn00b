@@ -1671,15 +1671,16 @@ def test_templates_are_ready_to_print(key, tmp_path):
     assert templates.from_template(key) is not p      # a fresh copy every time
 
 
-@pytest.mark.parametrize("key", templates.ELECTRONICS)
+@pytest.mark.parametrize("key", [k for k in templates.ELECTRONICS
+                                 if templates.from_template(k).mounts])   # boards on posts
 def test_board_openings_face_the_sockets(key):
     """Every wall opening is next to a board edge and at the height of its sockets."""
     p = templates.from_template(key)
     walls = [h for h in p.holes if h.surface in (FRONT, BACK, LEFT, RIGHT)]
     assert walls
     for hole in walls:
-        z0 = p.outer_height / 2 + hole.v - hole.height / 2
-        z1 = z0 + hole.height
+        half = hole.half_extents[1]
+        z0, z1 = p.outer_height / 2 + hole.v - half, p.outer_height / 2 + hole.v + half
         near = []
         for m in p.mounts:
             low = mounts.board_bottom(p, m)
@@ -1716,3 +1717,86 @@ def test_fan_fits_under_the_lid():
     assert fan.u + 15 < usb_x or h - 10 > top + 16
     screws = [x for x in p.holes if x.surface == LID and x.diameter == 3.4]
     assert sorted({round(abs(s.u - fan.u), 6) for s in screws}) == [12.0]
+
+
+def test_template_groups_list_every_template_once():
+    listed = [key for _, keys in templates.GROUPS for key in keys]
+    assert sorted(listed) == sorted(templates.TEMPLATES) and len(set(listed)) == len(listed)
+
+
+def test_mega_has_six_posts_inside_the_board():
+    p = templates.from_template("mega")
+    m = p.mounts[0]
+    posts = mounts.post_positions(m)
+    corners = mounts.board_corners(m)
+    assert len(posts) == 6
+    xs, ys = [c[0] for c in corners], [c[1] for c in corners]
+    assert all(min(xs) < x < max(xs) and min(ys) < y < max(ys) for x, y in posts)
+
+
+# ---- which side a lid slides in from, and where the tab and notch are -------------
+
+SIDE_DIRECTIONS = {"front": (0, -1), "back": (0, 1), "left": (-1, 0), "right": (1, 0)}
+
+
+@pytest.mark.parametrize("side", list(SIDE_DIRECTIONS))
+@pytest.mark.parametrize("corner", [0.0, 6.0])
+def test_sliding_lid_from_any_side(side, corner):
+    p = lid_box(SLIDING, corner_radius=corner)
+    p.width, p.depth = 90.0, 60.0                       # not square, so the sides differ
+    p.lid.slide_from = side
+    parts = geometry.build_parts(p)
+    assert geometry.piece_count(parts.body) == 1 and _edges_shared_twice(parts.body)
+    dx, dy = SIDE_DIRECTIONS[side]
+    for step in range(0, int(max(p.outer_width, p.outer_depth)) + 2, 4):   # out that way
+        moved = parts.lid.translate([dx * step, dy * step, 0])
+        assert geometry.overlap_volume(parts.body, moved) < 1e-6
+    # Held in every other direction.
+    assert geometry.overlap_volume(parts.body, parts.lid.translate([0, 0, 1.0])) > 1
+    for ox, oy in SIDE_DIRECTIONS.values():
+        if (ox, oy) != (dx, dy):
+            assert geometry.overlap_volume(parts.body, parts.lid.translate([ox, oy, 0])) > 1
+    issues = validation.check(p, parts)
+    assert not validation.has_errors(issues)
+    assert any(f"from the {side}" in i.message for i in issues)
+
+
+@pytest.mark.parametrize("shape", [BOX, CYLINDER])
+@pytest.mark.parametrize("side", list(SIDE_DIRECTIONS))
+def test_tab_and_notch_on_any_side(shape, side):
+    p = default_project(shape)
+    p.width, p.depth = 90.0, 60.0
+    p.lid.enabled, p.lid.opening, p.lid.opening_side = True, "both", side
+    parts = geometry.build_parts(p)
+    dx, dy = SIDE_DIRECTIONS[side]
+    lo, hi = geometry._bounds(parts.lid)
+    half_x, half_y = p.outer_width / 2, p.outer_depth / 2
+    if shape == CYLINDER:
+        half_x = half_y = p.outer_diameter / 2
+    # The tab sticks out on that side only.
+    out = {"front": -lo[1] - half_y, "back": hi[1] - half_y,
+           "left": -lo[0] - half_x, "right": hi[0] - half_x}
+    for s, amount in out.items():
+        assert amount == pytest.approx(TAB_REACH if s == side else 0, abs=0.01)
+    # The notch is in that wall, in the middle.
+    _, depth = notch_size(p)
+    x, y = dx * (half_x - p.wall / 2), dy * (half_y - p.wall / 2)     # in the middle of the wall
+    top = parts.body.ray_cast([x, y, 200], [x, y, 0])[0].position[2]
+    assert top == pytest.approx(p.outer_height - depth, abs=0.01)
+    assert geometry.overlap_volume(parts.body, parts.lid) < 1e-6
+    assert not validation.has_errors(validation.check(p, parts))
+
+
+def test_lid_sides_are_saved(tmp_path):
+    p = default_project(BOX)
+    p.lid.enabled, p.lid.slide_from, p.lid.opening_side = True, "left", "back"
+    path = tmp_path / "sides.3dn00b"
+    project_io.save_project(p, path)
+    assert project_io.load_project(path) == p
+    data = project_io.to_dict(p)
+    data["project"]["lid"]["slide_from"] = "top"
+    with pytest.raises(project_io.ProjectFileError):
+        project_io.from_dict(data)
+    del data["project"]["lid"]["slide_from"], data["project"]["lid"]["opening_side"]
+    old = project_io.from_dict(data).lid                    # older files: the front
+    assert old.slide_from == old.opening_side == "front"

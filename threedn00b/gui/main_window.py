@@ -22,7 +22,7 @@ from .. import (APP_NAME, __version__, geometry, mounts, picking, project_io, te
 from ..model import (ALONG_U, ALONG_V, BOTTOM, BOX, CYLINDER, FIT_LABELS, FIT_PRESETS,
                      FRONT, HOLE_DIAMETER_RANGE, HOLE_KIND_LABELS, INSIDE, LID, MIN_EDGE,
                      OUTSIDE, RECT, ROUND, SIDE, SIZE_RANGE, SURFACE_LABELS, VENT,
-                     DIVIDER_RANGE, INSIDE_CORNER_LABELS, OPENING_LABELS, LID_STYLE_LABELS, SHARP, MAX_COMPARTMENTS, PUSH_ON, SCREWED, SCREWS, SLIDING,
+                     DIVIDER_RANGE, INSIDE_CORNER_LABELS, OPENING_LABELS, SIDE_LABELS, LID_STYLE_LABELS, SHARP, MAX_COMPARTMENTS, PUSH_ON, SCREWED, SCREWS, SLIDING,
                      SNAP, THREADED, TRAY_TEMPLATE, WALL_RANGE, Hole, Project,
                      clamp_hole, compartment_depths, compartment_widths, default_project,
                      has_set_sizes, hole_limits, resized_sizes)
@@ -65,8 +65,8 @@ LID_STYLE_HINTS = {
     PUSH_ON: "A flat top with a lip that slides into the box and holds by friction.",
     SNAP: "Like the push-on lid, with small ridges on its lip that click into grooves "
           "inside the walls.",
-    SLIDING: "A flat panel that slides into grooves at the top of the walls, from the front. "
-             "Only for boxes.",
+    SLIDING: "A flat panel that slides into grooves at the top of the walls, from the side you "
+             "choose. Only for boxes.",
     SCREWED: "A flat lid held by a screw in each corner. The box gets a column in each corner "
              "for the screws to bite into.",
     THREADED: "A screw-on lid, like a jar. The top of the container becomes a narrower neck "
@@ -293,27 +293,32 @@ class MainWindow(QMainWindow):
             btn.clicked.connect(lambda _=False, s=shape: self.edit("Change shape", lambda p: p.set_shape(s)))
             row.addWidget(btn)
         layout.addLayout(row)
+        self.template_combo = QComboBox()
+        self.template_combo.addItem("…or start from a template", None)
+        for heading, keys in templates.GROUPS:
+            # A heading that can't be picked, then the group's templates.
+            self.template_combo.addItem(heading, None)
+            item = self.template_combo.model().item(self.template_combo.count() - 1)
+            item.setEnabled(False)
+            font = item.font()
+            font.setBold(True)
+            item.setFont(font)
+            for key in keys:
+                t = templates.TEMPLATES[key]
+                self.template_combo.addItem("    " + t.label, key)
+                self.template_combo.setItemData(self.template_combo.count() - 1, t.description,
+                                                Qt.ItemDataRole.ToolTipRole)
+        self.template_combo.setToolTip("Ready-made boxes, sized to fit: you can change "
+                                       "everything afterwards.")
+        self.template_combo.activated.connect(self._on_template)
+        self.template_combo.setMinimumHeight(34)
+        layout.addWidget(self.template_combo)
 
         form = QFormLayout()
         self.name_edit = QLineEdit()
         self.name_edit.textEdited.connect(
             lambda t: self.edit("Rename", lambda p: setattr(p, "name", t), merge="name"))
         form.addRow("Name", self.name_edit)
-        self.template_combo = QComboBox()
-        self.template_combo.addItem("Start from a template…", None)
-        # Cases for boards first, then containers, with a line between.
-        for keys in (templates.ELECTRONICS,
-                     [k for k in templates.TEMPLATES if k not in templates.ELECTRONICS]):
-            self.template_combo.insertSeparator(self.template_combo.count())
-            for key in keys:
-                t = templates.TEMPLATES[key]
-                self.template_combo.addItem(t.label, key)
-                self.template_combo.setItemData(self.template_combo.count() - 1, t.description,
-                                                Qt.ItemDataRole.ToolTipRole)
-        self.template_combo.setToolTip("Ready-made boxes, sized to fit: you can change "
-                                       "everything afterwards.")
-        self.template_combo.activated.connect(self._on_template)
-        form.addRow("Template", self.template_combo)
         layout.addLayout(form)
 
         layout.addWidget(QLabel("<b>The sizes below are</b>"))
@@ -677,11 +682,26 @@ class MainWindow(QMainWindow):
             lambda _: self.edit("Change lid opening",
                                 lambda p: setattr(p.lid, "opening", self.lid_opening.currentData())))
         form.addRow("Easy opening", self.lid_opening)
+        self.opening_side = self._side_combo("opening_side", "Move the lid's tab and notch")
+        self.opening_side.setToolTip("Which side of the box the tab and the notch are on")
+        form.addRow("Which side", self.opening_side)
+        self.slide_from = self._side_combo("slide_from", "Change where the lid slides in")
+        self.slide_from.setToolTip("The side the lid slides in from. That wall is lower at the "
+                                   "top so the lid can pass.")
+        form.addRow("Slides in from", self.slide_from)
         layout.addWidget(self.lid_box)
         self.lid_tip = hint("")
         layout.addWidget(self.lid_tip)
         layout.addStretch()
         return page
+
+    def _side_combo(self, attr: str, label: str) -> QComboBox:
+        combo = QComboBox()
+        for key, text in SIDE_LABELS.items():
+            combo.addItem(text, key)
+        combo.activated.connect(
+            lambda _: self.edit(label, lambda p: setattr(p.lid, attr, combo.currentData())))
+        return combo
 
     def _build_check_tab(self):
         page = QWidget()
@@ -795,6 +815,12 @@ class MainWindow(QMainWindow):
         self.lid_form.setRowVisible(self.lip_height, style in (PUSH_ON, SNAP))
         self.lid_form.setRowVisible(self.lid_opening, style in (PUSH_ON, SNAP))
         set_quietly(self.lid_opening, p.lid.opening)
+        self.lid_form.setRowVisible(self.opening_side,
+                                    style in (PUSH_ON, SNAP) and p.lid.opening != "none")
+        set_quietly(self.opening_side, p.lid.opening_side)
+        self.lid_form.setRowVisible(self.slide_from, style == SLIDING)
+        set_quietly(self.slide_from, p.lid.slide_from)
+        side = SIDE_LABELS[p.lid.slide_from].lower()
         self.lid_style_hint.setText(LID_STYLE_HINTS[style])
         upside_down = "\n\nThe lid is exported upside down, which is the best way to print it."
         fit_tip = ("Normal fits most printers. If your lid ends up too tight, choose Loose and "
@@ -802,7 +828,7 @@ class MainWindow(QMainWindow):
         self.lid_tip.setText({
             PUSH_ON: fit_tip + upside_down,
             SNAP: fit_tip + " A looser fit also makes the click softer." + upside_down,
-            SLIDING: fit_tip + "\n\nThe lid is printed flat. Slide it in from the front.",
+            SLIDING: fit_tip + f"\n\nThe lid is printed flat. Slide it in from the {side}.",
             SCREWED: "Screws cut their own thread into the plastic. Tighten them gently, just "
                      "until the lid is snug." + upside_down,
             THREADED: fit_tip + " Screw it on clockwise; the thread rises 4 mm per turn."
