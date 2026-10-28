@@ -1,6 +1,6 @@
 {
   "format": "3dn00b-project",
-  "version": 10,
+  "version": 12,
   "project": {
     "shape": "box",
     "size_mode": "outside",
@@ -28,7 +28,12 @@
       "across": 3,
       "deep": 2,
       "thickness": 1.6,
-      "height": 0.0
+      "height": 0.0,
+      "widths": [
+        30.0,
+        45.0
+      ],
+      "depths": []
     },
     "mounts": []
   }

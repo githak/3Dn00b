@@ -15,10 +15,11 @@ from .model import (HOLE_KIND_LABELS, INSIDE_CORNER_LABELS, LID_STYLE_LABELS, SC
                     Dividers, Hole, Lid, Mount, Project)
 
 FORMAT_NAME = "3dn00b-project"
-FORMAT_VERSION = 11  # 2: rectangular holes; 3: air vents; 4: dividers; 5: screw posts;
+FORMAT_VERSION = 12  # 2: rectangular holes; 3: air vents; 4: dividers; 5: screw posts;
                      # 6: screwed-down lids; 7: snap-on and sliding lids; 8: threaded lids;
                      # 9: custom boards with 1 or 2 holes; 10: rounded/angled inside corners;
-                     # 11: rounded hole corners and strengthened hole edges
+                     # 11: rounded hole corners and strengthened hole edges;
+                     # 12: compartments of different sizes
 PROJECT_SUFFIX = ".3dn00b"
 
 
@@ -80,6 +81,11 @@ def _build(cls, raw: dict):
             value = float(value)
         elif isinstance(default, str) and not isinstance(value, str):
             raise ValueError(f.name)
+        elif isinstance(default, list):
+            if not isinstance(value, list) or any(
+                    isinstance(v, bool) or not isinstance(v, (int, float)) for v in value):
+                raise ValueError(f.name)
+            value = [float(v) for v in value]
         kwargs[f.name] = value
     return cls(**kwargs)
 

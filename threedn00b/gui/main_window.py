@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import gc
 from pathlib import Path
+from types import SimpleNamespace
 
 from PySide6.QtCore import QSettings, Qt, QTimer
 from PySide6.QtGui import QAction, QKeySequence, QUndoCommand, QUndoStack
@@ -12,7 +13,7 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox,
                                QDoubleSpinBox, QFileDialog, QFormLayout, QFrame,
                                QHBoxLayout, QLabel, QLineEdit, QListWidget,
                                QListWidgetItem, QMainWindow, QMessageBox,
-                               QMenu, QPushButton, QRadioButton, QSizePolicy, QSpinBox,
+                               QMenu, QPushButton, QRadioButton, QScrollArea, QSizePolicy, QSpinBox,
                                QSplitter, QStyle, QTabWidget, QToolBar, QToolButton,
                                QVBoxLayout, QWidget)
 
@@ -22,7 +23,8 @@ from ..model import (ALONG_U, ALONG_V, BOTTOM, BOX, CYLINDER, FIT_LABELS, FIT_PR
                      OUTSIDE, RECT, ROUND, SIDE, SIZE_RANGE, SURFACE_LABELS, VENT,
                      DIVIDER_RANGE, INSIDE_CORNER_LABELS, LID_STYLE_LABELS, SHARP, MAX_COMPARTMENTS, PUSH_ON, SCREWED, SCREWS, SLIDING,
                      SNAP, THREADED, TRAY_TEMPLATE, WALL_RANGE, Hole, Project,
-                     clamp_hole, compartment_size, default_project, hole_limits)
+                     clamp_hole, compartment_depths, compartment_widths, default_project,
+                     has_set_sizes, hole_limits, resized_sizes)
 from .viewer import Viewer
 
 COMMON_HOLES = [
@@ -117,11 +119,35 @@ def int_spin(lo: int, hi: int) -> QSpinBox:
     return box
 
 
+def scrolling(page: QWidget) -> QScrollArea:
+    """Let a tab scroll when it is taller than the window."""
+    area = QScrollArea()
+    area.setWidget(page)
+    area.setWidgetResizable(True)
+    area.setFrameShape(QFrame.Shape.NoFrame)
+    area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    return area
+
+
 def hint(text: str) -> QLabel:
     label = QLabel(text)
     label.setWordWrap(True)
     label.setStyleSheet("color: #556;")
     return label
+
+
+def _ordinal(n: int) -> str:
+    return {1: "st", 2: "nd", 3: "rd"}.get(n if n < 20 else n % 10, "th")
+
+
+def _set_count(p: Project, attr: str, count: int):
+    """Change the number of compartments, keeping set sizes for the ones that stay."""
+    d = p.dividers
+    sizes = "widths" if attr == "across" else "depths"
+    if getattr(d, sizes):
+        span = p.inner_width if attr == "across" else p.inner_depth
+        setattr(d, sizes, resized_sizes(span, count, d.thickness, getattr(d, sizes)))
+    setattr(d, attr, count)
 
 
 def set_quietly(widget, value):
@@ -161,11 +187,11 @@ class MainWindow(QMainWindow):
         self.viewer.surfaceDoubleClicked.connect(self._on_surface_double_clicked)
 
         self.tabs = QTabWidget()
-        self.tabs.addTab(self._build_shape_tab(), "1 Shape")
-        self.tabs.addTab(self._build_holes_tab(), "2 Holes")
-        self.tabs.addTab(self._build_posts_tab(), "3 Posts")
-        self.tabs.addTab(self._build_lid_tab(), "4 Lid")
-        self.tabs.addTab(self._build_check_tab(), CHECK_TAB_TITLE)
+        self.tabs.addTab(scrolling(self._build_shape_tab()), "1 Shape")
+        self.tabs.addTab(scrolling(self._build_holes_tab()), "2 Holes")
+        self.tabs.addTab(scrolling(self._build_posts_tab()), "3 Posts")
+        self.tabs.addTab(scrolling(self._build_lid_tab()), "4 Lid")
+        self.tabs.addTab(scrolling(self._build_check_tab()), CHECK_TAB_TITLE)
         self.tabs.setMinimumWidth(420)
         self.tabs.setMaximumWidth(500)
 
@@ -356,15 +382,19 @@ class MainWindow(QMainWindow):
         self.div_height = spin(1.0, 300.0, step=1.0)
         self.div_height.setToolTip("Lower dividers make it easier to reach into the compartments")
         form.addRow("Left to right", self.div_across)
+        self.width_sizes = self._compartment_sizes("widths", "width", "from the left")
+        form.addRow(self.width_sizes.box)
         form.addRow("Front to back", self.div_deep)
+        self.depth_sizes = self._compartment_sizes("depths", "depth", "from the front")
+        form.addRow(self.depth_sizes.box)
         form.addRow("Divider thickness", self.div_thickness)
         form.addRow("Divider height", self.div_full)
         form.addRow("", self.div_height)
         self.div_across.valueChanged.connect(
-            lambda v: self.edit("Change compartments", lambda p: setattr(p.dividers, "across", v),
+            lambda v: self.edit("Change compartments", lambda p: _set_count(p, "across", v),
                                 merge="div_across"))
         self.div_deep.valueChanged.connect(
-            lambda v: self.edit("Change compartments", lambda p: setattr(p.dividers, "deep", v),
+            lambda v: self.edit("Change compartments", lambda p: _set_count(p, "deep", v),
                                 merge="div_deep"))
         self.div_thickness.valueChanged.connect(
             lambda v: self.edit("Change divider thickness",
@@ -757,6 +787,54 @@ class MainWindow(QMainWindow):
         self.refresh_holes()
         self.refresh_mounts()
 
+    def _compartment_sizes(self, attr: str, word: str, where: str) -> "SimpleNamespace":
+        """A switch to set each compartment's size, with one box per compartment."""
+        ui = SimpleNamespace(attr=attr, box=QWidget())
+        layout = QVBoxLayout(ui.box)
+        layout.setContentsMargins(0, 0, 0, 0)
+        ui.custom = QCheckBox(f"Set each {word}")
+        ui.custom.setToolTip(f"Give the compartments different {attr}, {where}; "
+                             "the last one gets the rest of the room.")
+        ui.custom.toggled.connect(lambda on: self._on_custom_sizes(attr, on))
+        layout.addWidget(ui.custom)
+        ui.form = QFormLayout()
+        ui.form.setContentsMargins(16, 0, 0, 0)
+        ui.spins = []
+        for i in range(MAX_COMPARTMENTS - 1):
+            box = spin(1.0, 1000.0, step=1.0)
+            box.valueChanged.connect(
+                lambda v, i=i: self.edit(f"Change compartment {word}",
+                                         lambda p: getattr(p.dividers, attr).__setitem__(i, v),
+                                         merge=f"div_{attr}{i}"))
+            ui.form.addRow(f"{i + 1}{_ordinal(i + 1)} {where}", box)
+            ui.spins.append(box)
+        ui.rest = QLabel()
+        ui.form.addRow("Last one", ui.rest)
+        layout.addLayout(ui.form)
+        return ui
+
+    def _on_custom_sizes(self, attr: str, on: bool):
+        def change(p):
+            d = p.dividers
+            count = d.across if attr == "widths" else d.deep
+            span = p.inner_width if attr == "widths" else p.inner_depth
+            setattr(d, attr, resized_sizes(span, count, d.thickness, []) if on else [])
+        self.edit("Set compartment sizes" if on else "Make compartments the same size", change)
+
+    def _refresh_sizes(self, ui, count: int, chosen: list[float], sizes: list[float]):
+        custom = has_set_sizes(chosen, count)
+        ui.box.setVisible(count > 1)
+        set_quietly(ui.custom, custom)
+        for i, box in enumerate(ui.spins):
+            shown = custom and i < count - 1
+            ui.form.setRowVisible(box, shown)
+            if shown:
+                set_quietly(box, chosen[i])
+        ui.form.setRowVisible(ui.rest, custom)
+        if custom:
+            ui.rest.setText(f"the rest: {sizes[-1]:.1f} mm")
+            ui.rest.setStyleSheet("" if sizes[-1] >= 3 else "color: #b02020;")
+
     def _refresh_dividers(self):
         p, d = self.project, self.project.dividers
         is_box = p.shape == BOX
@@ -769,14 +847,26 @@ class MainWindow(QMainWindow):
         self.divider_form.setRowVisible(self.div_height, d.height > 0)
         for widget in (self.div_thickness, self.div_full):
             widget.setEnabled(d.enabled)
+        widths, depths = compartment_widths(p), compartment_depths(p)
+        self._refresh_sizes(self.width_sizes, d.across, d.widths, widths)
+        self._refresh_sizes(self.depth_sizes, d.deep, d.depths, depths)
         if not is_box:
             self.divider_info.setText("Dividers are available for boxes.")
         elif not d.enabled:
             self.divider_info.setText("Set more than 1 to split the box into compartments.")
-        else:
-            w, dp = compartment_size(p)
+        elif len(set(round(w, 1) for w in widths)) == len(set(round(x, 1) for x in depths)) == 1:
             count = d.across * d.deep
-            self.divider_info.setText(f"{count} compartments, each {w:.1f} × {dp:.1f} mm inside.")
+            self.divider_info.setText(f"{count} compartments, each {widths[0]:.1f} × "
+                                      f"{depths[0]:.1f} mm inside.")
+        else:
+            def listed(sizes):
+                sizes = [round(x, 1) for x in sizes]
+                if len(set(sizes)) == 1:
+                    return f"{sizes[0]:g} mm each"
+                return " + ".join(f"{x:g}" for x in sizes) + " mm"
+            self.divider_info.setText(f"{d.across * d.deep} compartments inside. "
+                                      f"Widths from the left: {listed(widths)}. "
+                                      f"Depths from the front: {listed(depths)}.")
 
     def _on_divider_full(self, full: bool):
         height = 0.0 if full else round(self.project.inner_height / 2, 1)

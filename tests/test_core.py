@@ -1517,3 +1517,74 @@ def test_hole_options_are_saved(tmp_path):
         del data["project"]["holes"][0][key]
     old = project_io.from_dict(data).holes[0]
     assert old.rounding == 0 and old.strengthen is False
+
+
+# ---- compartments of different sizes ----------------------------------------------
+
+from threedn00b.model import compartment_depths, compartment_widths, resized_sizes  # noqa: E402
+
+
+def test_compartments_of_set_sizes():
+    p = Project(width=100, depth=60, height=30, wall=2, bottom=2, corner_radius=0,
+                dividers=Dividers(across=3, deep=2, thickness=2, widths=[20, 30], depths=[15]))
+    assert compartment_widths(p) == pytest.approx([20, 30, 42])      # the last gets the rest
+    assert compartment_depths(p) == pytest.approx([15, 39])
+    assert compartment_size(p) == pytest.approx((20, 15))
+    xs, ys = divider_positions(p)
+    assert xs == pytest.approx([-27, 5]) and ys == pytest.approx([-12])
+    body = geometry.build_body(p)
+    # Walk along the floor from the left: walls of the compartments where expected.
+    z = p.bottom + 5
+    hit = body.ray_cast([-47, -20, z], [47, -20, z])[0].position
+    assert hit[0] == pytest.approx(-28)
+    assert body.ray_cast([0, 0, z], [0, -40, z])[0].position[1] == pytest.approx(-11)
+    assert not validation.has_errors(validation.check(p))
+
+
+def test_set_sizes_that_dont_fit():
+    p = default_project(BOX)
+    p.dividers = Dividers(across=3, widths=[40, 40])           # 76 mm inside: nothing left
+    issues = validation.check_size(p)
+    assert validation.has_errors(issues)
+    assert "add up to more than fits" in issues[0].message
+    p.dividers.widths = [2, 30]
+    assert "too narrow to print" in validation.check_size(p)[0].message
+    p.dividers.widths = [20, 30]
+    assert not validation.has_errors(validation.check(p))
+    p.dividers.across = 4                                         # sizes no longer match: equal
+    assert compartment_widths(p) == pytest.approx([(p.inner_width - 3 * 1.6) / 4] * 4)
+
+
+def test_changing_the_number_keeps_set_sizes():
+    assert resized_sizes(96, 5, 2, [20, 30]) == pytest.approx([20, 30, 12.7, 12.7])
+    assert resized_sizes(96, 2, 2, [20, 30]) == [20]
+    assert resized_sizes(96, 1, 2, [20, 30]) == []
+    assert resized_sizes(96, 3, 2, []) == pytest.approx([30.7, 30.7])
+
+
+@pytest.mark.parametrize("lid", ["push", "snap", "sliding", "screwed"])
+@pytest.mark.parametrize("style", ["sharp", "rounded"])
+def test_set_sizes_with_every_lid(lid, style):
+    p = default_project(TRAY_TEMPLATE)
+    p.dividers.widths, p.dividers.depths = [20.0, 70.0], [30.0]
+    p.inside_corners, p.inside_corner_size = style, 3.0
+    p.wall = 2.4                                      # thick enough for a sliding lid
+    p.lid.enabled, p.lid.style = True, lid
+    parts = geometry.build_parts(p)
+    assert geometry.overlap_volume(parts.body, parts.lid) < 1e-6
+    assert geometry.piece_count(parts.body) == 1 and _edges_shared_twice(parts.body)
+    assert not validation.has_errors(validation.check(p, parts))
+
+
+def test_set_sizes_are_saved(tmp_path):
+    p = default_project(TRAY_TEMPLATE)
+    p.dividers.widths = [20.0, 70.0]
+    path = tmp_path / "sizes.3dn00b"
+    project_io.save_project(p, path)
+    assert project_io.load_project(path) == p
+    data = project_io.to_dict(p)
+    data["project"]["dividers"]["widths"] = ["wide"]
+    with pytest.raises(project_io.ProjectFileError):
+        project_io.from_dict(data)
+    del data["project"]["dividers"]["widths"]             # older files: all the same size
+    assert project_io.from_dict(data).dividers.widths == []

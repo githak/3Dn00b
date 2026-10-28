@@ -167,11 +167,15 @@ class Lid:
 
 @dataclass
 class Dividers:
-    """Evenly spaced walls inside a box that split it into compartments."""
+    """Walls inside a box that split it into compartments, evenly or at set sizes."""
     across: int = 1                # compartments from left to right
     deep: int = 1                  # compartments from front to back
     thickness: float = 1.6
     height: float = 0.0            # 0 = full height; otherwise height above the bottom
+    # Set sizes (inside, mm) of all but the last compartment, from the left and from
+    # the front; the last one gets the rest. Empty = all the same size.
+    widths: list[float] = field(default_factory=list)
+    depths: list[float] = field(default_factory=list)
 
     @property
     def enabled(self) -> bool:
@@ -767,21 +771,59 @@ def has_dividers(project: Project) -> bool:
     return project.shape == BOX and project.dividers.enabled
 
 
-def compartment_size(project: Project) -> tuple[float, float]:
-    """Inside width and depth of each compartment."""
+def has_set_sizes(sizes: list[float], count: int) -> bool:
+    """Are the compartments in this direction set one by one (else all the same)?"""
+    return count > 1 and len(sizes) == count - 1
+
+
+def _sizes(span: float, count: int, thickness: float, chosen: list[float]) -> list[float]:
+    room = span - (count - 1) * thickness
+    if has_set_sizes(chosen, count):
+        return list(chosen) + [room - sum(chosen)]          # the last one gets the rest
+    return [room / count] * count
+
+
+def compartment_widths(project: Project) -> list[float]:
+    """Inside width of each compartment, from the left."""
     d = project.dividers
-    w = (project.inner_width - (d.across - 1) * d.thickness) / d.across
-    dp = (project.inner_depth - (d.deep - 1) * d.thickness) / d.deep
-    return w, dp
+    return _sizes(project.inner_width, d.across, d.thickness, d.widths)
+
+
+def compartment_depths(project: Project) -> list[float]:
+    """Inside depth of each compartment, from the front."""
+    d = project.dividers
+    return _sizes(project.inner_depth, d.deep, d.thickness, d.depths)
+
+
+def compartment_size(project: Project) -> tuple[float, float]:
+    """Inside width and depth of the narrowest compartments."""
+    return min(compartment_widths(project)), min(compartment_depths(project))
+
+
+def resized_sizes(span: float, count: int, thickness: float, chosen: list[float]) -> list[float]:
+    """Set sizes for a new number of compartments: keep the first ones, share the rest."""
+    if count < 2:
+        return []
+    keep = list(chosen[:count - 1])
+    room = span - (count - 1) * thickness - sum(keep)
+    share = round(room / (count - len(keep)), 1)
+    return keep + [share] * (count - 1 - len(keep))
+
+
+def _positions(start: float, sizes: list[float], thickness: float) -> list[float]:
+    out, edge = [], start
+    for size in sizes[:-1]:
+        edge += size
+        out.append(edge + thickness / 2)
+        edge += thickness
+    return out
 
 
 def divider_positions(project: Project) -> tuple[list[float], list[float]]:
     """Centre lines of the dividers: x positions (left-right split), y positions (front-back split)."""
-    d = project.dividers
-    cw, cd = compartment_size(project)
-    xs = [-project.inner_width / 2 + i * cw + (i - 0.5) * d.thickness for i in range(1, d.across)]
-    ys = [-project.inner_depth / 2 + i * cd + (i - 0.5) * d.thickness for i in range(1, d.deep)]
-    return xs, ys
+    t = project.dividers.thickness
+    return (_positions(-project.inner_width / 2, compartment_widths(project), t),
+            _positions(-project.inner_depth / 2, compartment_depths(project), t))
 
 
 def divider_top(project: Project) -> float:

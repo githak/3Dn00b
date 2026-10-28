@@ -16,7 +16,8 @@ from .model import (ALONG_V, BACK, BOTTOM, BOX, CYLINDER, FRONT, LEFT, LID, MIN_
                     THREADED, has_screw_lid, has_sliding_lid, has_snap_lid, has_threaded_lid,
                     slide_engage, slide_groove, thread_sizes,
                     lid_ceiling, lid_pilot_depth, lid_screw_positions, wall_corner_zone, clamp_hole, comfortable_margin,
-                    compartment_size, divider_fillet, divider_positions, divider_top,
+                    compartment_depths, compartment_size, compartment_widths, divider_fillet,
+                    has_set_sizes, divider_positions, divider_top,
                     has_dividers, has_frame,
                     hole_edge_clearance, hole_limits, inside_fillet, lip_outer_offset, lip_wall, opening_gap,
                     point_near_opening)
@@ -64,11 +65,26 @@ def _check_inside_corners(p: Project) -> list[Issue]:
 def _check_divider_size(p: Project) -> list[Issue]:
     if not has_dividers(p):
         return []
-    w, d = compartment_size(p)
-    if min(w, d) < 3:
-        return [Issue(ERROR, "There are too many compartments for this size; they'd be too narrow.",
-                      "Use fewer compartments, thinner dividers or a bigger box.")]
-    return []
+    out = []
+    d = p.dividers
+    for sizes, count, chosen, across in ((compartment_widths(p), d.across, d.widths, "wide"),
+                                         (compartment_depths(p), d.deep, d.depths, "deep")):
+        if min(sizes) >= 3:
+            continue
+        if not has_set_sizes(chosen, count):
+            out.append(Issue(ERROR, "There are too many compartments for this size; they'd be "
+                                    "too narrow.", "Use fewer compartments, thinner dividers or a "
+                                                   "bigger box."))
+        elif sizes[-1] < 3:
+            direction = "left to right" if across == "wide" else "front to back"
+            out.append(Issue(ERROR, f"The compartment sizes set {direction} add up to more than "
+                                    f"fits: the last one would be {_mm(sizes[-1])} {across}.",
+                             "Make the others smaller, use fewer compartments, or make the box "
+                             "bigger."))
+        else:
+            out.append(Issue(ERROR, f"A compartment only {_mm(min(sizes))} {across} is too narrow "
+                                    "to print.", "Make it at least 3 mm."))
+    return list({i.message: i for i in out}.values())     # say the same thing once
 
 
 def check_size(project: Project) -> list[Issue]:
@@ -359,8 +375,10 @@ def _check_dividers(p: Project) -> list[Issue]:
     d = p.dividers
     w, dp = compartment_size(p)
     if min(w, dp) < 12:
-        out.append(Issue(WARNING, f"Each compartment is only {_mm(w)} × {_mm(dp)}, which is hard "
-                         "to reach into.", "Use fewer compartments or a bigger box."))
+        same = not has_set_sizes(d.widths, d.across) and not has_set_sizes(d.depths, d.deep)
+        what = "Each compartment is" if same else "The smallest compartments are"
+        out.append(Issue(WARNING, f"{what} only {_mm(w)} × {_mm(dp)}, which is hard "
+                         "to reach into.", "Use fewer or bigger compartments, or a bigger box."))
     if d.thickness < 1.0:
         out.append(Issue(WARNING, f"Dividers of {_mm(d.thickness)} are thin and may break.",
                          "1.2 to 2 mm works well."))

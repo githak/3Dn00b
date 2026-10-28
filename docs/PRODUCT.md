@@ -118,6 +118,13 @@ Defaults I chose myself, which are easy to change:
     so it prints without support. On for new rectangles (where plugs go), off
     for round holes and vents. Frames stay out of the lid's way; a board that
     would hit one is an error.
+- Compartments of different sizes (0.15), requested by the project owner (for
+  example screws of different lengths): per direction, a "Set each width/depth"
+  switch shows one size per compartment except the last, which gets the rest of
+  the room. Resizing the box therefore only changes the last compartment, and
+  changing the number of compartments keeps the sizes already set. Sizes that
+  don't fit, or a compartment under 3 mm, are errors. The tabs now scroll, so
+  many compartments fit on small screens.
 - Push-on lid that follows the box size, with fit presets.
 - Plain-language checks covering impossible sizes, thin walls, holes off the
   edge, holes behind the lid lip, overlapping or too-close holes, a lid that
@@ -149,7 +156,7 @@ much easier, without CAD vocabulary, and without making the interface busier?
 | GUI | PySide6 (Qt 6), LGPL | Native-looking Linux desktop app, installs from pip |
 | 3D preview | pyqtgraph `GLViewWidget` with a custom soft-lit shader | Small, pure Python, works on integrated graphics (OpenGL 2-era shaders) |
 | Geometry | **Manifold** (`manifold3d`), Apache-2.0 | Fast, robust Boolean operations whose results are **always watertight**. That is exactly what an STL needs. It is a small pip wheel with no system dependencies |
-| Project files | Versioned JSON (`"format": "3dn00b-project", "version": 11`) | Human-readable, diffable, forward-compatible |
+| Project files | Versioned JSON (`"format": "3dn00b-project", "version": 12`) | Human-readable, diffable, forward-compatible |
 
 **Why not CadQuery or build123d (OpenCascade)?** They are excellent, but they
 bring a large binary dependency (OCP), a slower and more fragile pipeline for

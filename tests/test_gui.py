@@ -552,3 +552,27 @@ def test_hole_rounding_and_frame_controls(window):
     assert not form.isRowVisible(window.hole_strengthen)    # frames are for walls only
     window.add_hole()
     assert not form.isRowVisible(window.hole_rounding)      # round holes have no corners
+
+
+def test_compartment_size_controls(window):
+    window.div_across.setValue(3)
+    sizes = window.width_sizes
+    assert sizes.box.isVisible() and not sizes.form.isRowVisible(sizes.spins[0])
+    sizes.custom.setChecked(True)
+    d = window.project.dividers
+    assert len(d.widths) == 2 and sizes.form.isRowVisible(sizes.spins[1])
+    assert not sizes.form.isRowVisible(sizes.spins[2])
+    sizes.spins[0].setValue(20)
+    assert window.project.dividers.widths[0] == 20
+    assert "the rest" in sizes.rest.text()
+    window.div_across.setValue(4)                     # keeps the first sizes, adds one
+    assert window.project.dividers.widths[:2] == [20, window.project.dividers.widths[1]]
+    assert len(window.project.dividers.widths) == 3 and sizes.form.isRowVisible(sizes.spins[2])
+    assert "Widths from the left: 20 +" in window.divider_info.text()
+    assert not validation_errors(window)
+    sizes.custom.setChecked(False)
+    assert window.project.dividers.widths == []
+    window.undo_stack.undo()
+    assert len(window.project.dividers.widths) == 3
+    window.div_deep.setValue(1)
+    assert not window.depth_sizes.box.isVisible()     # one row: nothing to size
