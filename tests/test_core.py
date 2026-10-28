@@ -1588,3 +1588,64 @@ def test_set_sizes_are_saved(tmp_path):
         project_io.from_dict(data)
     del data["project"]["dividers"]["widths"]             # older files: all the same size
     assert project_io.from_dict(data).dividers.widths == []
+
+
+# ---- easy-opening tab and finger notch ----------------------------------------------
+
+from threedn00b.model import TAB_REACH, notch_size  # noqa: E402
+
+
+@pytest.mark.parametrize("shape", [BOX, CYLINDER])
+@pytest.mark.parametrize("style", ["push", "snap"])
+def test_lid_tab_and_finger_notch(shape, style):
+    p = default_project(shape)
+    p.lid.enabled, p.lid.style, p.lid.opening = True, style, "both"
+    plain = copy.deepcopy(p)
+    plain.lid.opening = "none"
+    parts, before = geometry.build_parts(p), geometry.build_parts(plain)
+    front = p.outer_depth / 2 if shape == BOX else p.outer_diameter / 2
+    # The tab sticks out at the front, flush with the top of the lid.
+    lo, hi = geometry._bounds(parts.lid)
+    assert lo[1] == pytest.approx(-front - TAB_REACH) and hi[1] == pytest.approx(front, abs=0.01)
+    tab = parts.lid.volume() - before.lid.volume()
+    assert tab == pytest.approx(20 * TAB_REACH * p.lid.thickness, rel=0.15)
+    top = p.outer_height + p.lid.thickness
+    assert parts.lid.ray_cast([0, -front - 3, top + 5], [0, -front - 3, 0])[0].position[2] == \
+        pytest.approx(top)
+    # The notch: the front wall stops lower in the middle.
+    width, depth = notch_size(p)
+
+    def wall_top(x):
+        """Height of the front wall, x mm from the middle (measured mid-wall)."""
+        y = -front + p.wall / 2 if shape == BOX else -math.sqrt((front - p.wall / 2) ** 2 - x * x)
+        return parts.body.ray_cast([x, y, 100], [x, y, 0])[0].position[2]
+    assert wall_top(0) == pytest.approx(p.outer_height - depth, abs=0.01)
+    assert wall_top(width / 2 + 1) == pytest.approx(p.outer_height)
+    assert geometry.overlap_volume(parts.body, parts.lid) < 1e-6
+    assert geometry.piece_count(parts.body) == 1 and geometry.piece_count(parts.lid) == 1
+    assert _edges_shared_twice(parts.body) and _edges_shared_twice(parts.lid)
+    assert not validation.has_errors(validation.check(p, parts))
+    # Printed upside down, the tab lies on the plate with the rest of the top.
+    assert geometry._bounds(parts.printable()["lid"])[0][2] == pytest.approx(0)
+
+
+def test_opening_only_for_lids_with_a_lip(tmp_path):
+    for style in ("sliding", "screwed"):
+        p = default_project(BOX)
+        p.wall = 2.4
+        p.lid.enabled, p.lid.style, p.lid.opening = True, style, "both"
+        plain = copy.deepcopy(p)
+        plain.lid.opening = "none"
+        assert geometry.build_body(p).volume() == pytest.approx(geometry.build_body(plain).volume())
+        assert geometry.build_lid(p).volume() == pytest.approx(geometry.build_lid(plain).volume())
+    p = default_project(BOX)
+    p.lid.enabled, p.lid.opening = True, "tab"
+    path = tmp_path / "tab.3dn00b"
+    project_io.save_project(p, path)
+    assert project_io.load_project(path) == p
+    data = project_io.to_dict(p)
+    data["project"]["lid"]["opening"] = "lever"
+    with pytest.raises(project_io.ProjectFileError):
+        project_io.from_dict(data)
+    del data["project"]["lid"]["opening"]                # older files: nothing extra
+    assert project_io.from_dict(data).lid.opening == "none"

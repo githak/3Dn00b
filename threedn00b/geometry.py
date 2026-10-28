@@ -12,12 +12,13 @@ from dataclasses import dataclass
 import numpy as np
 from manifold3d import CrossSection, Error, JoinType, Manifold, OpType
 
-from .model import (ANGLED, BACK, BOTTOM, BOX, CAP_TOP_GAP, CYLINDER, FRAME_RIM, FRONT, LEFT,
+from .model import (TAB_REACH, TAB_WIDTH, ANGLED, BACK, BOTTOM, BOX, CAP_TOP_GAP, CYLINDER, FRAME_RIM, FRONT, LEFT,
                     LID, RIGHT, ROUND, SCREWS, SIDE, SNAP_BUMP, SNAP_RIDGE, THREADED, THREAD_DEPTH,
                     THREAD_PITCH, VENT, Hole, Project, corner_rounding, divider_fillet,
-                    divider_positions, divider_top, floor_inset, frame_thickness, has_dividers,
-                    has_frame, has_lip, has_screw_lid, has_sliding_lid,
+                    divider_positions, divider_top, floor_inset, frame_thickness, front_span,
+                    has_dividers, has_finger_notch, has_frame, has_lid_tab, has_lip, has_screw_lid, has_sliding_lid,
                     has_snap_lid, has_threaded_lid, inside_fillet, lid_ceiling, lid_pilot_depth,
+                    notch_size,
                     lid_screw_positions, lid_top_z, lip_outer_offset, lip_wall, slide_engage,
                     slide_groove, thread_sizes, vent_openings)
 
@@ -197,6 +198,9 @@ def build_body(project: Project) -> Manifold:
     lid_cut = _lid_cut_in_body(project)
     if lid_cut is not None:
         body = body - lid_cut
+    notch = _finger_notch(project)
+    if notch is not None:
+        body = body - notch
     cutters = [_hole_cutter(project, hole) for hole in project.holes if hole.surface != LID]
     cutters = [c for c in cutters if c is not None]
     if cutters:
@@ -461,7 +465,7 @@ def build_lid(project: Project) -> Manifold | None:
         panel = _prism(outline, lid_opts.thickness, g0 + lid_opts.gap)
         return _cut_lid_holes(project, panel)
     h = project.outer_height
-    lid = _prism(footprint(project), lid_opts.thickness, h)
+    lid = _prism(_lid_outline(project), lid_opts.thickness, h)
     if has_screw_lid(project):
         d = SCREWS[lid_opts.screw].clearance
         holes = [Manifold.cylinder(lid_opts.thickness + 2.0, d / 2, -1.0, _circle_segments(d / 2, 0.4, 16, 48))
@@ -485,6 +489,46 @@ def build_lid(project: Project) -> Manifold | None:
             ridge = _prism(outer, SNAP_RIDGE, z0) - _prism(inner, SNAP_RIDGE + 2, z0 - 1)
             lid = lid + (ridge ^ _snap_selector(project, z0 - 1, z0 + SNAP_RIDGE + 1, 0.0))
     return _cut_lid_holes(project, lid)
+
+
+def _lid_outline(project: Project) -> CrossSection:
+    """The lid seen from above: the box's outline, plus the opening tab if asked for."""
+    outline = footprint(project)
+    if not has_lid_tab(project):
+        return outline
+    width = min(TAB_WIDTH, 0.5 * front_span(project))
+    front = project.outer_depth / 2 if project.shape == BOX else project.outer_diameter / 2
+    r = min(2.5, width / 2)
+    tab = CrossSection.square([width - 2 * r, TAB_REACH + 2.0 - 2 * r], center=True) \
+        .offset(r, JoinType.Round, circular_segments=16) \
+        .translate([0.0, -front - TAB_REACH / 2 + 1.0])
+    # Round the corners where the tab meets the lid, so they don't crack.
+    seg = _circle_segments(2.0, 0.4, 8, 32)
+    return (outline + tab).offset(2.0, JoinType.Round, circular_segments=seg) \
+        .offset(-2.0, JoinType.Round, circular_segments=seg)
+
+
+def _finger_notch(project: Project) -> Manifold | None:
+    """A rounded notch in the top of the front wall, to get a finger under the lid."""
+    if not has_finger_notch(project):
+        return None
+    width, depth = notch_size(project)
+    if depth <= 0:
+        return None
+    h, wall = project.outer_height, project.wall
+    r = min(depth, width / 2)
+    shape = CrossSection.square([width - 2 * r, 2 * depth + 2.0 - 2 * r], center=True) \
+        .offset(r, JoinType.Round, circular_segments=_circle_segments(r, 0.4, 16, 48)) \
+        .translate([0.0, h + 1.0])                      # bottom at h - depth
+    if project.shape == BOX:
+        front, reach = project.outer_depth / 2, wall + 0.5
+    else:
+        front = project.outer_diameter / 2
+        inner = front - wall
+        reach = wall + inner - math.sqrt(inner ** 2 - (width / 2) ** 2) + 0.5
+    # The shape is drawn in x/z; extruding along z and turning it makes it run along y.
+    return (Manifold.extrude(shape, reach + 1.0).rotate([90.0, 0.0, 0.0])
+            .translate([0.0, -front + reach, 0.0]))
 
 
 def _cut_lid_holes(project: Project, lid: Manifold) -> Manifold:

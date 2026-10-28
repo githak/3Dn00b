@@ -21,7 +21,7 @@ from .. import APP_NAME, __version__, geometry, mounts, picking, project_io, val
 from ..model import (ALONG_U, ALONG_V, BOTTOM, BOX, CYLINDER, FIT_LABELS, FIT_PRESETS,
                      FRONT, HOLE_DIAMETER_RANGE, HOLE_KIND_LABELS, INSIDE, LID, MIN_EDGE,
                      OUTSIDE, RECT, ROUND, SIDE, SIZE_RANGE, SURFACE_LABELS, VENT,
-                     DIVIDER_RANGE, INSIDE_CORNER_LABELS, LID_STYLE_LABELS, SHARP, MAX_COMPARTMENTS, PUSH_ON, SCREWED, SCREWS, SLIDING,
+                     DIVIDER_RANGE, INSIDE_CORNER_LABELS, OPENING_LABELS, LID_STYLE_LABELS, SHARP, MAX_COMPARTMENTS, PUSH_ON, SCREWED, SCREWS, SLIDING,
                      SNAP, THREADED, TRAY_TEMPLATE, WALL_RANGE, Hole, Project,
                      clamp_hole, compartment_depths, compartment_widths, default_project,
                      has_set_sizes, hole_limits, resized_sizes)
@@ -650,6 +650,17 @@ class MainWindow(QMainWindow):
             lambda v: self.edit("Change lip depth", lambda p: setattr(p.lid, "lip_height", v),
                                 merge="lip"))
         form.addRow("Lip depth", self.lip_height)
+        self.lid_opening = QComboBox()
+        for key, text in OPENING_LABELS.items():
+            self.lid_opening.addItem(text, key)
+        self.lid_opening.setToolTip(
+            "Makes a tight lid easier to open without prying at it:\n"
+            "a tab sticks out of the lid at the front to push up with your thumb,\n"
+            "a notch in the top of the front wall lets a finger get under the lid.")
+        self.lid_opening.activated.connect(
+            lambda _: self.edit("Change lid opening",
+                                lambda p: setattr(p.lid, "opening", self.lid_opening.currentData())))
+        form.addRow("Easy opening", self.lid_opening)
         layout.addWidget(self.lid_box)
         self.lid_tip = hint("")
         layout.addWidget(self.lid_tip)
@@ -766,6 +777,8 @@ class MainWindow(QMainWindow):
         self.gap_spin.setToolTip("Extra room between the threads" if style == THREADED else
                                  "Space between the lid and the walls, on each side")
         self.lid_form.setRowVisible(self.lip_height, style in (PUSH_ON, SNAP))
+        self.lid_form.setRowVisible(self.lid_opening, style in (PUSH_ON, SNAP))
+        set_quietly(self.lid_opening, p.lid.opening)
         self.lid_style_hint.setText(LID_STYLE_HINTS[style])
         upside_down = "\n\nThe lid is exported upside down, which is the best way to print it."
         fit_tip = ("Normal fits most printers. If your lid ends up too tight, choose Loose and "

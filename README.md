@@ -8,7 +8,7 @@ Software for people getting into 3D printing and want to start with something ea
 sizes in millimetres, add holes and a lid, and export files your slicer can
 print. No sketches, no constraints, no feature trees.
 
-## What it can do (version 0.15)
+## What it can do (version 0.16)
 
 - **Box** (with rounded corners) or **round container**.
 - Sizes as **outside size** or **inside space**, with a single switch.
@@ -18,6 +18,10 @@ print. No sketches, no constraints, no feature trees.
   angled (45°), where the walls meet the floor and each other, and where
   dividers meet the floor, the walls and each other. That spreads the load where
   printed boxes usually crack, and makes the inside easier to clean.
+- **Easy opening** for push-on and snap-on lids: a tab that sticks out of the lid
+  at the front, so you can push it up with your thumb, and/or a finger notch in
+  the top of the front wall. Both work without prying at the lid, so nothing
+  breaks.
 - **Compartments**: split a box into compartments (for example 3 × 2), full
   height or lower. They're the same size unless you tick **Set each width** or
   **Set each depth** and type the sizes: the last compartment gets the rest of
@@ -73,7 +77,7 @@ Download `3dn00b_<version>-1_amd64.deb` from the
 [Releases page](https://github.com/githak/3Dn00b/releases) and install it:
 
 ```bash
-sudo apt install ./3dn00b_0.15.0-1_amd64.deb
+sudo apt install ./3dn00b_0.16.0-1_amd64.deb
 ```
 
 That's all: 3Dn00b appears in your applications menu, `.3dn00b` project files open

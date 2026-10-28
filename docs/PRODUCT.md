@@ -125,6 +125,15 @@ Defaults I chose myself, which are easy to change:
   changing the number of compartments keeps the sizes already set. Sizes that
   don't fit, or a compartment under 3 mm, are errors. The tabs now scroll, so
   many compartments fit on small screens.
+- Easy opening (0.16), requested by the project owner because tight push-on and
+  snap-on lids are hard to get off: an "Easy opening" choice adds a tab to the
+  front of the lid (20 mm wide, sticking out 5 mm, as thick as the lid and flush
+  with its top, so it prints flat; rounded where it joins the lid so it doesn't
+  crack), a finger notch in the top of the front wall (16 mm wide, 3 mm deep and
+  never deeper than the lip, rounded at the bottom), or both. Neither weakens the
+  lid's hold, and both are better than prying with a fingernail or a tool. Off
+  by default so existing designs don't change. A looser fit remains the other
+  answer for a lid that is simply too tight.
 - Push-on lid that follows the box size, with fit presets.
 - Plain-language checks covering impossible sizes, thin walls, holes off the
   edge, holes behind the lid lip, overlapping or too-close holes, a lid that
@@ -156,7 +165,7 @@ much easier, without CAD vocabulary, and without making the interface busier?
 | GUI | PySide6 (Qt 6), LGPL | Native-looking Linux desktop app, installs from pip |
 | 3D preview | pyqtgraph `GLViewWidget` with a custom soft-lit shader | Small, pure Python, works on integrated graphics (OpenGL 2-era shaders) |
 | Geometry | **Manifold** (`manifold3d`), Apache-2.0 | Fast, robust Boolean operations whose results are **always watertight**. That is exactly what an STL needs. It is a small pip wheel with no system dependencies |
-| Project files | Versioned JSON (`"format": "3dn00b-project", "version": 12`) | Human-readable, diffable, forward-compatible |
+| Project files | Versioned JSON (`"format": "3dn00b-project", "version": 13`) | Human-readable, diffable, forward-compatible |
 
 **Why not CadQuery or build123d (OpenCascade)?** They are excellent, but they
 bring a large binary dependency (OCP), a slower and more fragile pipeline for
