@@ -8,18 +8,21 @@ Software for people getting into 3D printing and want to start with something ea
 sizes in millimetres, add holes and a lid, and export files your slicer can
 print. No sketches, no constraints, no feature trees.
 
-## What it can do (version 0.19)
+## What it can do (version 0.20)
 
 - **Templates** to start from, already sized to fit. Pick one under **What are you making?**
   in the Shape tab, then change anything you like; Undo takes you back.
   - *Cases for boards* (posts, openings for the sockets, a lid): Raspberry Pi
-    3 / 4 / 5 (also with a 30 mm fan in the lid), Pi 3 A+, Pi Zero / Zero 2 W,
-    two Pi Zero 2 W stacked crosswise, Pi Pico, Arduino Uno and Mega 2560, 30-pin
-    ESP32 DevKit, and a project box for your own board.
-  - *Storage*: storage box, parts tray, screw sorter, AA battery box, weekly pill
-    box, business card box, dice box, money box.
-  - *Around the house*: desk organiser, charging box, plant pot with drainage
-    holes, pencil cup, jar with a screw-on lid, pencil box.
+    3 / 4 / 5 (also with a 30 mm fan or a GPIO ribbon-cable slot in the lid),
+    Pi 3 A+, Pi Zero / Zero 2 W, two Pi Zero 2 W stacked crosswise, Pi Pico,
+    Arduino Uno and Mega 2560, 30-pin ESP32 DevKit, a half-size breadboard box,
+    and a project box for your own board.
+  - *Storage*: storage box, parts tray, screw sorter, 4 × 4 parts box, 3 × 3
+    craft box, AA battery box, weekly pill box, business card box, dice box,
+    guitar pick box, small screw-top tin, money box.
+  - *Around the house*: desk organiser, remote control holder, charging box, tea
+    bag box, plant pot with drainage holes, pencil cup, toothbrush cup, soap
+    dish, key tray, jar with a screw-on lid, pencil box.
 - **Box** (with rounded corners) or **round container**.
 - Sizes as **outside size** or **inside space**, with a single switch.
   The other measurement is always shown.
@@ -87,7 +90,7 @@ Download `3dn00b_<version>-1_amd64.deb` from the
 [Releases page](https://github.com/githak/3Dn00b/releases) and install it:
 
 ```bash
-sudo apt install ./3dn00b_0.19.1-1_amd64.deb
+sudo apt install ./3dn00b_0.20.0-1_amd64.deb
 ```
 
 That's all: 3Dn00b appears in your applications menu, `.3dn00b` project files open

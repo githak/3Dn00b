@@ -158,6 +158,10 @@ Defaults I chose myself, which are easy to change:
   a weekly pill box, business card box, dice box, money box (coin slot in a
   screwed-down lid), desk organiser, charging box and a plant pot with drainage
   holes.
+  Added in 0.20: a Pi 3 / 4 / 5 case with a ribbon-cable slot in the lid (as close
+  to the GPIO header as the lid's lip allows), a half-size breadboard box, a 4 × 4
+  parts box, 3 × 3 craft box, guitar pick box, small screw-top tin, soap dish,
+  key tray, toothbrush cup, tea bag box and remote control holder (35 templates).
 - Push-on lid that follows the box size, with fit presets.
 - Plain-language checks covering impossible sizes, thin walls, holes off the
   edge, holes behind the lid lip, overlapping or too-close holes, a lid that

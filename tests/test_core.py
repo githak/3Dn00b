@@ -1671,7 +1671,8 @@ def test_templates_are_ready_to_print(key, tmp_path):
     assert templates.from_template(key) is not p      # a fresh copy every time
 
 
-@pytest.mark.parametrize("key", templates.ELECTRONICS)
+@pytest.mark.parametrize("key", [k for k in templates.ELECTRONICS
+                                 if templates.from_template(k).mounts])   # boards on posts
 def test_board_openings_face_the_sockets(key):
     """Every wall opening is next to a board edge and at the height of its sockets."""
     p = templates.from_template(key)

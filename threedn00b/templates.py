@@ -15,7 +15,7 @@ from typing import Callable
 from . import mounts
 from .model import (BACK, BOTTOM, BOX, CYLINDER, FRONT, INSIDE, LEFT, LID, RECT, RIGHT,
                     SCREWED, SLIDING, SNAP, THREADED, VENT, Dividers, Hole, Mount, Project,
-                    default_project)
+                    clamp_hole, default_project)
 
 
 @dataclass(frozen=True)
@@ -64,11 +64,12 @@ def _top(p: Project, m: Mount) -> float:
 
 # ---- boards -------------------------------------------------------------------
 
-def pi_case(fan: bool = False) -> Project:
+def pi_case(fan: bool = False, gpio: bool = False) -> Project:
     # 85 x 56 mm. Room around it: the USB and network sockets stick out about
     # 2 mm on the right, the SD card on the left.
-    p = _box("Raspberry Pi 5 case with fan" if fan else "Raspberry Pi case",
-             85 + 2.0 + 2.5, 56 + 3.0, 32.0)
+    name = ("Raspberry Pi 5 case with fan" if fan else
+            "Raspberry Pi case with GPIO slot" if gpio else "Raspberry Pi case")
+    p = _box(name, 85 + 2.0 + 2.5, 56 + 3.0, 32.0)
     m = _board(p, "rpi-ab", 6.0, u=(2.0 - 2.5) / 2, v=0.0)
     top, low = _top(p, m), mounts.board_bottom(p, m)
     # Power, HDMI and audio along the front edge (Pi 3, 4 and 5 all fit in one opening).
@@ -92,6 +93,14 @@ def pi_case(fan: bool = False) -> Project:
     else:
         # Air out over the processor.
         p.holes.append(Hole(surface=LID, kind=VENT, width=40.0, height=16.0, rounding=1.0))
+    if gpio:
+        # A slot in the lid for a ribbon cable, as close to the 40-pin header as the
+        # lid's lip allows (the header is centred between the mounting holes along the
+        # back edge; the ribbon bends over the gap).
+        x, y = _floor_point(m, 32.5, 52.5)
+        slot = Hole(surface=LID, kind=RECT, width=56.0, height=6.0, u=x, v=y, rounding=1.5)
+        slot.u, slot.v = clamp_hole(p, slot)
+        p.holes.append(slot)
     return p
 
 
@@ -212,6 +221,15 @@ def project_box() -> Project:
     return p
 
 
+def breadboard_box() -> Project:
+    # A half-size (400-point) breadboard, 82.5 x 54.5 mm, stuck to the floor with its
+    # own sticky back, with holes at both ends for wires.
+    p = _box("Breadboard box", 86.0, 58.0, 35.0)
+    z = p.bottom + 15.0 - p.outer_height / 2
+    p.holes = [Hole(surface=LEFT, diameter=10.0, v=z), Hole(surface=RIGHT, diameter=10.0, v=z)]
+    return p
+
+
 # ---- everyday containers ---------------------------------------------------------
 
 def storage_box() -> Project:
@@ -318,6 +336,80 @@ def charging_box() -> Project:
     return p
 
 
+def parts_box() -> Project:
+    # Sixteen small compartments for beads, bits, resistors or LEGO pieces.
+    p = _box("Parts box", 4 * 25.0 + 3 * 1.2, 4 * 25.0 + 3 * 1.2, 25.0, corner=3.0)
+    p.wall = p.bottom = 1.6
+    p.lid.style = SNAP
+    p.inside_corners, p.inside_corner_size = "rounded", 3.0
+    p.dividers = Dividers(across=4, deep=4, thickness=1.2)
+    return p
+
+
+def craft_box() -> Project:
+    p = _box("Craft box", 3 * 45.0 + 2 * 1.6, 3 * 40.0 + 2 * 1.6, 40.0, corner=4.0)
+    p.wall = p.bottom = 1.6
+    p.dividers = Dividers(across=3, deep=3, thickness=1.6)
+    return p
+
+
+def pick_box() -> Project:
+    # Guitar picks are about 26 x 31 mm.
+    p = _box("Guitar pick box", 36.0, 36.0, 16.0, corner=4.0)
+    p.lid.style, p.lid.lip_height = SNAP, 4.0
+    return p
+
+
+def small_tin() -> Project:
+    p = default_project(CYLINDER)
+    p.name, p.diameter, p.height = "Small screw-top tin", 45.0, 30.0
+    p.lid.enabled, p.lid.style = True, THREADED
+    p.inside_corners, p.inside_corner_size = "rounded", 3.0
+    return p
+
+
+def soap_dish() -> Project:
+    p = Project(shape=BOX, name="Soap dish", size_mode=INSIDE, width=100.0, depth=70.0,
+                height=15.0, wall=2.0, bottom=2.0, corner_radius=8.0)
+    p.inside_corners, p.inside_corner_size = "rounded", 4.0
+    # Slots in the bottom so the water runs off.
+    p.holes = [Hole(surface=BOTTOM, kind=VENT, width=70.0, height=40.0, slot=3.0, gap=4.0,
+                    rounding=1.5)]
+    return p
+
+
+def key_tray() -> Project:
+    p = default_project(CYLINDER)
+    p.name, p.diameter, p.height = "Key tray", 120.0, 20.0
+    p.inside_corners, p.inside_corner_size = "rounded", 6.0
+    return p
+
+
+def toothbrush_cup() -> Project:
+    p = default_project(CYLINDER)
+    p.name, p.diameter, p.height = "Toothbrush cup", 70.0, 100.0
+    p.inside_corners, p.inside_corner_size = "rounded", 5.0
+    p.holes = [Hole(surface=BOTTOM, diameter=6.0)]                 # lets water drain
+    return p
+
+
+def tea_box() -> Project:
+    # Two kinds of tea bags in their paper envelopes (about 60 x 75 mm).
+    p = _box("Tea bag box", 2 * 66.0 + 1.6, 82.0, 70.0, corner=4.0)
+    p.dividers = Dividers(across=2, thickness=1.6)
+    return p
+
+
+def remote_holder() -> Project:
+    # Three slots for remote controls, standing up.
+    p = Project(shape=BOX, name="Remote control holder", size_mode=INSIDE,
+                width=3 * 55.0 + 2 * 2.0, depth=35.0, height=70.0, wall=2.0, bottom=2.0,
+                corner_radius=4.0)
+    p.inside_corners, p.inside_corner_size = "rounded", 4.0
+    p.dividers = Dividers(across=3, thickness=2.0)
+    return p
+
+
 TEMPLATES = {
     "pi": Template("Raspberry Pi 3 / 4 / 5 case",
                    "Posts for the board, openings for power, HDMI, USB, network and the SD card, "
@@ -326,6 +418,9 @@ TEMPLATES = {
                         "Like the Pi 3 / 4 / 5 case, with a 30 mm fan in the lid blowing onto "
                         "the processor. The fan's wires go to the Pi's 5 V and ground pins.",
                         lambda: pi_case(fan=True)),
+    "pi-gpio": Template("Raspberry Pi 3 / 4 / 5 case with GPIO slot",
+                        "Like the Pi 3 / 4 / 5 case, with a slot in the lid over the 40-pin "
+                        "header for a ribbon cable.", lambda: pi_case(gpio=True)),
     "pi-zero": Template("Raspberry Pi Zero / Zero 2 W case",
                         "Posts, openings for mini HDMI, USB, power, the SD card and the camera "
                         "cable, and a lid with an air vent.", pi_zero_case),
@@ -351,6 +446,9 @@ TEMPLATES = {
     "project-box": Template("Project box for your own board",
                             "Posts for a 4-hole board (set its size and hole spacing in the "
                             "Posts tab) and a cable hole at each end.", project_box),
+    "breadboard": Template("Half-size breadboard box",
+                           "For a 400-point breadboard (stick it down with its own sticky "
+                           "back), with holes for wires at both ends.", breadboard_box),
     "storage": Template("Storage box with lid",
                         "A plain box with a push-on lid that's easy to open.", storage_box),
     "tray": Template("Shallow tray with compartments",
@@ -375,6 +473,22 @@ TEMPLATES = {
                          "a slot in the lid for a phone cable.", charging_box),
     "plant-pot": Template("Plant pot",
                           "A round pot with drainage holes. Stand it on a saucer.", plant_pot),
+    "parts": Template("Parts box (4 × 4)",
+                      "Sixteen small compartments for beads, bits or resistors, with a "
+                      "snap-on lid.", parts_box),
+    "craft": Template("Craft box (3 × 3)", "Nine compartments with a push-on lid.", craft_box),
+    "picks": Template("Guitar pick box", "A small box with a snap-on lid.", pick_box),
+    "tin": Template("Small screw-top tin",
+                    "A little round tin with a threaded lid, for earbuds or pills.", small_tin),
+    "soap": Template("Soap dish", "Slots in the bottom let the water run off, so put it where "
+                     "it can drip, such as the edge of the sink.", soap_dish),
+    "keys": Template("Key tray", "A shallow round tray for keys and coins.", key_tray),
+    "toothbrush": Template("Toothbrush cup", "A tall cup with a hole for water to drain.",
+                           toothbrush_cup),
+    "tea": Template("Tea bag box", "Two compartments for tea bags in envelopes, with a lid.",
+                    tea_box),
+    "remotes": Template("Remote control holder", "Three slots for remote controls.",
+                        remote_holder),
     "pencil-cup": Template("Pencil cup", "A round cup without a lid.", pencil_cup),
     "jar": Template("Jar with screw-on lid", "A round jar with a threaded lid.", jar),
     "pencil-box": Template("Pencil box with sliding lid",
@@ -382,10 +496,12 @@ TEMPLATES = {
 }
 # How the list is grouped in the app: (heading, template keys).
 GROUPS = (
-    ("Cases for boards", ("pi", "pi5-fan", "pi-3a", "pi-zero", "pi-zero-stack", "pico",
-                          "arduino", "mega", "esp32", "project-box")),
-    ("Storage", ("storage", "tray", "sorter", "batteries", "pills", "cards", "dice", "money")),
-    ("Around the house", ("desk", "charging", "plant-pot", "pencil-cup", "jar", "pencil-box")),
+    ("Cases for boards", ("pi", "pi-gpio", "pi5-fan", "pi-3a", "pi-zero", "pi-zero-stack", "pico",
+                          "arduino", "mega", "esp32", "breadboard", "project-box")),
+    ("Storage", ("storage", "tray", "sorter", "parts", "craft", "batteries", "pills", "cards",
+                 "dice", "picks", "tin", "money")),
+    ("Around the house", ("desk", "remotes", "charging", "tea", "plant-pot", "pencil-cup",
+                          "toothbrush", "soap", "keys", "jar", "pencil-box")),
 )
 ELECTRONICS = GROUPS[0][1]
 
