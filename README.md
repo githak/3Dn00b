@@ -10,7 +10,7 @@ print. No sketches, no constraints, no feature trees.
 
 ## What it can do (version 0.19)
 
-- **Templates** to start from, already sized to fit. Pick one under **Template**
+- **Templates** to start from, already sized to fit. Pick one under **What are you making?**
   in the Shape tab, then change anything you like; Undo takes you back.
   - *Cases for boards* (posts, openings for the sockets, a lid): Raspberry Pi
     3 / 4 / 5 (also with a 30 mm fan in the lid), Pi 3 A+, Pi Zero / Zero 2 W,
@@ -87,7 +87,7 @@ Download `3dn00b_<version>-1_amd64.deb` from the
 [Releases page](https://github.com/githak/3Dn00b/releases) and install it:
 
 ```bash
-sudo apt install ./3dn00b_0.19.0-1_amd64.deb
+sudo apt install ./3dn00b_0.19.1-1_amd64.deb
 ```
 
 That's all: 3Dn00b appears in your applications menu, `.3dn00b` project files open

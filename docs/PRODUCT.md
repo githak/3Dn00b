@@ -135,7 +135,8 @@ Defaults I chose myself, which are easy to change:
   by default so existing designs don't change. A looser fit remains the other
   answer for a lid that is simply too tight.
 - Templates (0.17), requested by the project owner so beginners don't size a
-  case by trial and error: a Template list in the Shape tab, under the name.
+  case by trial and error: a template list in the Shape tab, right under the Box
+  and Round container buttons, so a template is the third way to start.
   Board cases are built from the board catalogue, so the box fits the board with
   1.5 to 2.5 mm of room (more where a socket sticks out, such as the Arduino's
   USB socket), the posts match the holes, and openings sit in front of the

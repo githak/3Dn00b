@@ -293,14 +293,8 @@ class MainWindow(QMainWindow):
             btn.clicked.connect(lambda _=False, s=shape: self.edit("Change shape", lambda p: p.set_shape(s)))
             row.addWidget(btn)
         layout.addLayout(row)
-
-        form = QFormLayout()
-        self.name_edit = QLineEdit()
-        self.name_edit.textEdited.connect(
-            lambda t: self.edit("Rename", lambda p: setattr(p, "name", t), merge="name"))
-        form.addRow("Name", self.name_edit)
         self.template_combo = QComboBox()
-        self.template_combo.addItem("Start from a template…", None)
+        self.template_combo.addItem("…or start from a template", None)
         for heading, keys in templates.GROUPS:
             # A heading that can't be picked, then the group's templates.
             self.template_combo.addItem(heading, None)
@@ -317,7 +311,14 @@ class MainWindow(QMainWindow):
         self.template_combo.setToolTip("Ready-made boxes, sized to fit: you can change "
                                        "everything afterwards.")
         self.template_combo.activated.connect(self._on_template)
-        form.addRow("Template", self.template_combo)
+        self.template_combo.setMinimumHeight(34)
+        layout.addWidget(self.template_combo)
+
+        form = QFormLayout()
+        self.name_edit = QLineEdit()
+        self.name_edit.textEdited.connect(
+            lambda t: self.edit("Rename", lambda p: setattr(p, "name", t), merge="name"))
+        form.addRow("Name", self.name_edit)
         layout.addLayout(form)
 
         layout.addWidget(QLabel("<b>The sizes below are</b>"))
