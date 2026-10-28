@@ -1209,3 +1209,109 @@ def test_custom_boards_round_trip(tmp_path):
     path = tmp_path / "boards.3dn00b"
     project_io.save_project(p, path)
     assert project_io.load_project(path) == p
+
+
+# ---- rounded / angled inside corners ---------------------------------------------
+
+from threedn00b.model import inside_fillet  # noqa: E402
+
+
+def corner_box(style, size, shape=BOX, **kw):
+    p = default_project(shape)
+    p.corner_radius = 0
+    p.inside_corners, p.inside_corner_size = style, size
+    for k, v in kw.items():
+        setattr(p, k, v)
+    return p
+
+
+@pytest.mark.parametrize("shape", [BOX, CYLINDER])
+def test_inside_corner_profiles(shape):
+    for style, at_half, at_two in (("angled", 3.5, 2.0), ("rounded", 4 - math.sqrt(16 - 3.5 ** 2),
+                                                          4 - math.sqrt(12))):
+        p = corner_box(style, 4.0, shape)
+        body = geometry.build_body(p)
+        wall = p.inner_width / 2
+
+        def inside_at(z):
+            return body.ray_cast([0, 0, z], [100, 0, z])[0].position[0]
+        # The curve is made of short straight steps: within 0.05 mm of a true circle.
+        assert inside_at(p.bottom + 0.5) == pytest.approx(wall - at_half, abs=0.05)
+        assert inside_at(p.bottom + 2) == pytest.approx(wall - at_two, abs=0.05)
+        assert inside_at(p.bottom + 6) == pytest.approx(wall, abs=1e-6)       # normal wall above
+        assert geometry.piece_count(body) == 1 and _edges_shared_twice(body)
+
+
+def test_inside_corners_add_material_where_expected():
+    sharp = geometry.build_body(corner_box("sharp", 3.0)).volume()
+    angled = geometry.build_body(corner_box("angled", 3.0)).volume()
+    rounded = geometry.build_body(corner_box("rounded", 3.0)).volume()
+    p = corner_box("angled", 3.0)
+    perimeter = 2 * (p.inner_width + p.inner_depth)
+    # Roughly a 3 mm triangle (angled) or the area outside a quarter circle (rounded)
+    # all along the floor edge, plus the rounded vertical corners.
+    vertical = 4 * 9 * (1 - math.pi / 4) * (p.inner_height - 3)
+    assert angled - sharp == pytest.approx(perimeter * 4.5 + vertical, rel=0.1)
+    assert rounded - sharp == pytest.approx(perimeter * 9 * (1 - math.pi / 4) + vertical, rel=0.1)
+
+
+def test_vertical_inside_corners_are_rounded_too():
+    p = corner_box("rounded", 5.0)                     # outside corners sharp, inside 5 mm
+    assert p.inner_corner_radius == 5.0
+    body = geometry.build_body(p)
+    z, d = 20.0, 100.0
+    hit = body.ray_cast([0, 0, z], [d, d * p.inner_depth / p.inner_width, z])[0].position
+    sharp_corner = math.hypot(p.inner_width / 2, p.inner_depth / 2)
+    assert math.hypot(hit[0], hit[1]) < sharp_corner - 1.5        # the corner is filled in
+
+
+def test_things_keep_clear_of_the_inside_corners():
+    p = corner_box("rounded", 5.0)
+    lim = wall_limits(p, FRONT, 6)
+    assert lim[2] == pytest.approx(p.bottom + 5 + 3 + 0.4 - p.outer_height / 2)   # above the curve
+    hole = Hole(BOTTOM, 6, 34, 0)                      # floor hole in the curved part
+    p.holes = [hole]
+    issue = next(i for i in validation.check(p) if i.hole_id)
+    assert issue.level == "error"
+    hole.u, hole.v = issue.fix
+    assert not validation.has_errors(validation.check(p))
+    p.holes = []
+    m = mounts.new_mount(p, "single")
+    m.u = 35
+    p.mounts = [m]
+    assert validation.has_errors(validation.check(p))  # the post would stand on the slope
+
+
+@pytest.mark.parametrize("lid", ["push", "snap", "sliding", "screwed"])
+def test_inside_corners_work_with_every_box_lid(lid):
+    p = corner_box("rounded", 4.0, corner_radius=2.0, dividers=Dividers(across=2))
+    p.lid.enabled, p.lid.style = True, lid
+    parts = geometry.build_parts(p)
+    assert geometry.overlap_volume(parts.body, parts.lid) < 1e-6
+    assert not validation.has_errors(validation.check(p, parts))
+
+
+def test_inside_corners_with_threaded_lid_still_unscrew():
+    p = corner_box("rounded", 3.0, CYLINDER)
+    p.lid.enabled, p.lid.style = True, "threaded"
+    parts = geometry.build_parts(p)
+    for deg in range(0, 721, 60):
+        moved = parts.lid.rotate([0, 0, deg]).translate([0, 0, THREAD_PITCH * deg / 360])
+        assert geometry.overlap_volume(parts.body, moved) < 0.05
+    assert not validation.has_errors(validation.check(p, parts))
+
+
+def test_inside_corner_size_checks_and_saving(tmp_path):
+    assert validation.has_errors(validation.check(corner_box("angled", 30.0)))   # 56 mm deep inside
+    assert not validation.has_errors(validation.check(corner_box("angled", 20.0)))
+    p = corner_box("angled", 2.5)
+    assert inside_fillet(p) == 2.5 and inside_fillet(corner_box("sharp", 2.5)) == 0
+    path = tmp_path / "corners.3dn00b"
+    project_io.save_project(p, path)
+    assert project_io.load_project(path) == p
+    data = project_io.to_dict(p)
+    data["project"]["inside_corners"] = "wavy"
+    with pytest.raises(project_io.ProjectFileError):
+        project_io.from_dict(data)
+    del data["project"]["inside_corners"]           # older files: sharp corners
+    assert project_io.from_dict(data).inside_corners == "sharp"

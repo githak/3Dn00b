@@ -20,7 +20,7 @@ from .. import APP_NAME, __version__, geometry, mounts, picking, project_io, val
 from ..model import (ALONG_U, ALONG_V, BOTTOM, BOX, CYLINDER, FIT_LABELS, FIT_PRESETS,
                      FRONT, HOLE_DIAMETER_RANGE, HOLE_KIND_LABELS, INSIDE, LID, MIN_EDGE,
                      OUTSIDE, RECT, ROUND, SIDE, SIZE_RANGE, SURFACE_LABELS, VENT,
-                     DIVIDER_RANGE, LID_STYLE_LABELS, MAX_COMPARTMENTS, PUSH_ON, SCREWED, SCREWS, SLIDING,
+                     DIVIDER_RANGE, INSIDE_CORNER_LABELS, LID_STYLE_LABELS, SHARP, MAX_COMPARTMENTS, PUSH_ON, SCREWED, SCREWS, SLIDING,
                      SNAP, THREADED, TRAY_TEMPLATE, WALL_RANGE, Hole, Project,
                      clamp_hole, compartment_size, default_project, hole_limits)
 from .viewer import Viewer
@@ -307,6 +307,23 @@ class MainWindow(QMainWindow):
         form.addRow("Wall thickness", self.wall_spin)
         form.addRow("Bottom thickness", self.bottom_spin)
         form.addRow(self.corner_label, self.corner_spin)
+        self.inside_corners = QComboBox()
+        for key, text in INSIDE_CORNER_LABELS.items():
+            self.inside_corners.addItem(text, key)
+        self.inside_corners.setToolTip("Where the walls meet the floor (and each other). Rounded or "
+                                       "angled corners are stronger and easier to clean.")
+        self.inside_corners.activated.connect(
+            lambda _: self.edit("Change inside corners", lambda p: setattr(
+                p, "inside_corners", self.inside_corners.currentData())))
+        self.inside_corner_size = spin(0.5, 20.0, step=0.5)
+        self.inside_corner_size.setToolTip("How far the rounding or bevel reaches up the wall "
+                                           "and across the floor")
+        self.inside_corner_size.valueChanged.connect(
+            lambda v: self.edit("Change inside corners",
+                                lambda p: setattr(p, "inside_corner_size", v), merge="inside_size"))
+        form.addRow("Inside corners", self.inside_corners)
+        form.addRow("Corner size", self.inside_corner_size)
+        self.shape_form = form
         layout.addLayout(form)
         for widget, attr, label in (
                 (self.width_spin, "width", "Change width"),
@@ -688,6 +705,9 @@ class MainWindow(QMainWindow):
             widget.setVisible(is_box)
         self.diameter_spin.setVisible(not is_box)
         self.diameter_label.setVisible(not is_box)
+        set_quietly(self.inside_corners, p.inside_corners)
+        set_quietly(self.inside_corner_size, p.inside_corner_size)
+        self.shape_form.setRowVisible(self.inside_corner_size, p.inside_corners != SHARP)
         self._refresh_size_summary()
         self._refresh_dividers()
 

@@ -12,13 +12,13 @@ from dataclasses import dataclass
 import numpy as np
 from manifold3d import CrossSection, Error, JoinType, Manifold, OpType
 
-from .model import (BACK, BOTTOM, BOX, CYLINDER, FRONT, LEFT, LID, RECT, RIGHT, SIDE, VENT,
-                    SCREWS, Hole, Project, divider_positions, divider_top, has_dividers, has_lip,
-                    CAP_TOP_GAP, THREAD_DEPTH, THREAD_PITCH, THREADED, has_screw_lid,
-                    has_sliding_lid, has_snap_lid, has_threaded_lid, lid_pilot_depth, thread_sizes,
-                    lid_screw_positions, lid_top_z, slide_engage, slide_groove, SNAP_BUMP,
-                    SNAP_RIDGE,
-                    lip_outer_offset, lip_wall, vent_openings)
+from .model import (ANGLED, BACK, BOTTOM, BOX, CAP_TOP_GAP, CYLINDER, FRONT, LEFT, LID, RECT,
+                    RIGHT, SCREWS, SIDE, SNAP_BUMP, SNAP_RIDGE, THREADED, THREAD_DEPTH,
+                    THREAD_PITCH, VENT, Hole, Project, divider_positions, divider_top,
+                    floor_inset, has_dividers, has_lip, has_screw_lid, has_sliding_lid,
+                    has_snap_lid, has_threaded_lid, inside_fillet, lid_pilot_depth,
+                    lid_screw_positions, lid_top_z, lip_outer_offset, lip_wall, slide_engage,
+                    slide_groove, thread_sizes, vent_openings)
 
 
 @dataclass
@@ -61,7 +61,11 @@ def footprint(project: Project, inset: float = 0.0) -> CrossSection | None:
     d = project.outer_depth - 2 * inset
     if w <= 0 or d <= 0:
         return None
-    rad = max(0.0, min(project.outer_corner_radius - inset, w / 2, d / 2))
+    rad = project.outer_corner_radius - inset
+    if inset >= project.wall:
+        # Inside the walls, corners are at least as round as the inside corners.
+        rad = max(rad, inside_fillet(project) - (inset - project.wall))
+    rad = max(0.0, min(rad, w / 2, d / 2))
     core_w, core_d = w - 2 * rad, d - 2 * rad
     if rad < 0.05:
         return CrossSection.square([w, d], center=True)
@@ -71,6 +75,29 @@ def footprint(project: Project, inset: float = 0.0) -> CrossSection | None:
     else:
         core = CrossSection.square([core_w, core_d], center=True)
     return core.offset(rad, JoinType.Round, circular_segments=_circle_segments(rad, 0.5, 16, 128))
+
+
+def _cavity(project: Project) -> Manifold | None:
+    """The inside of the box, with the floor edge rounded or angled if asked for.
+
+    Near the floor the inside is built as a loft through outlines that shrink
+    towards the floor (each step is the convex hull of two thin slices).
+    """
+    h, z0 = project.outer_height, project.bottom
+    f = min(inside_fillet(project), h - z0)
+    upper = _prism(footprint(project, project.wall), h - z0 - f + 1.0, z0 + f)
+    if upper is None or f <= 0:
+        return upper
+    steps = 1 if project.inside_corners == ANGLED else max(6, min(16, math.ceil(f * 3)))
+    slices = []
+    for i in range(steps + 1):
+        height = f * i / steps
+        outline = footprint(project, project.wall + floor_inset(project, height))
+        if outline is None:
+            return upper
+        slices.append(Manifold.extrude(outline, 0.001).translate([0.0, 0.0, z0 + height]))
+    lofts = [Manifold.batch_hull([a, b]) for a, b in zip(slices, slices[1:])]
+    return Manifold.batch_boolean([upper] + lofts, OpType.Add)
 
 
 def _prism(section: CrossSection | None, height: float, z0: float) -> Manifold | None:
@@ -85,7 +112,7 @@ def build_body(project: Project) -> Manifold:
         body = _threaded_container(project)
     else:
         body = _prism(footprint(project), h, 0.0)
-        cavity = _prism(footprint(project, project.wall), h - project.bottom + 1.0, project.bottom)
+        cavity = _cavity(project)
         if cavity is not None:
             body = body - cavity
     dividers = build_dividers(project)
@@ -258,11 +285,21 @@ def _threaded_container(project: Project) -> Manifold:
     profile = CrossSection([[
         (0.0, 0.0), (t.outer, 0.0), (t.outer, t.shoulder), (t.root, t.shoulder), (t.root, h),
         (t.opening, h), (t.opening, t.shoulder), (inside, t.slope_bottom),
-        (inside, project.bottom), (0.0, project.bottom)]])
+        *_floor_corner_profile(project, inside), (0.0, project.bottom)]])
     body = Manifold.revolve(profile, _circle_segments(t.outer))
     thread = _helix(t.crest, t.thread_from, t.thread_to)
     opening = Manifold.cylinder(h - t.shoulder + 2, t.opening, -1.0, _circle_segments(t.opening))
     return (body + thread) - opening.translate([0.0, 0.0, t.shoulder - 0.01])
+
+
+def _floor_corner_profile(project: Project, inside: float) -> list[tuple[float, float]]:
+    """Points (radius, height) from the inside wall down to the floor, round or angled."""
+    f = inside_fillet(project)
+    if f <= 0:
+        return [(inside, project.bottom)]
+    steps = 1 if project.inside_corners == ANGLED else 12
+    return [(inside - floor_inset(project, f * (1 - i / steps)), project.bottom + f * (1 - i / steps))
+            for i in range(steps + 1)]
 
 
 def _threaded_lid(project: Project) -> Manifold:

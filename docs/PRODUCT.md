@@ -99,6 +99,12 @@ Defaults I chose myself, which are easy to change:
   single screw). The 2-hole board has its holes in a line by default; a depth
   spacing makes them diagonal (negative flips the diagonal). The 1-hole board's
   hole can sit anywhere on the board. Both keep the board outline checks.
+- Inside corners (0.13), suggested by the project owner for strength: sharp,
+  rounded (fillet) or angled (45° chamfer) with a size, where the walls meet the
+  floor (boxes and round containers, including threaded jars) and in the inside
+  vertical corners of boxes. Sharp stays the default so existing designs don't
+  change. Lips, screw columns and dividers follow the rounder corners; holes and
+  posts keep off the sloped area. Outside corners were already adjustable.
 - Push-on lid that follows the box size, with fit presets.
 - Plain-language checks covering impossible sizes, thin walls, holes off the
   edge, holes behind the lid lip, overlapping or too-close holes, a lid that

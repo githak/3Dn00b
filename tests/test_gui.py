@@ -514,3 +514,17 @@ def test_about_box(window, monkeypatch):
     text = shown[0]
     assert "3Dn00b" in text and "beginners" in text
     assert text.endswith("<p><br>Vibe-coded by TheSpork, 2026</p>")   # last, after a blank line
+
+
+def test_inside_corner_controls(window):
+    form = window.shape_form
+    assert not form.isRowVisible(window.inside_corner_size)          # sharp: no size
+    window.inside_corners.setCurrentIndex(window.inside_corners.findData("angled"))
+    window.inside_corners.activated.emit(window.inside_corners.currentIndex())
+    assert window.project.inside_corners == "angled" and form.isRowVisible(window.inside_corner_size)
+    window.inside_corner_size.setValue(4)
+    assert window.project.inside_corner_size == 4
+    assert not validation_errors(window)
+    window.undo_stack.undo()
+    window.undo_stack.undo()
+    assert window.project.inside_corners == "sharp"

@@ -212,6 +212,10 @@ class Project:
     wall: float = 2.0
     bottom: float = 2.0
     corner_radius: float = 4.0     # box only, outside corners (seen from above)
+    # Inside corners (walls to floor, and walls to each other in boxes): SHARP,
+    # ROUNDED (a fillet) or ANGLED (a 45° chamfer). Both make the corners stronger.
+    inside_corners: str = "sharp"
+    inside_corner_size: float = 2.0
     lid: Lid = field(default_factory=Lid)
     holes: list[Hole] = field(default_factory=list)
     name: str = "My box"
@@ -266,7 +270,8 @@ class Project:
 
     @property
     def inner_corner_radius(self) -> float:
-        return max(0.0, self.outer_corner_radius - self.wall)
+        """Rounding of the inside vertical corners, seen from above."""
+        return max(0.0, self.outer_corner_radius - self.wall, inside_fillet(self))
 
     @property
     def closed_height(self) -> float:
@@ -334,6 +339,25 @@ class Project:
 def comfortable_margin(project: Project) -> float:
     """Material we would like to keep around a hole."""
     return max(1.5, project.wall)
+
+
+SHARP, ROUNDED, ANGLED = "sharp", "rounded", "angled"
+INSIDE_CORNER_LABELS = {SHARP: "Sharp (90°)", ROUNDED: "Rounded", ANGLED: "Angled (45°)"}
+
+
+def inside_fillet(project: Project) -> float:
+    """Size of the rounding or bevel in the inside corners (0 when they are sharp)."""
+    return project.inside_corner_size if project.inside_corners != SHARP else 0.0
+
+
+def floor_inset(project: Project, height: float) -> float:
+    """How far the inside corner reaches in from the wall, `height` mm above the floor."""
+    f = inside_fillet(project)
+    if f <= 0 or height >= f:
+        return 0.0
+    if project.inside_corners == ANGLED:
+        return f - height
+    return f - math.sqrt(f * f - (f - height) ** 2)
 
 
 def has_lip(project: Project) -> bool:
@@ -541,7 +565,7 @@ def extent_limits(project: Project, surface: str, half_u: float, half_v: float,
     the bounding rectangle; rounded corners are checked by flat_clearance().
     """
     if surface in (FRONT, BACK, LEFT, RIGHT, SIDE):
-        z_lo = project.bottom + half_v + margin
+        z_lo = project.bottom + inside_fillet(project) + half_v + margin
         # Stay below the lid's lip or groove.
         z_hi = wall_top_free(project) - half_v - margin
         v_lo, v_hi = z_lo - project.outer_height / 2, z_hi - project.outer_height / 2
@@ -563,6 +587,9 @@ def extent_limits(project: Project, surface: str, half_u: float, half_v: float,
 def _flat_half_extents(project: Project, surface: str):
     """Half width/depth of the usable flat area of the bottom or lid."""
     hw, hd = project.inner_width / 2, project.inner_depth / 2
+    if surface == BOTTOM:
+        f = inside_fillet(project)                  # the curve up to the walls isn't flat
+        hw, hd = hw - f, hd - f
     if surface == LID and has_lip(project):
         inset = lip_outer_offset(project) + lip_wall(project)
         hw, hd = hw - inset, hd - inset
@@ -576,6 +603,8 @@ def _flat_corner_radius(project: Project, surface: str) -> float:
         hw, _ = _flat_half_extents(project, surface)
         return max(hw, 0.0)
     rad = project.inner_corner_radius
+    if surface == BOTTOM:
+        rad = max(0.0, rad - inside_fillet(project))
     if surface == LID and has_lip(project):
         rad = max(0.0, rad - lip_outer_offset(project) - lip_wall(project))
     return rad
@@ -612,7 +641,7 @@ def hole_edge_clearance(project: Project, hole: Hole) -> float:
     if hole.surface in (BOTTOM, LID):
         return _flat_hole_clearance(project, hole, hole.u, hole.v)
     z = project.outer_height / 2 + hole.v
-    z_lo = project.bottom
+    z_lo = project.bottom + inside_fillet(project)
     z_hi = wall_top_free(project)
     clear = min(z - hv - z_lo, z_hi - (z + hv))
     if hole.surface != SIDE:

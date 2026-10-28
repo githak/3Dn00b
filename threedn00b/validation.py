@@ -17,7 +17,7 @@ from .model import (ALONG_V, BACK, BOTTOM, BOX, CYLINDER, FRONT, LEFT, LID, MIN_
                     slide_engage, slide_groove, thread_sizes,
                     lid_ceiling, lid_pilot_depth, lid_screw_positions, wall_corner_zone, clamp_hole, comfortable_margin,
                     compartment_size, divider_positions, divider_top, has_dividers,
-                    hole_edge_clearance, hole_limits, lip_outer_offset, lip_wall, opening_gap,
+                    hole_edge_clearance, hole_limits, inside_fillet, lip_outer_offset, lip_wall, opening_gap,
                     point_near_opening)
 
 ERROR, WARNING, INFO = "error", "warning", "info"
@@ -45,6 +45,19 @@ def hole_name(project: Project, hole: Hole) -> str:
     return f"Hole {index}"
 
 
+def _check_inside_corners(p: Project) -> list[Issue]:
+    f = inside_fillet(p)
+    if f <= 0:
+        return []
+    room = min(p.inner_height - 2, min(p.inner_width, p.inner_depth) / 2 - 2)
+    if has_threaded_lid(p):
+        room = min(room, thread_sizes(p).slope_bottom - p.bottom - 1)
+    if f > room:
+        return [Issue(ERROR, f"Inside corners of {_mm(f)} are too big for this size.",
+                      f"Use {_mm(max(room, 0))} or less, or make the object bigger.")]
+    return []
+
+
 def _check_divider_size(p: Project) -> list[Issue]:
     if not has_dividers(p):
         return []
@@ -59,7 +72,7 @@ def check_size(project: Project) -> list[Issue]:
     """Only the basic size rules; cheap, and needed before geometry can be built."""
     issues = _check_size(project)
     if not has_errors(issues):
-        issues += _check_divider_size(project)
+        issues += _check_divider_size(project) + _check_inside_corners(project)
     return sorted(issues, key=lambda i: _ORDER[i.level])
 
 
@@ -67,7 +80,7 @@ def check(project: Project, parts: geometry.Parts | None = None) -> list[Issue]:
     issues: list[Issue] = []
     issues += _check_size(project)
     if not has_errors(issues):
-        issues += _check_divider_size(project)
+        issues += _check_divider_size(project) + _check_inside_corners(project)
     if not has_errors(issues):
         issues += _check_lid(project)
         issues += _check_holes(project)
