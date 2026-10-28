@@ -601,3 +601,10 @@ def test_start_from_template(window):
     assert not validation_errors(window)
     window.undo_stack.undo()
     assert window.project.name == "My box" and not window.project.mounts
+
+
+def test_template_headings_cannot_be_picked(window):
+    combo = window.template_combo
+    headings = [i for i in range(combo.count()) if combo.itemData(i) is None][1:]
+    assert len(headings) == 3
+    assert all(not combo.model().item(i).isEnabled() for i in headings)

@@ -151,6 +151,12 @@ Defaults I chose myself, which are easy to change:
   DevKit case. ESP32 boards differ between makers and many have no mounting
   holes, so that template uses the custom 4-hole board with a common 30-pin
   board's size, which the user adjusts after measuring.
+  Added in 0.19, grouped under headings in the list (Cases for boards, Storage,
+  Around the house): Pi 3 A+ and Arduino Mega 2560 cases (the Mega joins the
+  board catalogue, with its six holes), a project box for the user's own board,
+  a weekly pill box, business card box, dice box, money box (coin slot in a
+  screwed-down lid), desk organiser, charging box and a plant pot with drainage
+  holes.
 - Push-on lid that follows the box size, with fit presets.
 - Plain-language checks covering impossible sizes, thin walls, holes off the
   edge, holes behind the lid lip, overlapping or too-close holes, a lid that

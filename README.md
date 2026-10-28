@@ -8,15 +8,18 @@ Software for people getting into 3D printing and want to start with something ea
 sizes in millimetres, add holes and a lid, and export files your slicer can
 print. No sketches, no constraints, no feature trees.
 
-## What it can do (version 0.18)
+## What it can do (version 0.19)
 
-- **Templates** to start from, already sized to fit: cases for the Raspberry Pi
-  3 / 4 / 5 (also with a 30 mm fan in the lid), the Pi Zero / Zero 2 W, two Pi
-  Zero 2 W boards stacked crosswise, the Pi Pico, the Arduino Uno and 30-pin
-  ESP32 DevKit boards (with posts, openings for the sockets and a lid), plus a
-  storage box, a parts tray, a screw sorter, an AA battery box, a pencil cup, a
-  jar with a screw-on lid and a pencil box. Pick one under **Template** in the
-  Shape tab, then change anything you like; Undo takes you back.
+- **Templates** to start from, already sized to fit. Pick one under **Template**
+  in the Shape tab, then change anything you like; Undo takes you back.
+  - *Cases for boards* (posts, openings for the sockets, a lid): Raspberry Pi
+    3 / 4 / 5 (also with a 30 mm fan in the lid), Pi 3 A+, Pi Zero / Zero 2 W,
+    two Pi Zero 2 W stacked crosswise, Pi Pico, Arduino Uno and Mega 2560, 30-pin
+    ESP32 DevKit, and a project box for your own board.
+  - *Storage*: storage box, parts tray, screw sorter, AA battery box, weekly pill
+    box, business card box, dice box, money box.
+  - *Around the house*: desk organiser, charging box, plant pot with drainage
+    holes, pencil cup, jar with a screw-on lid, pencil box.
 - **Box** (with rounded corners) or **round container**.
 - Sizes as **outside size** or **inside space**, with a single switch.
   The other measurement is always shown.
@@ -49,7 +52,7 @@ print. No sketches, no constraints, no feature trees.
   with other holes, and always keeps a safe distance from the edges. Common
   sizes are built in (M3/M4 screws, cables).
 - **Screw posts for circuit boards**: pick a board (Raspberry Pi Zero / Zero 2 W,
-  3 / 4 / 5, 3 A+, Pico, Arduino Uno, or your own board with 1, 2 or 4 holes) and all its posts
+  3 / 4 / 5, 3 A+, Pico, Arduino Uno or Mega 2560, or your own board with 1, 2 or 4 holes) and all its posts
   appear in the right pattern. Choose the screw size (M1 to M4) and how tall the
   posts are; the screw cuts its own thread into the post. Drag the board's green
   outline to move all its posts together, or turn it in 90° steps. The app checks
@@ -84,7 +87,7 @@ Download `3dn00b_<version>-1_amd64.deb` from the
 [Releases page](https://github.com/githak/3Dn00b/releases) and install it:
 
 ```bash
-sudo apt install ./3dn00b_0.18.0-1_amd64.deb
+sudo apt install ./3dn00b_0.19.0-1_amd64.deb
 ```
 
 That's all: 3Dn00b appears in your applications menu, `.3dn00b` project files open

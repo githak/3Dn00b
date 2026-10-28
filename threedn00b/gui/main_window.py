@@ -301,13 +301,17 @@ class MainWindow(QMainWindow):
         form.addRow("Name", self.name_edit)
         self.template_combo = QComboBox()
         self.template_combo.addItem("Start from a template…", None)
-        # Cases for boards first, then containers, with a line between.
-        for keys in (templates.ELECTRONICS,
-                     [k for k in templates.TEMPLATES if k not in templates.ELECTRONICS]):
-            self.template_combo.insertSeparator(self.template_combo.count())
+        for heading, keys in templates.GROUPS:
+            # A heading that can't be picked, then the group's templates.
+            self.template_combo.addItem(heading, None)
+            item = self.template_combo.model().item(self.template_combo.count() - 1)
+            item.setEnabled(False)
+            font = item.font()
+            font.setBold(True)
+            item.setFont(font)
             for key in keys:
                 t = templates.TEMPLATES[key]
-                self.template_combo.addItem(t.label, key)
+                self.template_combo.addItem("    " + t.label, key)
                 self.template_combo.setItemData(self.template_combo.count() - 1, t.description,
                                                 Qt.ItemDataRole.ToolTipRole)
         self.template_combo.setToolTip("Ready-made boxes, sized to fit: you can change "

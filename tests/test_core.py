@@ -1678,8 +1678,8 @@ def test_board_openings_face_the_sockets(key):
     walls = [h for h in p.holes if h.surface in (FRONT, BACK, LEFT, RIGHT)]
     assert walls
     for hole in walls:
-        z0 = p.outer_height / 2 + hole.v - hole.height / 2
-        z1 = z0 + hole.height
+        half = hole.half_extents[1]
+        z0, z1 = p.outer_height / 2 + hole.v - half, p.outer_height / 2 + hole.v + half
         near = []
         for m in p.mounts:
             low = mounts.board_bottom(p, m)
@@ -1716,3 +1716,18 @@ def test_fan_fits_under_the_lid():
     assert fan.u + 15 < usb_x or h - 10 > top + 16
     screws = [x for x in p.holes if x.surface == LID and x.diameter == 3.4]
     assert sorted({round(abs(s.u - fan.u), 6) for s in screws}) == [12.0]
+
+
+def test_template_groups_list_every_template_once():
+    listed = [key for _, keys in templates.GROUPS for key in keys]
+    assert sorted(listed) == sorted(templates.TEMPLATES) and len(set(listed)) == len(listed)
+
+
+def test_mega_has_six_posts_inside_the_board():
+    p = templates.from_template("mega")
+    m = p.mounts[0]
+    posts = mounts.post_positions(m)
+    corners = mounts.board_corners(m)
+    assert len(posts) == 6
+    xs, ys = [c[0] for c in corners], [c[1] for c in corners]
+    assert all(min(xs) < x < max(xs) and min(ys) < y < max(ys) for x, y in posts)
