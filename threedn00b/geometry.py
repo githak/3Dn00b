@@ -15,10 +15,10 @@ from manifold3d import CrossSection, Error, JoinType, Manifold, OpType
 from .model import (TAB_REACH, TAB_WIDTH, ANGLED, BACK, BOTTOM, BOX, CAP_TOP_GAP, CYLINDER, FRAME_RIM, FRONT, LEFT,
                     LID, RIGHT, ROUND, SCREWS, SIDE, SNAP_BUMP, SNAP_RIDGE, THREADED, THREAD_DEPTH,
                     THREAD_PITCH, VENT, Hole, Project, corner_rounding, divider_fillet,
-                    divider_positions, divider_top, floor_inset, frame_thickness, front_span,
+                    divider_positions, divider_top, floor_inset, frame_thickness,
                     has_dividers, has_finger_notch, has_frame, has_lid_tab, has_lip, has_screw_lid, has_sliding_lid,
                     has_snap_lid, has_threaded_lid, inside_fillet, lid_ceiling, lid_pilot_depth,
-                    notch_size,
+                    notch_size, SIDE_ANGLES, side_span,
                     lid_screw_positions, lid_top_z, lip_outer_offset, lip_wall, slide_engage,
                     slide_groove, thread_sizes, vent_openings)
 
@@ -368,27 +368,34 @@ def _lid_cut_in_body(project: Project) -> Manifold | None:
         ring = _prism(outer, z1 - z0, z0) - _prism(inner, z1 - z0 + 2, z0 - 1)
         return ring ^ _snap_selector(project, z0 - 1, z1 + 1, 1.0)
     if has_sliding_lid(project) and project.shape == BOX:
+        # Made as if the lid slid in from the front, then turned to its side.
         g0, g1 = slide_groove(project)
-        reach_x = project.inner_width / 2 + slide_engage(project) + lid.gap
-        front = -project.outer_depth / 2 - 1.0
+        reach_x = _slide_across(project) / 2 + slide_engage(project) + lid.gap
+        front = -side_span(project, lid.slide_from)[1] - 1.0
         groove = _prism(_slide_outline(project, slide_engage(project) + lid.gap, front),
                         g1 - g0, g0)
-        # Lower the front wall so the lid can slide in.
+        # Lower that wall so the lid can slide in.
         opening_h = project.outer_height - g0 + 1.0
         opening = Manifold.cube([2 * reach_x, project.wall + 1.0 + 0.01, opening_h]).translate(
             [-reach_x, front, g0])
-        return groove + opening
+        return (groove + opening).rotate([0.0, 0.0, SIDE_ANGLES[lid.slide_from]])
     return None
 
 
+def _slide_across(project: Project) -> float:
+    """Inside width of the box across the way a sliding lid moves."""
+    return project.inner_width if project.lid.slide_from in (FRONT, BACK) else project.inner_depth
+
+
 def _slide_outline(project: Project, reach: float, front_y: float) -> CrossSection:
-    """Outline of a sliding lid reaching `reach` mm into the walls.
+    """Outline of a sliding lid reaching `reach` mm into the walls, as if it slid
+    in from the front (turn it by SIDE_ANGLES to its real side).
 
     The back follows the box's corners; the front half is straight so the
-    lid can slide in and out from the front.
+    lid can slide in and out.
     """
-    back = footprint(project, project.wall - reach)
-    half_x = project.inner_width / 2 + reach
+    back = footprint(project, project.wall - reach).rotate(-SIDE_ANGLES[project.lid.slide_from])
+    half_x = _slide_across(project) / 2 + reach
     straight = CrossSection.square([2 * half_x, -front_y]).translate([-half_x, front_y])
     return back + straight
 
@@ -461,8 +468,9 @@ def build_lid(project: Project) -> Manifold | None:
         if project.shape != BOX:
             return None
         g0, _ = slide_groove(project)
-        outline = _slide_outline(project, slide_engage(project), -project.outer_depth / 2)
-        panel = _prism(outline, lid_opts.thickness, g0 + lid_opts.gap)
+        side = lid_opts.slide_from
+        outline = _slide_outline(project, slide_engage(project), -side_span(project, side)[1])
+        panel = _prism(outline.rotate(SIDE_ANGLES[side]), lid_opts.thickness, g0 + lid_opts.gap)
         return _cut_lid_holes(project, panel)
     h = project.outer_height
     lid = _prism(_lid_outline(project), lid_opts.thickness, h)
@@ -496,12 +504,13 @@ def _lid_outline(project: Project) -> CrossSection:
     outline = footprint(project)
     if not has_lid_tab(project):
         return outline
-    width = min(TAB_WIDTH, 0.5 * front_span(project))
-    front = project.outer_depth / 2 if project.shape == BOX else project.outer_diameter / 2
+    side = project.lid.opening_side
+    length, front = side_span(project, side)
+    width = min(TAB_WIDTH, 0.5 * length)
     r = min(2.5, width / 2)
     tab = CrossSection.square([width - 2 * r, TAB_REACH + 2.0 - 2 * r], center=True) \
         .offset(r, JoinType.Round, circular_segments=16) \
-        .translate([0.0, -front - TAB_REACH / 2 + 1.0])
+        .translate([0.0, -front - TAB_REACH / 2 + 1.0]).rotate(SIDE_ANGLES[side])
     # Round the corners where the tab meets the lid, so they don't crack.
     seg = _circle_segments(2.0, 0.4, 8, 32)
     return (outline + tab).offset(2.0, JoinType.Round, circular_segments=seg) \
@@ -509,7 +518,7 @@ def _lid_outline(project: Project) -> CrossSection:
 
 
 def _finger_notch(project: Project) -> Manifold | None:
-    """A rounded notch in the top of the front wall, to get a finger under the lid."""
+    """A rounded notch in the top of a wall, to get a finger under the lid."""
     if not has_finger_notch(project):
         return None
     width, depth = notch_size(project)
@@ -520,15 +529,17 @@ def _finger_notch(project: Project) -> Manifold | None:
     shape = CrossSection.square([width - 2 * r, 2 * depth + 2.0 - 2 * r], center=True) \
         .offset(r, JoinType.Round, circular_segments=_circle_segments(r, 0.4, 16, 48)) \
         .translate([0.0, h + 1.0])                      # bottom at h - depth
+    side = project.lid.opening_side
+    _, front = side_span(project, side)
     if project.shape == BOX:
-        front, reach = project.outer_depth / 2, wall + 0.5
+        reach = wall + 0.5
     else:
-        front = project.outer_diameter / 2
         inner = front - wall
         reach = wall + inner - math.sqrt(inner ** 2 - (width / 2) ** 2) + 0.5
     # The shape is drawn in x/z; extruding along z and turning it makes it run along y.
+    # Made at the front, then turned to its side.
     return (Manifold.extrude(shape, reach + 1.0).rotate([90.0, 0.0, 0.0])
-            .translate([0.0, -front + reach, 0.0]))
+            .translate([0.0, -front + reach, 0.0]).rotate([0.0, 0.0, SIDE_ANGLES[side]]))
 
 
 def _cut_lid_holes(project: Project, lid: Manifold) -> Manifold:

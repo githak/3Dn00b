@@ -8,7 +8,7 @@ Software for people getting into 3D printing and want to start with something ea
 sizes in millimetres, add holes and a lid, and export files your slicer can
 print. No sketches, no constraints, no feature trees.
 
-## What it can do (version 0.20)
+## What it can do (version 0.21)
 
 - **Templates** to start from, already sized to fit. Pick one under **What are you making?**
   in the Shape tab, then change anything you like; Undo takes you back.
@@ -32,8 +32,8 @@ print. No sketches, no constraints, no feature trees.
   dividers meet the floor, the walls and each other. That spreads the load where
   printed boxes usually crack, and makes the inside easier to clean.
 - **Easy opening** for push-on and snap-on lids: a tab that sticks out of the lid
-  at the front, so you can push it up with your thumb, and/or a finger notch in
-  the top of the front wall. Both work without prying at the lid, so nothing
+  so you can push it up with your thumb, and/or a finger notch in the top of a
+  wall, on the side you choose (front, back, left or right). Both work without prying at the lid, so nothing
   breaks.
 - **Compartments**: split a box into compartments (for example 3 × 2), full
   height or lower. They're the same size unless you tick **Set each width** or
@@ -66,8 +66,9 @@ print. No sketches, no constraints, no feature trees.
   gap). It resizes itself with the box.
 - Or a **snap-on lid**: like the push-on lid, but small ridges on its lip click
   into grooves inside the walls.
-- Or a **sliding lid** (boxes): a flat panel that slides in from the front along
-  grooves in the walls, so the box gets no taller.
+- Or a **sliding lid** (boxes): a flat panel that slides in along grooves in the
+  walls, from the side you choose (front, back, left or right), so the box gets
+  no taller.
 - Or a **threaded lid** (round containers): screws on like a jar. The top of the
   container becomes a neck with a thread that prints without supports.
 - Or a **screwed-down lid**: a flat lid held by a screw in each corner (M2 to M4).
@@ -90,7 +91,7 @@ Download `3dn00b_<version>-1_amd64.deb` from the
 [Releases page](https://github.com/githak/3Dn00b/releases) and install it:
 
 ```bash
-sudo apt install ./3dn00b_0.20.0-1_amd64.deb
+sudo apt install ./3dn00b_0.21.0-1_amd64.deb
 ```
 
 That's all: 3Dn00b appears in your applications menu, `.3dn00b` project files open

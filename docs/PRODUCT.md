@@ -134,6 +134,11 @@ Defaults I chose myself, which are easy to change:
   lid's hold, and both are better than prying with a fingernail or a tool. Off
   by default so existing designs don't change. A looser fit remains the other
   answer for a lid that is simply too tight.
+- Lid sides (0.21), requested by the project owner: a sliding lid can slide in
+  from the front, back, left or right, and the tab and notch can be on any of
+  those sides. Both are made as if at the front and then turned, so the groove,
+  the lowered wall and the panel always match; tests slide the lid out each way
+  and check it's held in every other direction.
 - Templates (0.17), requested by the project owner so beginners don't size a
   case by trial and error: a template list in the Shape tab, right under the Box
   and Round container buttons, so a template is the third way to start.

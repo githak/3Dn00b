@@ -11,7 +11,7 @@ import math
 from dataclasses import dataclass
 
 from . import geometry, mounts
-from .model import (ALONG_V, BACK, BOTTOM, BOX, CYLINDER, FRONT, LEFT, LID, MIN_EDGE, RIGHT,
+from .model import (SIDE_LABELS, ALONG_V, BACK, BOTTOM, BOX, CYLINDER, FRONT, LEFT, LID, MIN_EDGE, RIGHT,
                     SCREWS, SIDE, SNAP_BUMP, SURFACE_LABELS, VENT, Hole, Project, has_lip,
                     THREADED, has_screw_lid, has_sliding_lid, has_snap_lid, has_threaded_lid,
                     slide_engage, slide_groove, thread_sizes,
@@ -229,7 +229,7 @@ def _check_sliding_lid(p: Project) -> list[Issue]:
         out.append(Issue(WARNING, f"A lid of {_mm(lid.thickness)} is thin and may bend.",
                          "1.6 mm or more is recommended."))
     out += _check_fit_gap(lid)
-    out.append(Issue(INFO, "Slide the lid in from the front.",
+    out.append(Issue(INFO, f"Slide the lid in from the {SIDE_LABELS[lid.slide_from].lower()}.",
                      "If it's stiff, choose a looser fit and reprint just the lid."))
     return out
 

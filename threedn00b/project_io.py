@@ -12,11 +12,11 @@ import numpy as np
 
 from . import geometry, mounts
 from .model import (HOLE_KIND_LABELS, INSIDE_CORNER_LABELS, LID_STYLE_LABELS, OPENING_LABELS,
-                    SCREWS, SHAPES,
+                    SCREWS, SHAPES, SIDE_LABELS,
                     Dividers, Hole, Lid, Mount, Project)
 
 FORMAT_NAME = "3dn00b-project"
-FORMAT_VERSION = 13  # 2: rectangular holes; 3: air vents; 4: dividers; 5: screw posts;
+FORMAT_VERSION = 14  # 2: rectangular holes; 3: air vents; 4: dividers; 5: screw posts;
                      # 6: screwed-down lids; 7: snap-on and sliding lids; 8: threaded lids;
                      # 9: custom boards with 1 or 2 holes; 10: rounded/angled inside corners;
                      # 11: rounded hole corners and strengthened hole edges;
@@ -56,6 +56,7 @@ def from_dict(data: dict) -> Project:
                    or m.rotation not in mounts.ROTATIONS for m in mount_list)
             or lid.style not in LID_STYLE_LABELS or lid.screw not in SCREWS
             or lid.opening not in OPENING_LABELS
+            or lid.opening_side not in SIDE_LABELS or lid.slide_from not in SIDE_LABELS
             or project.inside_corners not in INSIDE_CORNER_LABELS):
         raise ProjectFileError("The project uses a shape this version doesn't know.")
     project.lid, project.holes, project.dividers = lid, holes, dividers

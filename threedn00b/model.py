@@ -168,6 +168,8 @@ class Lid:
     thickness: float = 2.0         # thickness of the flat top
     lip_height: float = 5.0        # how far the lip reaches down into the box
     opening: str = "none"          # push-on and snap-on lids: key of OPENING_LABELS
+    opening_side: str = FRONT      # where the tab and notch are: FRONT, BACK, LEFT or RIGHT
+    slide_from: str = FRONT        # sliding lids: the side the lid slides in from
 
     @property
     def gap(self) -> float:
@@ -419,14 +421,25 @@ def has_finger_notch(project: Project) -> bool:
     return has_lip(project) and project.lid.opening in ("notch", "both")
 
 
-def front_span(project: Project) -> float:
-    """Width of the front: of the box, or across a round container."""
-    return project.outer_width if project.shape == BOX else project.outer_diameter
+# The sides a lid can slide in from, or where its tab and notch can be. The angle
+# turns something made at the front (facing -y) to that side, seen from above.
+SIDE_LABELS = {FRONT: "Front", BACK: "Back", LEFT: "Left", RIGHT: "Right"}
+SIDE_ANGLES = {FRONT: 0.0, RIGHT: 90.0, BACK: 180.0, LEFT: -90.0}
+
+
+def side_span(project: Project, side: str) -> tuple[float, float]:
+    """(Length of that side, distance from the middle to it), measured outside."""
+    if project.shape != BOX:
+        return project.outer_diameter, project.outer_diameter / 2
+    if side in (FRONT, BACK):
+        return project.outer_width, project.outer_depth / 2
+    return project.outer_depth, project.outer_width / 2
 
 
 def notch_size(project: Project) -> tuple[float, float]:
     """Width and depth of the finger notch (it stays within the lid's lip)."""
-    return (min(NOTCH_WIDTH, 0.4 * front_span(project)),
+    length, _ = side_span(project, project.lid.opening_side)
+    return (min(NOTCH_WIDTH, 0.4 * length),
             max(0.0, min(NOTCH_DEPTH, project.lid.lip_height - 0.5)))
 
 
