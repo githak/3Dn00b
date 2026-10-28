@@ -69,6 +69,8 @@ class Hole:
     slot: float = 2.0              # vents: width of each slot
     gap: float = 2.0               # vents: plastic left between slots
     slot_direction: str = ALONG_V  # vents: which way the slots run
+    rounding: float = 0.0          # rectangles and vents: radius of the corners (0 = sharp)
+    strengthen: bool = False       # wall openings: a thicker frame around it on the inside
 
     @property
     def half_extents(self) -> tuple[float, float]:
@@ -165,11 +167,15 @@ class Lid:
 
 @dataclass
 class Dividers:
-    """Evenly spaced walls inside a box that split it into compartments."""
+    """Walls inside a box that split it into compartments, evenly or at set sizes."""
     across: int = 1                # compartments from left to right
     deep: int = 1                  # compartments from front to back
     thickness: float = 1.6
     height: float = 0.0            # 0 = full height; otherwise height above the bottom
+    # Set sizes (inside, mm) of all but the last compartment, from the left and from
+    # the front; the last one gets the rest. Empty = all the same size.
+    widths: list[float] = field(default_factory=list)
+    depths: list[float] = field(default_factory=list)
 
     @property
     def enabled(self) -> bool:
@@ -212,6 +218,10 @@ class Project:
     wall: float = 2.0
     bottom: float = 2.0
     corner_radius: float = 4.0     # box only, outside corners (seen from above)
+    # Inside corners (walls to floor, and walls to each other in boxes): SHARP,
+    # ROUNDED (a fillet) or ANGLED (a 45° chamfer). Both make the corners stronger.
+    inside_corners: str = "sharp"
+    inside_corner_size: float = 2.0
     lid: Lid = field(default_factory=Lid)
     holes: list[Hole] = field(default_factory=list)
     name: str = "My box"
@@ -266,7 +276,8 @@ class Project:
 
     @property
     def inner_corner_radius(self) -> float:
-        return max(0.0, self.outer_corner_radius - self.wall)
+        """Rounding of the inside vertical corners, seen from above."""
+        return max(0.0, self.outer_corner_radius - self.wall, inside_fillet(self))
 
     @property
     def closed_height(self) -> float:
@@ -334,6 +345,54 @@ class Project:
 def comfortable_margin(project: Project) -> float:
     """Material we would like to keep around a hole."""
     return max(1.5, project.wall)
+
+
+SHARP, ROUNDED, ANGLED = "sharp", "rounded", "angled"
+INSIDE_CORNER_LABELS = {SHARP: "Sharp (90°)", ROUNDED: "Rounded", ANGLED: "Angled (45°)"}
+
+
+def inside_fillet(project: Project) -> float:
+    """Size of the rounding or bevel in the inside corners (0 when they are sharp)."""
+    return project.inside_corner_size if project.inside_corners != SHARP else 0.0
+
+
+def corner_rounding(hole: Hole) -> float:
+    """Radius actually used for the corners of a rectangular opening."""
+    if hole.kind == ROUND:
+        return 0.0
+    return max(0.0, min(hole.rounding, *hole.half_extents))
+
+
+FRAME_RIM = 2.0        # flat band of the strengthening frame around an opening
+
+
+def frame_thickness(project: Project) -> float:
+    """How far a strengthening frame stands out from the inside of the wall."""
+    return max(1.2, min(project.wall, 3.0))
+
+
+def has_frame(project: Project, hole: Hole) -> bool:
+    return hole.strengthen and hole.surface in (FRONT, BACK, LEFT, RIGHT, SIDE)
+
+
+def divider_fillet(project: Project) -> float:
+    """Rounding where dividers meet the floor and the walls (0 if they stay sharp)."""
+    f = inside_fillet(project)
+    if f <= 0 or not has_dividers(project):
+        return 0.0
+    if divider_top(project) - project.bottom < f + 1.0:
+        return 0.0      # too low to round: the joints stay sharp
+    return f
+
+
+def floor_inset(project: Project, height: float) -> float:
+    """How far the inside corner reaches in from the wall, `height` mm above the floor."""
+    f = inside_fillet(project)
+    if f <= 0 or height >= f:
+        return 0.0
+    if project.inside_corners == ANGLED:
+        return f - height
+    return f - math.sqrt(f * f - (f - height) ** 2)
 
 
 def has_lip(project: Project) -> bool:
@@ -541,7 +600,7 @@ def extent_limits(project: Project, surface: str, half_u: float, half_v: float,
     the bounding rectangle; rounded corners are checked by flat_clearance().
     """
     if surface in (FRONT, BACK, LEFT, RIGHT, SIDE):
-        z_lo = project.bottom + half_v + margin
+        z_lo = project.bottom + inside_fillet(project) + half_v + margin
         # Stay below the lid's lip or groove.
         z_hi = wall_top_free(project) - half_v - margin
         v_lo, v_hi = z_lo - project.outer_height / 2, z_hi - project.outer_height / 2
@@ -563,6 +622,9 @@ def extent_limits(project: Project, surface: str, half_u: float, half_v: float,
 def _flat_half_extents(project: Project, surface: str):
     """Half width/depth of the usable flat area of the bottom or lid."""
     hw, hd = project.inner_width / 2, project.inner_depth / 2
+    if surface == BOTTOM:
+        f = inside_fillet(project)                  # the curve up to the walls isn't flat
+        hw, hd = hw - f, hd - f
     if surface == LID and has_lip(project):
         inset = lip_outer_offset(project) + lip_wall(project)
         hw, hd = hw - inset, hd - inset
@@ -576,6 +638,8 @@ def _flat_corner_radius(project: Project, surface: str) -> float:
         hw, _ = _flat_half_extents(project, surface)
         return max(hw, 0.0)
     rad = project.inner_corner_radius
+    if surface == BOTTOM:
+        rad = max(0.0, rad - inside_fillet(project))
     if surface == LID and has_lip(project):
         rad = max(0.0, rad - lip_outer_offset(project) - lip_wall(project))
     return rad
@@ -612,7 +676,7 @@ def hole_edge_clearance(project: Project, hole: Hole) -> float:
     if hole.surface in (BOTTOM, LID):
         return _flat_hole_clearance(project, hole, hole.u, hole.v)
     z = project.outer_height / 2 + hole.v
-    z_lo = project.bottom
+    z_lo = project.bottom + inside_fillet(project)
     z_hi = wall_top_free(project)
     clear = min(z - hv - z_lo, z_hi - (z + hv))
     if hole.surface != SIDE:
@@ -666,7 +730,8 @@ def vent_openings(project: Project, hole: Hole) -> list[Hole]:
     out = []
     for du, dv, w, h in hole.slot_rects():
         u = hole.u + (math.degrees(du / (project.outer_diameter / 2)) if hole.surface == SIDE else du)
-        out.append(Hole(surface=hole.surface, kind=RECT, width=w, height=h, u=u, v=hole.v + dv))
+        out.append(Hole(surface=hole.surface, kind=RECT, width=w, height=h, u=u, v=hole.v + dv,
+                        rounding=hole.rounding))
     return out
 
 
@@ -706,21 +771,59 @@ def has_dividers(project: Project) -> bool:
     return project.shape == BOX and project.dividers.enabled
 
 
-def compartment_size(project: Project) -> tuple[float, float]:
-    """Inside width and depth of each compartment."""
+def has_set_sizes(sizes: list[float], count: int) -> bool:
+    """Are the compartments in this direction set one by one (else all the same)?"""
+    return count > 1 and len(sizes) == count - 1
+
+
+def _sizes(span: float, count: int, thickness: float, chosen: list[float]) -> list[float]:
+    room = span - (count - 1) * thickness
+    if has_set_sizes(chosen, count):
+        return list(chosen) + [room - sum(chosen)]          # the last one gets the rest
+    return [room / count] * count
+
+
+def compartment_widths(project: Project) -> list[float]:
+    """Inside width of each compartment, from the left."""
     d = project.dividers
-    w = (project.inner_width - (d.across - 1) * d.thickness) / d.across
-    dp = (project.inner_depth - (d.deep - 1) * d.thickness) / d.deep
-    return w, dp
+    return _sizes(project.inner_width, d.across, d.thickness, d.widths)
+
+
+def compartment_depths(project: Project) -> list[float]:
+    """Inside depth of each compartment, from the front."""
+    d = project.dividers
+    return _sizes(project.inner_depth, d.deep, d.thickness, d.depths)
+
+
+def compartment_size(project: Project) -> tuple[float, float]:
+    """Inside width and depth of the narrowest compartments."""
+    return min(compartment_widths(project)), min(compartment_depths(project))
+
+
+def resized_sizes(span: float, count: int, thickness: float, chosen: list[float]) -> list[float]:
+    """Set sizes for a new number of compartments: keep the first ones, share the rest."""
+    if count < 2:
+        return []
+    keep = list(chosen[:count - 1])
+    room = span - (count - 1) * thickness - sum(keep)
+    share = round(room / (count - len(keep)), 1)
+    return keep + [share] * (count - 1 - len(keep))
+
+
+def _positions(start: float, sizes: list[float], thickness: float) -> list[float]:
+    out, edge = [], start
+    for size in sizes[:-1]:
+        edge += size
+        out.append(edge + thickness / 2)
+        edge += thickness
+    return out
 
 
 def divider_positions(project: Project) -> tuple[list[float], list[float]]:
     """Centre lines of the dividers: x positions (left-right split), y positions (front-back split)."""
-    d = project.dividers
-    cw, cd = compartment_size(project)
-    xs = [-project.inner_width / 2 + i * cw + (i - 0.5) * d.thickness for i in range(1, d.across)]
-    ys = [-project.inner_depth / 2 + i * cd + (i - 0.5) * d.thickness for i in range(1, d.deep)]
-    return xs, ys
+    t = project.dividers.thickness
+    return (_positions(-project.inner_width / 2, compartment_widths(project), t),
+            _positions(-project.inner_depth / 2, compartment_depths(project), t))
 
 
 def divider_top(project: Project) -> float:

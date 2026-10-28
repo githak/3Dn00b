@@ -11,13 +11,15 @@ from pathlib import Path
 import numpy as np
 
 from . import geometry, mounts
-from .model import (HOLE_KIND_LABELS, LID_STYLE_LABELS, SCREWS, SHAPES, Dividers, Hole, Lid,
-                    Mount, Project)
+from .model import (HOLE_KIND_LABELS, INSIDE_CORNER_LABELS, LID_STYLE_LABELS, SCREWS, SHAPES,
+                    Dividers, Hole, Lid, Mount, Project)
 
 FORMAT_NAME = "3dn00b-project"
-FORMAT_VERSION = 9   # 2: rectangular holes; 3: air vents; 4: dividers; 5: screw posts;
+FORMAT_VERSION = 12  # 2: rectangular holes; 3: air vents; 4: dividers; 5: screw posts;
                      # 6: screwed-down lids; 7: snap-on and sliding lids; 8: threaded lids;
-                     # 9: custom boards with 1 or 2 holes
+                     # 9: custom boards with 1 or 2 holes; 10: rounded/angled inside corners;
+                     # 11: rounded hole corners and strengthened hole edges;
+                     # 12: compartments of different sizes
 PROJECT_SUFFIX = ".3dn00b"
 
 
@@ -51,7 +53,8 @@ def from_dict(data: dict) -> Project:
     if (project.shape not in SHAPES or any(h.kind not in HOLE_KIND_LABELS for h in holes)
             or any(m.board not in mounts.BOARDS or m.screw not in mounts.SCREWS
                    or m.rotation not in mounts.ROTATIONS for m in mount_list)
-            or lid.style not in LID_STYLE_LABELS or lid.screw not in SCREWS):
+            or lid.style not in LID_STYLE_LABELS or lid.screw not in SCREWS
+            or project.inside_corners not in INSIDE_CORNER_LABELS):
         raise ProjectFileError("The project uses a shape this version doesn't know.")
     project.lid, project.holes, project.dividers = lid, holes, dividers
     project.mounts = mount_list
@@ -78,6 +81,11 @@ def _build(cls, raw: dict):
             value = float(value)
         elif isinstance(default, str) and not isinstance(value, str):
             raise ValueError(f.name)
+        elif isinstance(default, list):
+            if not isinstance(value, list) or any(
+                    isinstance(v, bool) or not isinstance(v, (int, float)) for v in value):
+                raise ValueError(f.name)
+            value = [float(v) for v in value]
         kwargs[f.name] = value
     return cls(**kwargs)
 

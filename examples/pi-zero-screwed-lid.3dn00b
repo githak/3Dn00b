@@ -1,16 +1,18 @@
 {
   "format": "3dn00b-project",
-  "version": 6,
+  "version": 11,
   "project": {
     "shape": "box",
     "size_mode": "inside",
-    "width": 80,
-    "depth": 45,
+    "width": 80.0,
+    "depth": 45.0,
     "diameter": 60.0,
-    "height": 25,
+    "height": 25.0,
     "wall": 2.0,
     "bottom": 2.0,
-    "corner_radius": 3,
+    "corner_radius": 3.0,
+    "inside_corners": "sharp",
+    "inside_corner_size": 2.0,
     "lid": {
       "enabled": true,
       "style": "screwed",
@@ -24,15 +26,17 @@
       {
         "surface": "front",
         "diameter": 8.0,
-        "u": 0,
-        "v": 0,
+        "u": 0.0,
+        "v": 0.0,
         "id": "f414c42d",
         "kind": "rect",
         "width": 12.5,
         "height": 7.0,
         "slot": 2.0,
         "gap": 2.0,
-        "slot_direction": "along_v"
+        "slot_direction": "along_v",
+        "rounding": 3.0,
+        "strengthen": true
       },
       {
         "surface": "lid",
@@ -41,11 +45,13 @@
         "v": 0.0,
         "id": "8fe171bc",
         "kind": "vent",
-        "width": 30,
-        "height": 12,
+        "width": 30.0,
+        "height": 12.0,
         "slot": 2.0,
         "gap": 2.0,
-        "slot_direction": "along_v"
+        "slot_direction": "along_v",
+        "rounding": 0.0,
+        "strengthen": false
       }
     ],
     "name": "Pi Zero box with screwed lid",

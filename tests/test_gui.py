@@ -502,3 +502,77 @@ def test_custom_board_fields_follow_the_board(window):
     assert not form.isRowVisible(window.spacing_x)
     # All three were added in the middle, so the only problems are the overlaps.
     assert all("overlap" in m for m in validation_errors(window))
+
+
+def test_about_box(window, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    shown = []
+    monkeypatch.setattr(QMessageBox, "exec", lambda self: shown.append(self.text()))
+    assert window.about_action.text() == "About"
+    window.about_action.trigger()
+    assert len(shown) == 1
+    text = shown[0]
+    assert "3Dn00b" in text and "beginners" in text
+    assert text.endswith("<p><br>Vibe-coded by TheSpork, 2026</p>")   # last, after a blank line
+
+
+def test_inside_corner_controls(window):
+    form = window.shape_form
+    assert not form.isRowVisible(window.inside_corner_size)          # sharp: no size
+    window.inside_corners.setCurrentIndex(window.inside_corners.findData("angled"))
+    window.inside_corners.activated.emit(window.inside_corners.currentIndex())
+    assert window.project.inside_corners == "angled" and form.isRowVisible(window.inside_corner_size)
+    window.inside_corner_size.setValue(4)
+    assert window.project.inside_corner_size == 4
+    assert not validation_errors(window)
+    window.undo_stack.undo()
+    window.undo_stack.undo()
+    assert window.project.inside_corners == "sharp"
+
+
+def test_hole_rounding_and_frame_controls(window):
+    from threedn00b.model import BOTTOM, RECT
+    window.add_hole(kind=RECT)
+    hole = window.project.holes[0]
+    assert hole.rounding == 1.0 and hole.strengthen        # new rectangles: both on
+    form = window.hole_form
+    assert form.isRowVisible(window.hole_rounding) and form.isRowVisible(window.hole_strengthen)
+    window.common_sizes.activated.emit(window.common_sizes.findText("USB-C plug (12.5 × 7 mm)"))
+    hole = window.project.holes[0]
+    assert (hole.width, hole.height, hole.rounding) == (12.5, 7.0, 3.0)
+    window.hole_strengthen.setChecked(False)
+    assert not window.project.holes[0].strengthen
+    window.undo_stack.undo()
+    assert window.project.holes[0].strengthen
+    window.hole_rounding.setValue(0)
+    assert window.project.holes[0].rounding == 0
+    assert not validation_errors(window)
+    window.surface_combo.setCurrentIndex(window.surface_combo.findData(BOTTOM))
+    window.surface_combo.activated.emit(window.surface_combo.currentIndex())
+    assert not form.isRowVisible(window.hole_strengthen)    # frames are for walls only
+    window.add_hole()
+    assert not form.isRowVisible(window.hole_rounding)      # round holes have no corners
+
+
+def test_compartment_size_controls(window):
+    window.div_across.setValue(3)
+    sizes = window.width_sizes
+    assert sizes.box.isVisible() and not sizes.form.isRowVisible(sizes.spins[0])
+    sizes.custom.setChecked(True)
+    d = window.project.dividers
+    assert len(d.widths) == 2 and sizes.form.isRowVisible(sizes.spins[1])
+    assert not sizes.form.isRowVisible(sizes.spins[2])
+    sizes.spins[0].setValue(20)
+    assert window.project.dividers.widths[0] == 20
+    assert "the rest" in sizes.rest.text()
+    window.div_across.setValue(4)                     # keeps the first sizes, adds one
+    assert window.project.dividers.widths[:2] == [20, window.project.dividers.widths[1]]
+    assert len(window.project.dividers.widths) == 3 and sizes.form.isRowVisible(sizes.spins[2])
+    assert "Widths from the left: 20 +" in window.divider_info.text()
+    assert not validation_errors(window)
+    sizes.custom.setChecked(False)
+    assert window.project.dividers.widths == []
+    window.undo_stack.undo()
+    assert len(window.project.dividers.widths) == 3
+    window.div_deep.setValue(1)
+    assert not window.depth_sizes.box.isVisible()     # one row: nothing to size

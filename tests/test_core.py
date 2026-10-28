@@ -1209,3 +1209,382 @@ def test_custom_boards_round_trip(tmp_path):
     path = tmp_path / "boards.3dn00b"
     project_io.save_project(p, path)
     assert project_io.load_project(path) == p
+
+
+# ---- rounded / angled inside corners ---------------------------------------------
+
+from threedn00b.model import inside_fillet  # noqa: E402
+
+
+def corner_box(style, size, shape=BOX, **kw):
+    p = default_project(shape)
+    p.corner_radius = 0
+    p.inside_corners, p.inside_corner_size = style, size
+    for k, v in kw.items():
+        setattr(p, k, v)
+    return p
+
+
+@pytest.mark.parametrize("shape", [BOX, CYLINDER])
+def test_inside_corner_profiles(shape):
+    for style, at_half, at_two in (("angled", 3.5, 2.0), ("rounded", 4 - math.sqrt(16 - 3.5 ** 2),
+                                                          4 - math.sqrt(12))):
+        p = corner_box(style, 4.0, shape)
+        body = geometry.build_body(p)
+        wall = p.inner_width / 2
+
+        def inside_at(z):
+            return body.ray_cast([0, 0, z], [100, 0, z])[0].position[0]
+        # The curve is made of short straight steps: within 0.05 mm of a true circle.
+        assert inside_at(p.bottom + 0.5) == pytest.approx(wall - at_half, abs=0.05)
+        assert inside_at(p.bottom + 2) == pytest.approx(wall - at_two, abs=0.05)
+        assert inside_at(p.bottom + 6) == pytest.approx(wall, abs=1e-6)       # normal wall above
+        assert geometry.piece_count(body) == 1 and _edges_shared_twice(body)
+
+
+def test_inside_corners_add_material_where_expected():
+    sharp = geometry.build_body(corner_box("sharp", 3.0)).volume()
+    angled = geometry.build_body(corner_box("angled", 3.0)).volume()
+    rounded = geometry.build_body(corner_box("rounded", 3.0)).volume()
+    p = corner_box("angled", 3.0)
+    perimeter = 2 * (p.inner_width + p.inner_depth)
+    # Roughly a 3 mm triangle (angled) or the area outside a quarter circle (rounded)
+    # all along the floor edge, plus the rounded vertical corners.
+    vertical = 4 * 9 * (1 - math.pi / 4) * (p.inner_height - 3)
+    assert angled - sharp == pytest.approx(perimeter * 4.5 + vertical, rel=0.1)
+    assert rounded - sharp == pytest.approx(perimeter * 9 * (1 - math.pi / 4) + vertical, rel=0.1)
+
+
+def test_vertical_inside_corners_are_rounded_too():
+    p = corner_box("rounded", 5.0)                     # outside corners sharp, inside 5 mm
+    assert p.inner_corner_radius == 5.0
+    body = geometry.build_body(p)
+    z, d = 20.0, 100.0
+    hit = body.ray_cast([0, 0, z], [d, d * p.inner_depth / p.inner_width, z])[0].position
+    sharp_corner = math.hypot(p.inner_width / 2, p.inner_depth / 2)
+    assert math.hypot(hit[0], hit[1]) < sharp_corner - 1.5        # the corner is filled in
+
+
+def test_things_keep_clear_of_the_inside_corners():
+    p = corner_box("rounded", 5.0)
+    lim = wall_limits(p, FRONT, 6)
+    assert lim[2] == pytest.approx(p.bottom + 5 + 3 + 0.4 - p.outer_height / 2)   # above the curve
+    hole = Hole(BOTTOM, 6, 34, 0)                      # floor hole in the curved part
+    p.holes = [hole]
+    issue = next(i for i in validation.check(p) if i.hole_id)
+    assert issue.level == "error"
+    hole.u, hole.v = issue.fix
+    assert not validation.has_errors(validation.check(p))
+    p.holes = []
+    m = mounts.new_mount(p, "single")
+    m.u = 35
+    p.mounts = [m]
+    assert validation.has_errors(validation.check(p))  # the post would stand on the slope
+
+
+@pytest.mark.parametrize("lid", ["push", "snap", "sliding", "screwed"])
+def test_inside_corners_work_with_every_box_lid(lid):
+    p = corner_box("rounded", 4.0, corner_radius=2.0, dividers=Dividers(across=2))
+    p.lid.enabled, p.lid.style = True, lid
+    parts = geometry.build_parts(p)
+    assert geometry.overlap_volume(parts.body, parts.lid) < 1e-6
+    assert not validation.has_errors(validation.check(p, parts))
+
+
+def test_inside_corners_with_threaded_lid_still_unscrew():
+    p = corner_box("rounded", 3.0, CYLINDER)
+    p.lid.enabled, p.lid.style = True, "threaded"
+    parts = geometry.build_parts(p)
+    for deg in range(0, 721, 60):
+        moved = parts.lid.rotate([0, 0, deg]).translate([0, 0, THREAD_PITCH * deg / 360])
+        assert geometry.overlap_volume(parts.body, moved) < 0.05
+    assert not validation.has_errors(validation.check(p, parts))
+
+
+def test_inside_corner_size_checks_and_saving(tmp_path):
+    assert validation.has_errors(validation.check(corner_box("angled", 30.0)))   # 56 mm deep inside
+    assert not validation.has_errors(validation.check(corner_box("angled", 20.0)))
+    p = corner_box("angled", 2.5)
+    assert inside_fillet(p) == 2.5 and inside_fillet(corner_box("sharp", 2.5)) == 0
+    path = tmp_path / "corners.3dn00b"
+    project_io.save_project(p, path)
+    assert project_io.load_project(path) == p
+    data = project_io.to_dict(p)
+    data["project"]["inside_corners"] = "wavy"
+    with pytest.raises(project_io.ProjectFileError):
+        project_io.from_dict(data)
+    del data["project"]["inside_corners"]           # older files: sharp corners
+    assert project_io.from_dict(data).inside_corners == "sharp"
+
+
+# ---- rounded divider joints ------------------------------------------------------
+
+from threedn00b.model import divider_fillet  # noqa: E402
+
+
+def divider_box(style, size, **kw):
+    p = corner_box(style, size, dividers=Dividers(across=2, deep=2), **kw)
+    p.lid.enabled = False
+    return p
+
+
+@pytest.mark.parametrize("style", ["angled", "rounded"])
+def test_divider_joints_follow_the_inside_corners(style):
+    p = divider_box(style, 3.0)
+    assert divider_fillet(p) == 3.0
+    body = geometry.build_body(p)
+    face = p.dividers.thickness / 2                  # the dividers are on the centre lines
+    y = p.inner_depth / 4                            # in the middle of a compartment
+
+    def reach(h):
+        """How far the joint at the floor reaches out from the divider, h mm up."""
+        z = p.bottom + h
+        return body.ray_cast([20, y, z], [-20, y, z])[0].position[0] - face
+    for h in (1.0, 2.0):
+        expected = 3 - h if style == "angled" else 3 - math.sqrt(9 - (3 - h) ** 2)
+        assert reach(h) == pytest.approx(expected, abs=0.05)
+    assert reach(5.0) == pytest.approx(0, abs=1e-6)
+    # Where a divider meets a wall, the joint is rounded too: a ray from inside a
+    # compartment straight at that corner stops short of it.
+    z = p.bottom + 10
+    corner = np.array([face, -p.inner_depth / 2, z])
+    start = corner + [8, 8, 0]
+    pos = np.array(body.ray_cast(start.tolist(), corner.tolist())[0].position)
+    assert np.linalg.norm(pos - corner) == pytest.approx(3 * (math.sqrt(2) - 1), abs=0.05)
+    assert geometry.piece_count(body) == 1 and _edges_shared_twice(body)
+
+
+def test_rounded_divider_joints_add_material():
+    sharp = geometry.build_body(divider_box("sharp", 3.0)).volume()
+    rounded = geometry.build_body(divider_box("rounded", 3.0)).volume()
+    plain = geometry.build_body(corner_box("rounded", 3.0)).volume() - \
+        geometry.build_body(corner_box("sharp", 3.0)).volume()
+    p = divider_box("rounded", 3.0)
+    # Both sides of both dividers along the floor, and 12 upright joints:
+    # 8 where the dividers meet the walls and 4 where they cross.
+    floor_joints = 2 * (p.inner_width + p.inner_depth) * 9 * (1 - math.pi / 4)
+    upright = 12 * 9 * (1 - math.pi / 4) * (p.inner_height - 3)
+    assert rounded - sharp == pytest.approx(plain + floor_joints + upright, rel=0.1)
+
+
+@pytest.mark.parametrize("lid", ["push", "snap", "sliding", "screwed"])
+def test_rounded_divider_joints_leave_room_for_every_lid(lid):
+    p = divider_box("rounded", 4.0, corner_radius=3.0)
+    p.lid.enabled, p.lid.style = True, lid
+    parts = geometry.build_parts(p)
+    assert geometry.overlap_volume(parts.body, parts.lid) < 1e-6
+    assert geometry.is_valid_solid(parts.body) and geometry.piece_count(parts.body) == 1
+    assert not validation.has_errors(validation.check(p, parts))
+
+
+@pytest.mark.parametrize("style", ["angled", "rounded"])
+@pytest.mark.parametrize("lid", [False, True])
+def test_rounded_dividers_make_a_clean_mesh(style, lid):
+    """No zero-area triangles: some slicers report those as errors to repair."""
+    p = default_project(TRAY_TEMPLATE)
+    p.inside_corners, p.inside_corner_size, p.lid.enabled = style, 3.0, lid
+    p.holes = [Hole(FRONT, kind=RECT, width=12, height=6, rounding=1, strengthen=True, u=30)]
+    verts, tris = geometry.mesh_arrays(geometry.build_body(p))
+    a, b, c = (verts[tris[:, i]] for i in range(3))
+    assert np.linalg.norm(np.cross(b - a, c - a), axis=1).min() > 2e-6
+
+
+def test_divider_joint_checks():
+    p = divider_box("rounded", 3.0, height=60)
+    p.dividers.height = 3.0                          # lower than the corners: stays sharp
+    assert divider_fillet(p) == 0
+    assert any("stays sharp" in i.message for i in validation.check(p))
+    p.dividers.height = 0
+    p.dividers.across = 6                            # narrow compartments: corners too big
+    p.inside_corner_size = 8
+    assert validation.has_errors(validation.check_size(p))
+    p.dividers.across, p.inside_corner_size = 2, 3.0
+    # A wall hole next to a divider is flagged when it reaches the rounded joint.
+    face = p.dividers.thickness / 2
+    p.holes = [Hole(FRONT, 4, face + 2 + 1.5, 0)]
+    assert any("divider" in i.message for i in validation.check(p) if i.hole_id)
+    p.holes[0].u = face + 3 + 2.5
+    assert not any("divider" in i.message for i in validation.check(p) if i.hole_id)
+
+
+# ---- rounded hole corners and strengthened hole edges -----------------------------
+
+import copy  # noqa: E402
+
+from threedn00b.model import FRAME_RIM, corner_rounding, frame_thickness, vent_openings  # noqa: E402
+
+
+def test_rounded_rectangle_hole_corners():
+    p = default_project(BOX)
+    hole = Hole(FRONT, kind=RECT, width=12, height=6, rounding=2.0)
+    cut = geometry._hole_cutter(p, hole)
+    length = cut.bounding_box()[4] - cut.bounding_box()[1]
+    assert cut.volume() / length == pytest.approx(72 - (4 - math.pi) * 4, rel=0.01)
+    hole.rounding = 50                               # capped: a slot with round ends
+    assert corner_rounding(hole) == 3.0
+    assert geometry._hole_cutter(p, hole).volume() / length == pytest.approx(
+        36 + math.pi * 9, rel=0.01)
+    assert corner_rounding(Hole(FRONT, 8, rounding=2)) == 0          # round holes: no corners
+    vent = Hole(FRONT, kind=VENT, width=20, height=10, slot=2, gap=2, rounding=1)
+    p.holes = [vent]
+    assert all(s.rounding == 1 for s in vent_openings(p, vent))
+    assert not validation.has_errors(validation.check(p))
+
+
+@pytest.mark.parametrize("shape,surfaces", [(BOX, [FRONT, BACK, LEFT, RIGHT]), (CYLINDER, [SIDE])])
+def test_strengthening_frames(shape, surfaces):
+    p = default_project(shape)
+    p.lid.enabled = False
+    p.holes = [Hole(s, kind=RECT, width=12, height=6, rounding=1, strengthen=True,
+                    u=0 if shape == BOX else 90 * i, v=-5)
+               for i, s in enumerate(surfaces)]
+    body = geometry.build_body(p)
+    plain = copy.deepcopy(p)
+    for h in plain.holes:
+        h.strengthen = False
+    assert body.volume() > geometry.build_body(plain).volume() + 50 * len(surfaces)
+    assert geometry.piece_count(body) == 1 and _edges_shared_twice(body)
+    t = frame_thickness(p)
+    z = p.outer_height / 2 - 5
+    if shape == BOX:
+        y_in = -p.inner_depth / 2
+        # Straight through the openings and their frames (front and back): nothing in the way.
+        assert not body.ray_cast([0, -60, z], [0, 60, z])
+        # Next to the opening the frame stands out by its full thickness...
+        beside = body.ray_cast([6 + FRAME_RIM / 2, 0, z], [6 + FRAME_RIM / 2, -60, z])[0]
+        assert beside.position[1] == pytest.approx(y_in + t, abs=0.02)
+        # ...then slopes back to the wall at 45°.
+        slope = body.ray_cast([6 + FRAME_RIM + t / 2, 0, z], [6 + FRAME_RIM + t / 2, -60, z])[0]
+        assert slope.position[1] == pytest.approx(y_in + t / 2, abs=0.05)
+        far = body.ray_cast([6 + FRAME_RIM + t + 1, 0, z], [6 + FRAME_RIM + t + 1, -60, z])[0]
+        assert far.position[1] == pytest.approx(y_in, abs=1e-6)
+    else:
+        d = np.array([0.0, -100.0, 0.0])
+        assert not body.ray_cast([0, 0, z], (d + [0, 0, z]).tolist())    # the opening is clear
+        assert body.ray_cast([7, 0, z], (d + [7, 0, z]).tolist())[0].position[1] == \
+            pytest.approx(-(p.outer_diameter / 2 - p.wall) + t, abs=0.05)  # beside: the frame
+
+
+def test_frames_keep_out_of_the_lids_way():
+    for style in ("push", "snap", "sliding", "screwed"):
+        p = default_project(BOX)
+        p.lid.enabled, p.lid.style = True, style
+        hole = Hole(FRONT, kind=RECT, width=12, height=6, strengthen=True)
+        p.holes = [hole]
+        hole.u, hole.v = clamp_hole(p, Hole(FRONT, kind=RECT, width=12, height=6, v=100))
+        parts = geometry.build_parts(p)
+        assert geometry.overlap_volume(parts.body, parts.lid) < 1e-6, style
+        assert not validation.has_errors(validation.check(p, parts)), style
+    p = default_project(CYLINDER)
+    p.lid.enabled, p.lid.style = True, "threaded"
+    hole = Hole(SIDE, kind=RECT, width=10, height=6, strengthen=True)
+    hole.u, hole.v = clamp_hole(p, Hole(SIDE, kind=RECT, width=10, height=6, v=100))
+    p.holes = [hole]
+    parts = geometry.build_parts(p)
+    for deg in range(0, 721, 90):
+        moved = parts.lid.rotate([0, 0, deg]).translate([0, 0, THREAD_PITCH * deg / 360])
+        assert geometry.overlap_volume(parts.body, moved) < 0.05
+
+
+def test_frames_only_on_walls_and_boards_keep_clear():
+    p = default_project(BOX)
+    p.holes = [Hole(BOTTOM, 8, strengthen=True)]
+    plain = default_project(BOX)
+    plain.holes = [Hole(BOTTOM, 8)]
+    assert geometry.build_body(p).volume() == pytest.approx(geometry.build_body(plain).volume())
+    hole = Hole(FRONT, kind=RECT, width=12, height=6, strengthen=True,
+                v=-p.outer_height / 2 + p.bottom + 8)
+    m = mounts.new_mount(p, "rpi-zero")
+    m.length = 5
+    p.holes, p.mounts = [hole], [m]
+    assert not any("frame" in i.message for i in validation.check(p))
+    m.v = -p.inner_depth / 2 + 1 + 15                # 1 mm from the wall: fine without a frame
+    assert mounts.clearance(p, m) >= 1 - 1e-6
+    issues = validation.check(p)
+    assert any("frame" in i.message and i.level == "error" for i in issues)
+    hole.strengthen = False
+    assert not any("frame" in i.message for i in validation.check(p))
+
+
+def test_hole_options_are_saved(tmp_path):
+    p = default_project(BOX)
+    p.holes = [Hole(FRONT, kind=RECT, rounding=1.5, strengthen=True)]
+    path = tmp_path / "holes.3dn00b"
+    project_io.save_project(p, path)
+    assert project_io.load_project(path) == p
+    data = project_io.to_dict(p)
+    for key in ("rounding", "strengthen"):            # older files: sharp, no frame
+        del data["project"]["holes"][0][key]
+    old = project_io.from_dict(data).holes[0]
+    assert old.rounding == 0 and old.strengthen is False
+
+
+# ---- compartments of different sizes ----------------------------------------------
+
+from threedn00b.model import compartment_depths, compartment_widths, resized_sizes  # noqa: E402
+
+
+def test_compartments_of_set_sizes():
+    p = Project(width=100, depth=60, height=30, wall=2, bottom=2, corner_radius=0,
+                dividers=Dividers(across=3, deep=2, thickness=2, widths=[20, 30], depths=[15]))
+    assert compartment_widths(p) == pytest.approx([20, 30, 42])      # the last gets the rest
+    assert compartment_depths(p) == pytest.approx([15, 39])
+    assert compartment_size(p) == pytest.approx((20, 15))
+    xs, ys = divider_positions(p)
+    assert xs == pytest.approx([-27, 5]) and ys == pytest.approx([-12])
+    body = geometry.build_body(p)
+    # Walk along the floor from the left: walls of the compartments where expected.
+    z = p.bottom + 5
+    hit = body.ray_cast([-47, -20, z], [47, -20, z])[0].position
+    assert hit[0] == pytest.approx(-28)
+    assert body.ray_cast([0, 0, z], [0, -40, z])[0].position[1] == pytest.approx(-11)
+    assert not validation.has_errors(validation.check(p))
+
+
+def test_set_sizes_that_dont_fit():
+    p = default_project(BOX)
+    p.dividers = Dividers(across=3, widths=[40, 40])           # 76 mm inside: nothing left
+    issues = validation.check_size(p)
+    assert validation.has_errors(issues)
+    assert "add up to more than fits" in issues[0].message
+    p.dividers.widths = [2, 30]
+    assert "too narrow to print" in validation.check_size(p)[0].message
+    p.dividers.widths = [20, 30]
+    assert not validation.has_errors(validation.check(p))
+    p.dividers.across = 4                                         # sizes no longer match: equal
+    assert compartment_widths(p) == pytest.approx([(p.inner_width - 3 * 1.6) / 4] * 4)
+
+
+def test_changing_the_number_keeps_set_sizes():
+    assert resized_sizes(96, 5, 2, [20, 30]) == pytest.approx([20, 30, 12.7, 12.7])
+    assert resized_sizes(96, 2, 2, [20, 30]) == [20]
+    assert resized_sizes(96, 1, 2, [20, 30]) == []
+    assert resized_sizes(96, 3, 2, []) == pytest.approx([30.7, 30.7])
+
+
+@pytest.mark.parametrize("lid", ["push", "snap", "sliding", "screwed"])
+@pytest.mark.parametrize("style", ["sharp", "rounded"])
+def test_set_sizes_with_every_lid(lid, style):
+    p = default_project(TRAY_TEMPLATE)
+    p.dividers.widths, p.dividers.depths = [20.0, 70.0], [30.0]
+    p.inside_corners, p.inside_corner_size = style, 3.0
+    p.wall = 2.4                                      # thick enough for a sliding lid
+    p.lid.enabled, p.lid.style = True, lid
+    parts = geometry.build_parts(p)
+    assert geometry.overlap_volume(parts.body, parts.lid) < 1e-6
+    assert geometry.piece_count(parts.body) == 1 and _edges_shared_twice(parts.body)
+    assert not validation.has_errors(validation.check(p, parts))
+
+
+def test_set_sizes_are_saved(tmp_path):
+    p = default_project(TRAY_TEMPLATE)
+    p.dividers.widths = [20.0, 70.0]
+    path = tmp_path / "sizes.3dn00b"
+    project_io.save_project(p, path)
+    assert project_io.load_project(path) == p
+    data = project_io.to_dict(p)
+    data["project"]["dividers"]["widths"] = ["wide"]
+    with pytest.raises(project_io.ProjectFileError):
+        project_io.from_dict(data)
+    del data["project"]["dividers"]["widths"]             # older files: all the same size
+    assert project_io.from_dict(data).dividers.widths == []

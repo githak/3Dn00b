@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import gc
 from pathlib import Path
+from types import SimpleNamespace
 
 from PySide6.QtCore import QSettings, Qt, QTimer
 from PySide6.QtGui import QAction, QKeySequence, QUndoCommand, QUndoStack
@@ -12,17 +13,18 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox,
                                QDoubleSpinBox, QFileDialog, QFormLayout, QFrame,
                                QHBoxLayout, QLabel, QLineEdit, QListWidget,
                                QListWidgetItem, QMainWindow, QMessageBox,
-                               QMenu, QPushButton, QRadioButton, QSizePolicy, QSpinBox,
+                               QMenu, QPushButton, QRadioButton, QScrollArea, QSizePolicy, QSpinBox,
                                QSplitter, QStyle, QTabWidget, QToolBar, QToolButton,
                                QVBoxLayout, QWidget)
 
-from .. import APP_NAME, geometry, mounts, picking, project_io, validation
+from .. import APP_NAME, __version__, geometry, mounts, picking, project_io, validation
 from ..model import (ALONG_U, ALONG_V, BOTTOM, BOX, CYLINDER, FIT_LABELS, FIT_PRESETS,
                      FRONT, HOLE_DIAMETER_RANGE, HOLE_KIND_LABELS, INSIDE, LID, MIN_EDGE,
                      OUTSIDE, RECT, ROUND, SIDE, SIZE_RANGE, SURFACE_LABELS, VENT,
-                     DIVIDER_RANGE, LID_STYLE_LABELS, MAX_COMPARTMENTS, PUSH_ON, SCREWED, SCREWS, SLIDING,
+                     DIVIDER_RANGE, INSIDE_CORNER_LABELS, LID_STYLE_LABELS, SHARP, MAX_COMPARTMENTS, PUSH_ON, SCREWED, SCREWS, SLIDING,
                      SNAP, THREADED, TRAY_TEMPLATE, WALL_RANGE, Hole, Project,
-                     clamp_hole, compartment_size, default_project, hole_limits)
+                     clamp_hole, compartment_depths, compartment_widths, default_project,
+                     has_set_sizes, hole_limits, resized_sizes)
 from .viewer import Viewer
 
 COMMON_HOLES = [
@@ -36,12 +38,13 @@ COMMON_HOLES = [
 # Typical sizes; real parts vary, which the panel tells the user.
 COMMON_RECTS = [
     ("Common sizes…", None),
-    ("USB-C plug (12.5 × 7 mm)", (12.5, 7.0)),
-    ("Micro-USB plug (11 × 8 mm)", (11.0, 8.0)),
-    ("USB-A plug (16 × 8.5 mm)", (16.0, 8.5)),
-    ("Slide switch (9 × 4 mm)", (9.0, 4.0)),
-    ("Rocker switch (19 × 13 mm)", (19.0, 13.0)),
+    ("USB-C plug (12.5 × 7 mm)", (12.5, 7.0, 3.0)),       # width, height, corner rounding
+    ("Micro-USB plug (11 × 8 mm)", (11.0, 8.0, 1.5)),
+    ("USB-A plug (16 × 8.5 mm)", (16.0, 8.5, 1.0)),
+    ("Slide switch (9 × 4 mm)", (9.0, 4.0, 0.5)),
+    ("Rocker switch (19 × 13 mm)", (19.0, 13.0, 0.5)),
 ]
+NEW_HOLE_ROUNDING = 1.0     # corner radius of new rectangles and vents
 RECT_SIZE_RANGE = (1.0, 150.0)
 TAB_SHAPE, TAB_HOLES, TAB_POSTS, TAB_LID, TAB_CHECK = range(5)
 # Labels and tips for the two spacing fields of each custom board.
@@ -116,11 +119,35 @@ def int_spin(lo: int, hi: int) -> QSpinBox:
     return box
 
 
+def scrolling(page: QWidget) -> QScrollArea:
+    """Let a tab scroll when it is taller than the window."""
+    area = QScrollArea()
+    area.setWidget(page)
+    area.setWidgetResizable(True)
+    area.setFrameShape(QFrame.Shape.NoFrame)
+    area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    return area
+
+
 def hint(text: str) -> QLabel:
     label = QLabel(text)
     label.setWordWrap(True)
     label.setStyleSheet("color: #556;")
     return label
+
+
+def _ordinal(n: int) -> str:
+    return {1: "st", 2: "nd", 3: "rd"}.get(n if n < 20 else n % 10, "th")
+
+
+def _set_count(p: Project, attr: str, count: int):
+    """Change the number of compartments, keeping set sizes for the ones that stay."""
+    d = p.dividers
+    sizes = "widths" if attr == "across" else "depths"
+    if getattr(d, sizes):
+        span = p.inner_width if attr == "across" else p.inner_depth
+        setattr(d, sizes, resized_sizes(span, count, d.thickness, getattr(d, sizes)))
+    setattr(d, attr, count)
 
 
 def set_quietly(widget, value):
@@ -160,11 +187,11 @@ class MainWindow(QMainWindow):
         self.viewer.surfaceDoubleClicked.connect(self._on_surface_double_clicked)
 
         self.tabs = QTabWidget()
-        self.tabs.addTab(self._build_shape_tab(), "1 Shape")
-        self.tabs.addTab(self._build_holes_tab(), "2 Holes")
-        self.tabs.addTab(self._build_posts_tab(), "3 Posts")
-        self.tabs.addTab(self._build_lid_tab(), "4 Lid")
-        self.tabs.addTab(self._build_check_tab(), CHECK_TAB_TITLE)
+        self.tabs.addTab(scrolling(self._build_shape_tab()), "1 Shape")
+        self.tabs.addTab(scrolling(self._build_holes_tab()), "2 Holes")
+        self.tabs.addTab(scrolling(self._build_posts_tab()), "3 Posts")
+        self.tabs.addTab(scrolling(self._build_lid_tab()), "4 Lid")
+        self.tabs.addTab(scrolling(self._build_check_tab()), CHECK_TAB_TITLE)
         self.tabs.setMinimumWidth(420)
         self.tabs.setMaximumWidth(500)
 
@@ -242,6 +269,9 @@ class MainWindow(QMainWindow):
         self.export_action = action("Export for printing…", QStyle.StandardPixmap.SP_DriveHDIcon,
                                     self.export_stl, QKeySequence("Ctrl+E"),
                                     "Save STL files you can open in your slicer")
+        bar.addSeparator()
+        self.about_action = action("About", QStyle.StandardPixmap.SP_MessageBoxInformation,
+                                   self.show_about, tip="About 3Dn00b")
         delete = QAction(self, shortcut=QKeySequence.StandardKey.Delete)
         delete.triggered.connect(self.remove_selected_hole)
         self.addAction(delete)
@@ -304,6 +334,23 @@ class MainWindow(QMainWindow):
         form.addRow("Wall thickness", self.wall_spin)
         form.addRow("Bottom thickness", self.bottom_spin)
         form.addRow(self.corner_label, self.corner_spin)
+        self.inside_corners = QComboBox()
+        for key, text in INSIDE_CORNER_LABELS.items():
+            self.inside_corners.addItem(text, key)
+        self.inside_corners.setToolTip("Where the walls meet the floor (and each other). Rounded or "
+                                       "angled corners are stronger and easier to clean.")
+        self.inside_corners.activated.connect(
+            lambda _: self.edit("Change inside corners", lambda p: setattr(
+                p, "inside_corners", self.inside_corners.currentData())))
+        self.inside_corner_size = spin(0.5, 20.0, step=0.5)
+        self.inside_corner_size.setToolTip("How far the rounding or bevel reaches up the wall "
+                                           "and across the floor")
+        self.inside_corner_size.valueChanged.connect(
+            lambda v: self.edit("Change inside corners",
+                                lambda p: setattr(p, "inside_corner_size", v), merge="inside_size"))
+        form.addRow("Inside corners", self.inside_corners)
+        form.addRow("Corner size", self.inside_corner_size)
+        self.shape_form = form
         layout.addLayout(form)
         for widget, attr, label in (
                 (self.width_spin, "width", "Change width"),
@@ -335,15 +382,19 @@ class MainWindow(QMainWindow):
         self.div_height = spin(1.0, 300.0, step=1.0)
         self.div_height.setToolTip("Lower dividers make it easier to reach into the compartments")
         form.addRow("Left to right", self.div_across)
+        self.width_sizes = self._compartment_sizes("widths", "width", "from the left")
+        form.addRow(self.width_sizes.box)
         form.addRow("Front to back", self.div_deep)
+        self.depth_sizes = self._compartment_sizes("depths", "depth", "from the front")
+        form.addRow(self.depth_sizes.box)
         form.addRow("Divider thickness", self.div_thickness)
         form.addRow("Divider height", self.div_full)
         form.addRow("", self.div_height)
         self.div_across.valueChanged.connect(
-            lambda v: self.edit("Change compartments", lambda p: setattr(p.dividers, "across", v),
+            lambda v: self.edit("Change compartments", lambda p: _set_count(p, "across", v),
                                 merge="div_across"))
         self.div_deep.valueChanged.connect(
-            lambda v: self.edit("Change compartments", lambda p: setattr(p.dividers, "deep", v),
+            lambda v: self.edit("Change compartments", lambda p: _set_count(p, "deep", v),
                                 merge="div_deep"))
         self.div_thickness.valueChanged.connect(
             lambda v: self.edit("Change divider thickness",
@@ -425,6 +476,19 @@ class MainWindow(QMainWindow):
         form.addRow("", self.common_sizes)
         self.measure_hint = hint("Plugs and switches vary: measure yours and add a little room.")
         form.addRow("", self.measure_hint)
+        self.hole_rounding = spin(0.0, 50.0, step=0.5)
+        self.hole_rounding.setToolTip("Round corners are stronger: cracks start in sharp corners.\n"
+                                      "0 = sharp corners.")
+        self.hole_rounding.valueChanged.connect(
+            lambda v: self._edit_hole("Change corner rounding", "rounding", v))
+        form.addRow("Rounded corners", self.hole_rounding)
+        self.hole_strengthen = QCheckBox("Thicker frame around it, inside")
+        self.hole_strengthen.setToolTip(
+            "Adds a frame on the inside of the wall around the opening, so a plug pushed in\n"
+            "at an angle doesn't break the edge. Its sides slope at 45°, so it prints without support.")
+        self.hole_strengthen.toggled.connect(
+            lambda on: self._edit_hole("Strengthen hole edge", "strengthen", on))
+        form.addRow("Strengthen", self.hole_strengthen)
         self.u_label, self.v_label = QLabel(), QLabel()
         self.hole_u = spin(-500, 500, step=1.0)
         self.hole_v = spin(-500, 500, step=1.0)
@@ -685,6 +749,9 @@ class MainWindow(QMainWindow):
             widget.setVisible(is_box)
         self.diameter_spin.setVisible(not is_box)
         self.diameter_label.setVisible(not is_box)
+        set_quietly(self.inside_corners, p.inside_corners)
+        set_quietly(self.inside_corner_size, p.inside_corner_size)
+        self.shape_form.setRowVisible(self.inside_corner_size, p.inside_corners != SHARP)
         self._refresh_size_summary()
         self._refresh_dividers()
 
@@ -720,6 +787,54 @@ class MainWindow(QMainWindow):
         self.refresh_holes()
         self.refresh_mounts()
 
+    def _compartment_sizes(self, attr: str, word: str, where: str) -> "SimpleNamespace":
+        """A switch to set each compartment's size, with one box per compartment."""
+        ui = SimpleNamespace(attr=attr, box=QWidget())
+        layout = QVBoxLayout(ui.box)
+        layout.setContentsMargins(0, 0, 0, 0)
+        ui.custom = QCheckBox(f"Set each {word}")
+        ui.custom.setToolTip(f"Give the compartments different {attr}, {where}; "
+                             "the last one gets the rest of the room.")
+        ui.custom.toggled.connect(lambda on: self._on_custom_sizes(attr, on))
+        layout.addWidget(ui.custom)
+        ui.form = QFormLayout()
+        ui.form.setContentsMargins(16, 0, 0, 0)
+        ui.spins = []
+        for i in range(MAX_COMPARTMENTS - 1):
+            box = spin(1.0, 1000.0, step=1.0)
+            box.valueChanged.connect(
+                lambda v, i=i: self.edit(f"Change compartment {word}",
+                                         lambda p: getattr(p.dividers, attr).__setitem__(i, v),
+                                         merge=f"div_{attr}{i}"))
+            ui.form.addRow(f"{i + 1}{_ordinal(i + 1)} {where}", box)
+            ui.spins.append(box)
+        ui.rest = QLabel()
+        ui.form.addRow("Last one", ui.rest)
+        layout.addLayout(ui.form)
+        return ui
+
+    def _on_custom_sizes(self, attr: str, on: bool):
+        def change(p):
+            d = p.dividers
+            count = d.across if attr == "widths" else d.deep
+            span = p.inner_width if attr == "widths" else p.inner_depth
+            setattr(d, attr, resized_sizes(span, count, d.thickness, []) if on else [])
+        self.edit("Set compartment sizes" if on else "Make compartments the same size", change)
+
+    def _refresh_sizes(self, ui, count: int, chosen: list[float], sizes: list[float]):
+        custom = has_set_sizes(chosen, count)
+        ui.box.setVisible(count > 1)
+        set_quietly(ui.custom, custom)
+        for i, box in enumerate(ui.spins):
+            shown = custom and i < count - 1
+            ui.form.setRowVisible(box, shown)
+            if shown:
+                set_quietly(box, chosen[i])
+        ui.form.setRowVisible(ui.rest, custom)
+        if custom:
+            ui.rest.setText(f"the rest: {sizes[-1]:.1f} mm")
+            ui.rest.setStyleSheet("" if sizes[-1] >= 3 else "color: #b02020;")
+
     def _refresh_dividers(self):
         p, d = self.project, self.project.dividers
         is_box = p.shape == BOX
@@ -732,14 +847,26 @@ class MainWindow(QMainWindow):
         self.divider_form.setRowVisible(self.div_height, d.height > 0)
         for widget in (self.div_thickness, self.div_full):
             widget.setEnabled(d.enabled)
+        widths, depths = compartment_widths(p), compartment_depths(p)
+        self._refresh_sizes(self.width_sizes, d.across, d.widths, widths)
+        self._refresh_sizes(self.depth_sizes, d.deep, d.depths, depths)
         if not is_box:
             self.divider_info.setText("Dividers are available for boxes.")
         elif not d.enabled:
             self.divider_info.setText("Set more than 1 to split the box into compartments.")
-        else:
-            w, dp = compartment_size(p)
+        elif len(set(round(w, 1) for w in widths)) == len(set(round(x, 1) for x in depths)) == 1:
             count = d.across * d.deep
-            self.divider_info.setText(f"{count} compartments, each {w:.1f} × {dp:.1f} mm inside.")
+            self.divider_info.setText(f"{count} compartments, each {widths[0]:.1f} × "
+                                      f"{depths[0]:.1f} mm inside.")
+        else:
+            def listed(sizes):
+                sizes = [round(x, 1) for x in sizes]
+                if len(set(sizes)) == 1:
+                    return f"{sizes[0]:g} mm each"
+                return " + ".join(f"{x:g}" for x in sizes) + " mm"
+            self.divider_info.setText(f"{d.across * d.deep} compartments inside. "
+                                      f"Widths from the left: {listed(widths)}. "
+                                      f"Depths from the front: {listed(depths)}.")
 
     def _on_divider_full(self, full: bool):
         height = 0.0 if full else round(self.project.inner_height / 2, 1)
@@ -816,6 +943,10 @@ class MainWindow(QMainWindow):
             self.hole_form.setRowVisible(widget, is_vent)
         self.hole_form.setRowVisible(self.common_sizes, not is_vent)
         self.hole_form.setRowVisible(self.measure_hint, hole.kind == RECT)
+        set_quietly(self.hole_rounding, hole.rounding)
+        set_quietly(self.hole_strengthen, hole.strengthen)
+        self.hole_form.setRowVisible(self.hole_rounding, is_rect)
+        self.hole_form.setRowVisible(self.hole_strengthen, not flat)
         self.hole_height.setToolTip("Front to back" if hole.surface in (BOTTOM, LID) else "Up and down")
         if self._common_kind != hole.kind:
             self._common_kind = hole.kind
@@ -1011,7 +1142,8 @@ class MainWindow(QMainWindow):
             surface = current.surface if current else (FRONT if p.shape == BOX else SIDE)
         if kind in (RECT, VENT):
             size = (picking.fitting_rect if kind == RECT else picking.fitting_vent)(p, surface)
-            hole = Hole(surface=surface, kind=kind, u=u, v=v)
+            hole = Hole(surface=surface, kind=kind, u=u, v=v, rounding=NEW_HOLE_ROUNDING,
+                        strengthen=kind == RECT)
             if size:
                 hole.width, hole.height = size
         else:
@@ -1075,7 +1207,8 @@ class MainWindow(QMainWindow):
             return
         if isinstance(value, tuple):
             def change(p):
-                p.hole(hole_id).width, p.hole(hole_id).height = value
+                h = p.hole(hole_id)
+                h.width, h.height, h.rounding = value
             self.edit("Change hole size", change)
         else:
             self._edit_hole("Change hole size", "diameter", value)
@@ -1089,6 +1222,8 @@ class MainWindow(QMainWindow):
             h = p.hole(hole_id)
             if h.kind == kind:
                 return
+            if h.kind == ROUND and h.rounding == 0:
+                h.rounding = NEW_HOLE_ROUNDING
             h.kind = kind
             if kind == VENT:
                 size = picking.fitting_vent(p, h.surface)
@@ -1410,6 +1545,23 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, APP_NAME, "Saved for printing:\n\n"
                                 + "\n".join(f.name for f in files)
                                 + f"\n\nin {folder}\n\nOpen these in your slicer to print them.")
+
+    def about_text(self) -> str:
+        return (f"<h3>{APP_NAME} {__version__}</h3>"
+                "<p>A simple designer for 3D printing, made for beginners. Pick a box or a "
+                "round container, type the sizes, add holes, vents, compartments, screw "
+                "posts and a lid, and export files for your slicer. No CAD knowledge "
+                "needed: the app checks your design and explains problems in plain words.</p>"
+                "<p>Free software under the GNU GPL version 3.</p>"
+                "<p><br>Vibe-coded by TheSpork, 2026</p>")
+
+    def show_about(self):
+        box = QMessageBox(self)
+        box.setWindowTitle(f"About {APP_NAME}")
+        box.setTextFormat(Qt.TextFormat.RichText)
+        box.setText(self.about_text())
+        box.setIconPixmap(QApplication.windowIcon().pixmap(64, 64))
+        box.exec()
 
     def _update_title(self, clean: bool | None = None):
         if clean is None:

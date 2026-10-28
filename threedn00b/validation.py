@@ -16,8 +16,10 @@ from .model import (ALONG_V, BACK, BOTTOM, BOX, CYLINDER, FRONT, LEFT, LID, MIN_
                     THREADED, has_screw_lid, has_sliding_lid, has_snap_lid, has_threaded_lid,
                     slide_engage, slide_groove, thread_sizes,
                     lid_ceiling, lid_pilot_depth, lid_screw_positions, wall_corner_zone, clamp_hole, comfortable_margin,
-                    compartment_size, divider_positions, divider_top, has_dividers,
-                    hole_edge_clearance, hole_limits, lip_outer_offset, lip_wall, opening_gap,
+                    compartment_depths, compartment_size, compartment_widths, divider_fillet,
+                    has_set_sizes, divider_positions, divider_top,
+                    has_dividers, has_frame,
+                    hole_edge_clearance, hole_limits, inside_fillet, lip_outer_offset, lip_wall, opening_gap,
                     point_near_opening)
 
 ERROR, WARNING, INFO = "error", "warning", "info"
@@ -45,21 +47,51 @@ def hole_name(project: Project, hole: Hole) -> str:
     return f"Hole {index}"
 
 
+def _check_inside_corners(p: Project) -> list[Issue]:
+    f = inside_fillet(p)
+    if f <= 0:
+        return []
+    room = min(p.inner_height - 2, min(p.inner_width, p.inner_depth) / 2 - 2)
+    if has_threaded_lid(p):
+        room = min(room, thread_sizes(p).slope_bottom - p.bottom - 1)
+    if has_dividers(p):
+        room = min(room, min(compartment_size(p)) / 2 - 2)   # dividers get the same joints
+    if f > room:
+        return [Issue(ERROR, f"Inside corners of {_mm(f)} are too big for this size.",
+                      f"Use {_mm(max(room, 0))} or less, or make the object bigger.")]
+    return []
+
+
 def _check_divider_size(p: Project) -> list[Issue]:
     if not has_dividers(p):
         return []
-    w, d = compartment_size(p)
-    if min(w, d) < 3:
-        return [Issue(ERROR, "There are too many compartments for this size; they'd be too narrow.",
-                      "Use fewer compartments, thinner dividers or a bigger box.")]
-    return []
+    out = []
+    d = p.dividers
+    for sizes, count, chosen, across in ((compartment_widths(p), d.across, d.widths, "wide"),
+                                         (compartment_depths(p), d.deep, d.depths, "deep")):
+        if min(sizes) >= 3:
+            continue
+        if not has_set_sizes(chosen, count):
+            out.append(Issue(ERROR, "There are too many compartments for this size; they'd be "
+                                    "too narrow.", "Use fewer compartments, thinner dividers or a "
+                                                   "bigger box."))
+        elif sizes[-1] < 3:
+            direction = "left to right" if across == "wide" else "front to back"
+            out.append(Issue(ERROR, f"The compartment sizes set {direction} add up to more than "
+                                    f"fits: the last one would be {_mm(sizes[-1])} {across}.",
+                             "Make the others smaller, use fewer compartments, or make the box "
+                             "bigger."))
+        else:
+            out.append(Issue(ERROR, f"A compartment only {_mm(min(sizes))} {across} is too narrow "
+                                    "to print.", "Make it at least 3 mm."))
+    return list({i.message: i for i in out}.values())     # say the same thing once
 
 
 def check_size(project: Project) -> list[Issue]:
     """Only the basic size rules; cheap, and needed before geometry can be built."""
     issues = _check_size(project)
     if not has_errors(issues):
-        issues += _check_divider_size(project)
+        issues += _check_divider_size(project) + _check_inside_corners(project)
     return sorted(issues, key=lambda i: _ORDER[i.level])
 
 
@@ -67,7 +99,7 @@ def check(project: Project, parts: geometry.Parts | None = None) -> list[Issue]:
     issues: list[Issue] = []
     issues += _check_size(project)
     if not has_errors(issues):
-        issues += _check_divider_size(project)
+        issues += _check_divider_size(project) + _check_inside_corners(project)
     if not has_errors(issues):
         issues += _check_lid(project)
         issues += _check_holes(project)
@@ -343,17 +375,23 @@ def _check_dividers(p: Project) -> list[Issue]:
     d = p.dividers
     w, dp = compartment_size(p)
     if min(w, dp) < 12:
-        out.append(Issue(WARNING, f"Each compartment is only {_mm(w)} × {_mm(dp)}, which is hard "
-                         "to reach into.", "Use fewer compartments or a bigger box."))
+        same = not has_set_sizes(d.widths, d.across) and not has_set_sizes(d.depths, d.deep)
+        what = "Each compartment is" if same else "The smallest compartments are"
+        out.append(Issue(WARNING, f"{what} only {_mm(w)} × {_mm(dp)}, which is hard "
+                         "to reach into.", "Use fewer or bigger compartments, or a bigger box."))
     if d.thickness < 1.0:
         out.append(Issue(WARNING, f"Dividers of {_mm(d.thickness)} are thin and may break.",
                          "1.2 to 2 mm works well."))
     if has_lip(p) and d.height == 0:
         out.append(Issue(INFO, "The dividers have small notches at their ends so the lid's lip fits.",
                          "They also stop just below the lid."))
+    if inside_fillet(p) > 0 and divider_fillet(p) == 0:
+        out.append(Issue(INFO, "The dividers are lower than the inside corners are big, so where "
+                         "they meet the floor and the walls stays sharp.",
+                         "Make the dividers taller or the corners smaller to round them too."))
     xs, ys = divider_positions(p)
     top = divider_top(p)
-    half = d.thickness / 2
+    half = d.thickness / 2 + divider_fillet(p)      # the rounded joint isn't flat either
     for hole in p.holes:
         hu, hv = hole.half_extents
         if hole.surface == BOTTOM:
@@ -427,8 +465,9 @@ def _check_mounts(p: Project) -> list[Issue]:
                              "Use shorter posts or a bigger screw size.", mount_id=m.id))
         r = mounts.post_radius(m)
         posts = mounts.post_positions(m)
-        if any(abs(x - dx) < r + 0.8 for x, _ in posts for dx in xs) or \
-                any(abs(y - dy) < r + 0.8 for _, y in posts for dy in ys):
+        reach = r + 0.8 + divider_fillet(p)
+        if any(abs(x - dx) < reach for x, _ in posts for dx in xs) or \
+                any(abs(y - dy) < reach for _, y in posts for dy in ys):
             out.append(Issue(WARNING, f"{name}: a post stands on a divider.",
                              "Move the posts into a compartment.", mount_id=m.id))
         elif size and div_top > mounts.board_bottom(p, m):
@@ -444,8 +483,31 @@ def _check_mounts(p: Project) -> list[Issue]:
                     point_near_opening(p, hole, x, y, r) for x, y in posts):
                 out.append(Issue(WARNING, f"{hole_name(p, hole)} is under a post of {name}.",
                                  "Move the hole or the posts.", hole.id))
+        out += _check_frames(p, m, name)
     for a, b in itertools.combinations(p.mounts, 2):
         out += _check_stacking(p, a, b)
+    return out
+
+
+FRAME_ROOM = 0.5      # room kept between a board and a hole's strengthening frame
+
+
+def _check_frames(p: Project, m, name: str) -> list[Issue]:
+    """Does the board run into the frame around a strengthened wall hole?"""
+    corners = mounts.board_corners(m)
+    if not corners or not any(has_frame(p, h) for h in p.holes):
+        return []
+    outline = geometry.CrossSection([corners]).offset(FRAME_ROOM, geometry.JoinType.Miter)
+    z = mounts.board_bottom(p, m)
+    board = geometry.Manifold.extrude(outline, mounts.BOARD_THICKNESS).translate([0.0, 0.0, z])
+    out = []
+    for hole in p.holes:
+        frame = geometry.frame_solid(p, hole)
+        if frame is not None and geometry.overlap_volume(board, frame) > 0.001:
+            out.append(Issue(ERROR, f"{name}: the board runs into the frame around "
+                             f"{hole_name(p, hole)}.",
+                             "Move the board away from the wall, change the post length, or turn "
+                             "off the hole's frame.", mount_id=m.id))
     return out
 
 
