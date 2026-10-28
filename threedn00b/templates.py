@@ -64,10 +64,11 @@ def _top(p: Project, m: Mount) -> float:
 
 # ---- boards -------------------------------------------------------------------
 
-def pi_case() -> Project:
+def pi_case(fan: bool = False) -> Project:
     # 85 x 56 mm. Room around it: the USB and network sockets stick out about
     # 2 mm on the right, the SD card on the left.
-    p = _box("Raspberry Pi case", 85 + 2.0 + 2.5, 56 + 3.0, 32.0)
+    p = _box("Raspberry Pi 5 case with fan" if fan else "Raspberry Pi case",
+             85 + 2.0 + 2.5, 56 + 3.0, 32.0)
     m = _board(p, "rpi-ab", 6.0, u=(2.0 - 2.5) / 2, v=0.0)
     top, low = _top(p, m), mounts.board_bottom(p, m)
     # Power, HDMI and audio along the front edge (Pi 3, 4 and 5 all fit in one opening).
@@ -81,8 +82,43 @@ def pi_case() -> Project:
     # The micro SD card, under the board on the left edge.
     _, y = _floor_point(m, 0, 28.0)
     _opening(p, LEFT, y, low - 3.5, low + 1.0, 16.0, rounding=2.0)
-    # Air out over the processor.
-    p.holes.append(Hole(surface=LID, kind=VENT, width=40.0, height=16.0, rounding=1.0))
+    if fan:
+        # A 30 mm fan under the lid, over the processor, held by four screws 24 mm apart.
+        # It stays clear of the tall USB and network sockets.
+        x, y = _floor_point(m, 30.0, 32.0)
+        p.holes.append(Hole(surface=LID, diameter=26.0, u=x, v=y))
+        p.holes += [Hole(surface=LID, diameter=3.4, u=x + dx, v=y + dy)
+                    for dx in (-12.0, 12.0) for dy in (-12.0, 12.0)]
+    else:
+        # Air out over the processor.
+        p.holes.append(Hole(surface=LID, kind=VENT, width=40.0, height=16.0, rounding=1.0))
+    return p
+
+
+def pico_case() -> Project:
+    # 51 x 21 mm. Tall posts leave room for pin headers soldered underneath.
+    p = _box("Raspberry Pi Pico case", 51 + 2.0 + 1.5, 21 + 3.0, 21.0, corner=2.5)
+    m = _board(p, "pico", 8.0, u=(2.0 - 1.5) / 2, v=0.0)
+    top = _top(p, m)
+    _opening(p, *_facing(p, m, 0, 10.5), top - 3.0, top + 5.0, 11.5, rounding=2.0)  # micro USB
+    # A hole for the wires to whatever the Pico controls.
+    p.holes.append(Hole(surface=RIGHT, diameter=6.0, v=top + 2.0 - p.outer_height / 2))
+    return p
+
+
+ESP32_SIZE = (51.5, 28.5, 47.0, 23.5)    # common 30-pin ESP32 DevKit: board and hole spacing
+
+
+def esp32_case() -> Project:
+    w, d, sx, sy = ESP32_SIZE
+    p = _box("ESP32 case", w + 2.0 + 1.5, d + 3.0, 22.0, corner=2.5)
+    m = Mount(board="custom", screw="M2", length=9.0, u=(2.0 - 1.5) / 2, v=0.0,
+              board_width=w, board_depth=d, spacing_x=sx, spacing_y=sy, parts_height=5.0)
+    p.mounts.append(m)
+    top = _top(p, m)
+    # USB (micro USB or USB-C) in the middle of one short end, next to the two buttons.
+    _opening(p, *_facing(p, m, 0, d / 2), top - 3.0, top + 5.0, 12.5, rounding=2.0)
+    p.holes.append(Hole(surface=RIGHT, diameter=6.0, v=top + 2.0 - p.outer_height / 2))
     return p
 
 
@@ -201,6 +237,10 @@ TEMPLATES = {
     "pi": Template("Raspberry Pi 3 / 4 / 5 case",
                    "Posts for the board, openings for power, HDMI, USB, network and the SD card, "
                    "and a lid with an air vent.", pi_case),
+    "pi5-fan": Template("Raspberry Pi 5 case with a 30 mm fan",
+                        "Like the Pi 3 / 4 / 5 case, with a 30 mm fan in the lid blowing onto "
+                        "the processor. The fan's wires go to the Pi's 5 V and ground pins.",
+                        lambda: pi_case(fan=True)),
     "pi-zero": Template("Raspberry Pi Zero / Zero 2 W case",
                         "Posts, openings for mini HDMI, USB, power, the SD card and the camera "
                         "cable, and a lid with an air vent.", pi_zero_case),
@@ -211,6 +251,12 @@ TEMPLATES = {
     "arduino": Template("Arduino Uno case",
                         "Posts for the board and openings for the USB and power plugs. Make it "
                         "taller if you add a shield.", arduino_case),
+    "pico": Template("Raspberry Pi Pico case",
+                     "Posts tall enough for pin headers underneath, an opening for the USB plug "
+                     "and a hole for wires.", pico_case),
+    "esp32": Template("ESP32 DevKit case",
+                      "For the common 30-pin ESP32 boards. Boards differ: measure yours and "
+                      "change the board size and hole spacing in the Posts tab.", esp32_case),
     "storage": Template("Storage box with lid",
                         "A plain box with a push-on lid that's easy to open.", storage_box),
     "tray": Template("Shallow tray with compartments",
@@ -226,7 +272,7 @@ TEMPLATES = {
     "pencil-box": Template("Pencil box with sliding lid",
                            "A long box whose lid slides in from the front.", pencil_box),
 }
-ELECTRONICS = ("pi", "pi-zero", "pi-zero-stack", "arduino")
+ELECTRONICS = ("pi", "pi5-fan", "pi-zero", "pi-zero-stack", "pico", "arduino", "esp32")
 
 
 def from_template(key: str) -> Project:

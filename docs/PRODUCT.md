@@ -145,6 +145,12 @@ Defaults I chose myself, which are easy to change:
   boards like a +, so the upper board's posts miss the lower board; its sockets
   face the middle, so cables reach them through openings in the walls. Picking a
   template is one undo step.
+  Added in 0.18: a Pi 5 case with a 30 mm fan in the lid (26 mm opening and four
+  M3 holes 24 mm apart, over the processor and clear of the tall sockets), a Pi
+  Pico case (8 mm posts leave room for pin headers underneath), and an ESP32
+  DevKit case. ESP32 boards differ between makers and many have no mounting
+  holes, so that template uses the custom 4-hole board with a common 30-pin
+  board's size, which the user adjusts after measuring.
 - Push-on lid that follows the box size, with fit presets.
 - Plain-language checks covering impossible sizes, thin walls, holes off the
   edge, holes behind the lid lip, overlapping or too-close holes, a lid that

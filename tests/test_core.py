@@ -1699,3 +1699,20 @@ def test_stacked_template_is_approved():
     lower, upper = p.mounts
     assert upper.rotation == 90 and upper.length > lower.length
     assert not any(i.mount_id for i in validation.check(p) if i.level != "info")
+
+
+def test_fan_fits_under_the_lid():
+    from manifold3d import Manifold
+    p = templates.from_template("pi5-fan")
+    fan = next(h for h in p.holes if h.surface == LID and h.diameter == 26)
+    body = geometry.build_body(p)
+    h = p.outer_height
+    box = Manifold.cube([30, 30, 10], True).translate([fan.u, fan.v, h - 5])
+    assert geometry.overlap_volume(body, box) == 0             # clear of the walls and lip
+    # ...and of the tall USB and network sockets (from 64 mm along the board).
+    m = p.mounts[0]
+    usb_x = m.u - 42.5 + 64
+    top = mounts.board_bottom(p, m) + mounts.BOARD_THICKNESS
+    assert fan.u + 15 < usb_x or h - 10 > top + 16
+    screws = [x for x in p.holes if x.surface == LID and x.diameter == 3.4]
+    assert sorted({round(abs(s.u - fan.u), 6) for s in screws}) == [12.0]
