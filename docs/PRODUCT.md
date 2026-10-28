@@ -105,6 +105,19 @@ Defaults I chose myself, which are easy to change:
   vertical corners of boxes. Sharp stays the default so existing designs don't
   change. Lips, screw columns and dividers follow the rounder corners; holes and
   posts keep off the sloped area. Outside corners were already adjustable.
+- Stronger joints and hole edges (0.14), suggested by the project owner:
+  - Dividers get the same rounded or angled joints as the inside corners, where
+    they meet the floor, the walls and each other, with no extra setting. Very
+    low dividers (lower than the corner size) keep sharp joints, with a note.
+  - Rectangular holes and vent slots have a corner rounding (new ones 1 mm; the
+    common sizes set their own, such as 3 mm for USB-C). Chamfering a hole's
+    edge was considered and left out: it removes material, so it makes the edge
+    weaker, not stronger.
+  - Wall holes can get a frame on the inside: a 2 mm flat band around the
+    opening, standing out by the wall thickness (1.2 to 3 mm), with 45° sides
+    so it prints without support. On for new rectangles (where plugs go), off
+    for round holes and vents. Frames stay out of the lid's way; a board that
+    would hit one is an error.
 - Push-on lid that follows the box size, with fit presets.
 - Plain-language checks covering impossible sizes, thin walls, holes off the
   edge, holes behind the lid lip, overlapping or too-close holes, a lid that
@@ -136,7 +149,7 @@ much easier, without CAD vocabulary, and without making the interface busier?
 | GUI | PySide6 (Qt 6), LGPL | Native-looking Linux desktop app, installs from pip |
 | 3D preview | pyqtgraph `GLViewWidget` with a custom soft-lit shader | Small, pure Python, works on integrated graphics (OpenGL 2-era shaders) |
 | Geometry | **Manifold** (`manifold3d`), Apache-2.0 | Fast, robust Boolean operations whose results are **always watertight**. That is exactly what an STL needs. It is a small pip wheel with no system dependencies |
-| Project files | Versioned JSON (`"format": "3dn00b-project", "version": 8`) | Human-readable, diffable, forward-compatible |
+| Project files | Versioned JSON (`"format": "3dn00b-project", "version": 11`) | Human-readable, diffable, forward-compatible |
 
 **Why not CadQuery or build123d (OpenCascade)?** They are excellent, but they
 bring a large binary dependency (OCP), a slower and more fragile pipeline for

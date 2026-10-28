@@ -14,7 +14,7 @@ from PySide6.QtWidgets import QLabel
 
 from .. import geometry, mounts
 from ..model import (BOTTOM, LID, RECT, SIDE, VENT, Hole, Project, hole_center_3d,
-                     surface_frame, vent_openings)
+                     corner_rounding, surface_frame, vent_openings)
 
 # Soft two-sided lighting: a light near the camera plus a fill light and ambient,
 # so the inside of the box and faces turned away are still readable.
@@ -323,7 +323,19 @@ def _outline(hole, steps: int = 48):
     """Outline of an opening as (du, dv) offsets in mm, a little larger than the opening."""
     if hole.kind == RECT:
         hu, hv = hole.width / 2 + 0.6, hole.height / 2 + 0.6
-        return (np.array([-hu, hu, hu, -hu, -hu]), np.array([-hv, -hv, hv, hv, -hv]))
+        r = corner_rounding(hole)
+        if r <= 0:
+            return (np.array([-hu, hu, hu, -hu, -hu]), np.array([-hv, -hv, hv, hv, -hv]))
+        r += 0.6
+        # Quarter circles in each corner, going round anticlockwise.
+        t = np.linspace(0, np.pi / 2, steps // 4 + 1)
+        du, dv = [], []
+        for (su, sv), start in (((1, 1), 0.0), ((-1, 1), np.pi / 2), ((-1, -1), np.pi),
+                                ((1, -1), 1.5 * np.pi)):
+            du.append(su * (hu - r) + r * np.cos(t + start))
+            dv.append(sv * (hv - r) + r * np.sin(t + start))
+        du, dv = np.concatenate(du), np.concatenate(dv)
+        return np.append(du, du[0]), np.append(dv, dv[0])
     r = hole.diameter / 2 + 0.6
     t = np.linspace(0, 2 * np.pi, steps + 1)
     return r * np.cos(t), r * np.sin(t)
@@ -334,7 +346,7 @@ def _hole_rings(project: Project, hole) -> list[np.ndarray]:
     if hole.kind == VENT:
         # The vent's whole area (what you grab and move) plus each slot.
         area = Hole(surface=hole.surface, kind=RECT, width=hole.width, height=hole.height,
-                    u=hole.u, v=hole.v)
+                    u=hole.u, v=hole.v, rounding=hole.rounding)
         rings = _hole_rings(project, area)
         for slot in vent_openings(project, hole):
             # Undo the outline's extra margin so slot outlines match the slots.

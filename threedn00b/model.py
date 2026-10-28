@@ -69,6 +69,8 @@ class Hole:
     slot: float = 2.0              # vents: width of each slot
     gap: float = 2.0               # vents: plastic left between slots
     slot_direction: str = ALONG_V  # vents: which way the slots run
+    rounding: float = 0.0          # rectangles and vents: radius of the corners (0 = sharp)
+    strengthen: bool = False       # wall openings: a thicker frame around it on the inside
 
     @property
     def half_extents(self) -> tuple[float, float]:
@@ -348,6 +350,35 @@ INSIDE_CORNER_LABELS = {SHARP: "Sharp (90°)", ROUNDED: "Rounded", ANGLED: "Angl
 def inside_fillet(project: Project) -> float:
     """Size of the rounding or bevel in the inside corners (0 when they are sharp)."""
     return project.inside_corner_size if project.inside_corners != SHARP else 0.0
+
+
+def corner_rounding(hole: Hole) -> float:
+    """Radius actually used for the corners of a rectangular opening."""
+    if hole.kind == ROUND:
+        return 0.0
+    return max(0.0, min(hole.rounding, *hole.half_extents))
+
+
+FRAME_RIM = 2.0        # flat band of the strengthening frame around an opening
+
+
+def frame_thickness(project: Project) -> float:
+    """How far a strengthening frame stands out from the inside of the wall."""
+    return max(1.2, min(project.wall, 3.0))
+
+
+def has_frame(project: Project, hole: Hole) -> bool:
+    return hole.strengthen and hole.surface in (FRONT, BACK, LEFT, RIGHT, SIDE)
+
+
+def divider_fillet(project: Project) -> float:
+    """Rounding where dividers meet the floor and the walls (0 if they stay sharp)."""
+    f = inside_fillet(project)
+    if f <= 0 or not has_dividers(project):
+        return 0.0
+    if divider_top(project) - project.bottom < f + 1.0:
+        return 0.0      # too low to round: the joints stay sharp
+    return f
 
 
 def floor_inset(project: Project, height: float) -> float:
@@ -695,7 +726,8 @@ def vent_openings(project: Project, hole: Hole) -> list[Hole]:
     out = []
     for du, dv, w, h in hole.slot_rects():
         u = hole.u + (math.degrees(du / (project.outer_diameter / 2)) if hole.surface == SIDE else du)
-        out.append(Hole(surface=hole.surface, kind=RECT, width=w, height=h, u=u, v=hole.v + dv))
+        out.append(Hole(surface=hole.surface, kind=RECT, width=w, height=h, u=u, v=hole.v + dv,
+                        rounding=hole.rounding))
     return out
 
 

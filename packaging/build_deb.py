@@ -71,7 +71,10 @@ def app_version() -> str:
 def requirements() -> list[str]:
     deps = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["dependencies"]
     # The app is tested with PySide6 6.11; 6.12.0 has a crash bug (see app.py).
-    return [d if not d.startswith("PySide6") else "PySide6-Essentials>=6.11,<6.12" for d in deps]
+    deps = [d if not d.startswith("PySide6") else "PySide6-Essentials>=6.11,<6.12" for d in deps]
+    # numpy 2.4 is the newest that also supports Python 3.11, so every Python shares
+    # one copy of its maths libraries (2.5 would add a second, 6 MB bigger).
+    return deps + ["numpy<2.5"]
 
 
 def install_libraries(vendor: Path) -> None:

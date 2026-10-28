@@ -528,3 +528,27 @@ def test_inside_corner_controls(window):
     window.undo_stack.undo()
     window.undo_stack.undo()
     assert window.project.inside_corners == "sharp"
+
+
+def test_hole_rounding_and_frame_controls(window):
+    from threedn00b.model import BOTTOM, RECT
+    window.add_hole(kind=RECT)
+    hole = window.project.holes[0]
+    assert hole.rounding == 1.0 and hole.strengthen        # new rectangles: both on
+    form = window.hole_form
+    assert form.isRowVisible(window.hole_rounding) and form.isRowVisible(window.hole_strengthen)
+    window.common_sizes.activated.emit(window.common_sizes.findText("USB-C plug (12.5 × 7 mm)"))
+    hole = window.project.holes[0]
+    assert (hole.width, hole.height, hole.rounding) == (12.5, 7.0, 3.0)
+    window.hole_strengthen.setChecked(False)
+    assert not window.project.holes[0].strengthen
+    window.undo_stack.undo()
+    assert window.project.holes[0].strengthen
+    window.hole_rounding.setValue(0)
+    assert window.project.holes[0].rounding == 0
+    assert not validation_errors(window)
+    window.surface_combo.setCurrentIndex(window.surface_combo.findData(BOTTOM))
+    window.surface_combo.activated.emit(window.surface_combo.currentIndex())
+    assert not form.isRowVisible(window.hole_strengthen)    # frames are for walls only
+    window.add_hole()
+    assert not form.isRowVisible(window.hole_rounding)      # round holes have no corners

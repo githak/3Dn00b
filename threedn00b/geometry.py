@@ -12,11 +12,12 @@ from dataclasses import dataclass
 import numpy as np
 from manifold3d import CrossSection, Error, JoinType, Manifold, OpType
 
-from .model import (ANGLED, BACK, BOTTOM, BOX, CAP_TOP_GAP, CYLINDER, FRONT, LEFT, LID, RECT,
-                    RIGHT, SCREWS, SIDE, SNAP_BUMP, SNAP_RIDGE, THREADED, THREAD_DEPTH,
-                    THREAD_PITCH, VENT, Hole, Project, divider_positions, divider_top,
-                    floor_inset, has_dividers, has_lip, has_screw_lid, has_sliding_lid,
-                    has_snap_lid, has_threaded_lid, inside_fillet, lid_pilot_depth,
+from .model import (ANGLED, BACK, BOTTOM, BOX, CAP_TOP_GAP, CYLINDER, FRAME_RIM, FRONT, LEFT,
+                    LID, RIGHT, ROUND, SCREWS, SIDE, SNAP_BUMP, SNAP_RIDGE, THREADED, THREAD_DEPTH,
+                    THREAD_PITCH, VENT, Hole, Project, corner_rounding, divider_fillet,
+                    divider_positions, divider_top, floor_inset, frame_thickness, has_dividers,
+                    has_frame, has_lip, has_screw_lid, has_sliding_lid,
+                    has_snap_lid, has_threaded_lid, inside_fillet, lid_ceiling, lid_pilot_depth,
                     lid_screw_positions, lid_top_z, lip_outer_offset, lip_wall, slide_engage,
                     slide_groove, thread_sizes, vent_openings)
 
@@ -80,24 +81,90 @@ def footprint(project: Project, inset: float = 0.0) -> CrossSection | None:
 def _cavity(project: Project) -> Manifold | None:
     """The inside of the box, with the floor edge rounded or angled if asked for.
 
-    Near the floor the inside is built as a loft through outlines that shrink
-    towards the floor (each step is the convex hull of two thin slices).
+    The inside is convex, so with a rounded or angled floor edge it is built as
+    one convex hull of outlines that shrink towards the floor.
     """
     h, z0 = project.outer_height, project.bottom
     f = min(inside_fillet(project), h - z0)
-    upper = _prism(footprint(project, project.wall), h - z0 - f + 1.0, z0 + f)
-    if upper is None or f <= 0:
-        return upper
+    inner = footprint(project, project.wall)
+    if inner is None or f <= 0:
+        return _prism(inner, h - z0 + 1.0, z0)
     steps = 1 if project.inside_corners == ANGLED else max(6, min(16, math.ceil(f * 3)))
-    slices = []
+    points = _outline_points(inner, h + 1.0)
     for i in range(steps + 1):
         height = f * i / steps
         outline = footprint(project, project.wall + floor_inset(project, height))
-        if outline is None:
-            return upper
-        slices.append(Manifold.extrude(outline, 0.001).translate([0.0, 0.0, z0 + height]))
-    lofts = [Manifold.batch_hull([a, b]) for a, b in zip(slices, slices[1:])]
-    return Manifold.batch_boolean([upper] + lofts, OpType.Add)
+        if outline is not None:
+            points += _outline_points(outline, z0 + height)
+    return Manifold.hull_points(points)
+
+
+FUSE = 0.02    # how far rounded dividers reach into the walls and the floor
+
+
+def _divider_outline(project: Project, grow: float = 0.0) -> CrossSection | None:
+    """The dividers seen from above, each made `grow` mm thicker on both sides."""
+    xs, ys = divider_positions(project)
+    t = project.dividers.thickness + 2 * grow
+    w, d = project.outer_width, project.outer_depth
+    strips = [CrossSection.square([t, d], center=True).translate([x, 0.0]) for x in xs]
+    strips += [CrossSection.square([w, t], center=True).translate([0.0, y]) for y in ys]
+    return CrossSection.batch_boolean(strips, OpType.Add) if strips else None
+
+
+def _rounded_dividers(project: Project) -> Manifold | None:
+    """Dividers whose joints with the floor, the walls and each other are rounded or
+    angled like the inside corners.
+
+    Every compartment is convex (rounded floor edge included), so the space in it
+    near the floor is one convex hull of outlines shrinking towards the floor.
+    The solid reaches a hair into the walls and the floor, so it fuses with them
+    without any faces lying exactly on top of each other.
+    """
+    f, z0 = divider_fillet(project), project.bottom
+    top = min(divider_top(project), project.outer_height - FUSE)   # not level with the rim
+    base = footprint(project, project.wall - FUSE)
+    dividers = _divider_outline(project)
+    if base is None or dividers is None:
+        return None
+    seg = _circle_segments(f, 0.5, 16, 128)
+    # Rounding every inside corner of a compartment is the same as rounding the
+    # joints in the plan view: shrink, then grow back with round corners.
+    rooms = (base - dividers).offset(-f, JoinType.Round, circular_segments=seg) \
+        .offset(f, JoinType.Round, circular_segments=seg)
+    upright = _prism(base - rooms, top - z0 - f, z0 + f)
+    steps = 1 if project.inside_corners == ANGLED else max(6, min(16, math.ceil(f * 3)))
+    hulls = []
+    for room in rooms.decompose():
+        points = _outline_points(room, z0 + f + 1.0)
+        for i in range(steps + 1):
+            height = f * i / steps
+            inset = floor_inset(project, height)
+            outline = room.offset(-inset, JoinType.Round, circular_segments=seg) if inset > 0 else room
+            points += _outline_points(outline, z0 + height)
+        hulls.append(Manifold.hull_points(points))
+    low = _prism(base, f, z0) - Manifold.batch_boolean(hulls, OpType.Add)
+    walls = low + upright if upright is not None else low
+    # Only near the dividers: elsewhere this would just be a skin on the walls.
+    return walls ^ _prism(_divider_outline(project, f + 1.0), top + 1.0, z0 - 1.0)
+
+
+def _outline_points(section: CrossSection, z: float) -> list[list[float]]:
+    return [[x, y, z] for polygon in section.to_polygons() for x, y in polygon]
+
+
+def _lip_ring(project: Project, into_wall: float = 0.0) -> Manifold | None:
+    """Room inside the walls that the lid's lip needs (nothing may stand there)."""
+    if not has_lip(project):
+        return None
+    gap = project.lid.gap
+    inner = footprint(project, project.wall - into_wall)
+    clear = footprint(project, project.wall + lip_outer_offset(project) + lip_wall(project) + gap)
+    z_notch = project.outer_height - project.lid.lip_height - gap
+    ring = _prism(inner, project.outer_height - z_notch + 1.0, z_notch)
+    if ring is not None and clear is not None:
+        ring = ring - _prism(clear, project.outer_height - z_notch + 2.0, z_notch - 0.5)
+    return ring
 
 
 def _prism(section: CrossSection | None, height: float, z0: float) -> Manifold | None:
@@ -124,6 +191,9 @@ def build_body(project: Project) -> Manifold:
     columns = build_lid_columns(project)
     if columns is not None:
         body = body + columns
+    frames = build_frames(project)
+    if frames is not None:
+        body = body + frames
     lid_cut = _lid_cut_in_body(project)
     if lid_cut is not None:
         body = body - lid_cut
@@ -144,6 +214,10 @@ def build_dividers(project: Project) -> Manifold | None:
     height = top - z0
     if height <= 0 or d.thickness <= 0:
         return None
+    if divider_fillet(project) > 0:
+        walls = _rounded_dividers(project)
+        ring = _lip_ring(project, 2 * FUSE)        # notches for the lip, as below
+        return walls - ring if ring is not None and walls is not None else walls
     w, dp = project.outer_width, project.outer_depth
     xs, ys = divider_positions(project)
     slabs = [Manifold.cube([d.thickness, dp, height]).translate([x - d.thickness / 2, -dp / 2, z0])
@@ -153,17 +227,10 @@ def build_dividers(project: Project) -> Manifold | None:
     walls = Manifold.batch_boolean(slabs, OpType.Add)
     # Never poke out through rounded corners.
     walls = walls ^ _prism(footprint(project), project.outer_height, 0.0)
-    if has_lip(project):
-        # Notch the ends where the lid's lip goes, with the fit gap all round.
-        gap = project.lid.gap
-        inner = footprint(project, project.wall)
-        clear = footprint(project, project.wall + lip_outer_offset(project) + lip_wall(project) + gap)
-        z_notch = project.outer_height - project.lid.lip_height - gap
-        ring = _prism(inner, project.outer_height - z_notch + 1.0, z_notch)
-        if ring is not None and clear is not None:
-            ring = ring - _prism(clear, project.outer_height - z_notch + 2.0, z_notch - 0.5)
-        if ring is not None:
-            walls = walls - ring
+    # Notch the ends where the lid's lip goes, with the fit gap all round.
+    ring = _lip_ring(project)
+    if ring is not None:
+        walls = walls - ring
     return walls
 
 
@@ -185,6 +252,70 @@ def build_posts(project: Project) -> Manifold | None:
         return None
     # Never poke out through the walls.
     return Manifold.batch_boolean(posts, OpType.Add) ^ _prism(footprint(project), project.outer_height, 0.0)
+
+
+def build_frames(project: Project) -> Manifold | None:
+    """Thicker frames on the inside of the walls around openings that ask for one.
+
+    Each frame has a flat band around the opening and 45° sides, so it prints
+    without support. It is kept out of the lid's way and never pokes outside.
+    """
+    frames = [f for f in (frame_solid(project, h) for h in project.holes) if f is not None]
+    if not frames:
+        return None
+    frames = Manifold.batch_boolean(frames, OpType.Add)
+    keep = _prism(footprint(project), lid_ceiling(project), 0.0)
+    frames = frames ^ keep
+    ring = _lip_ring(project)
+    return frames - ring if ring is not None else frames
+
+
+def frame_solid(project: Project, hole: Hole) -> Manifold | None:
+    """The strengthening frame of one wall opening, before it is trimmed."""
+    if not has_frame(project, hole):
+        return None
+    outline = _opening_outline(hole)
+    if outline is None:
+        return None
+    t = frame_thickness(project)
+    seg = _circle_segments(FRAME_RIM + t, 0.5, 16, 64)
+    base = outline.offset(FRAME_RIM + t, JoinType.Round, circular_segments=seg)
+    face = outline.offset(FRAME_RIM, JoinType.Round, circular_segments=seg)
+    frame = Manifold.hull_points(_outline_points(base, -0.01) + _outline_points(face, t))
+    return _on_wall_inside(project, hole, frame)
+
+
+def _on_wall_inside(project: Project, hole: Hole, m: Manifold) -> Manifold:
+    """Place a shape made around the origin (u along X, v along Y, Z pointing into
+    the box) on the inside face of the hole's wall."""
+    m = m.rotate([-90.0, 0.0, 0.0])        # Z (into the box) -> +Y, v -> up/down
+    zc = project.outer_height / 2 + hole.v
+    w, d, wall = project.outer_width, project.outer_depth, project.wall
+    if hole.surface == FRONT:
+        return m.translate([hole.u, -d / 2 + wall, zc])
+    if hole.surface == BACK:
+        return m.rotate([0.0, 0.0, 180.0]).translate([-hole.u, d / 2 - wall, zc])
+    if hole.surface == LEFT:
+        return m.rotate([0.0, 0.0, -90.0]).translate([-w / 2 + wall, -hole.u, zc])
+    if hole.surface == RIGHT:
+        return m.rotate([0.0, 0.0, 90.0]).translate([w / 2 - wall, hole.u, zc])
+    inner_r = project.outer_diameter / 2 - wall          # SIDE
+    a = math.radians(hole.u)
+    return m.rotate([0.0, 0.0, hole.u]).translate([math.sin(a) * inner_r, -math.cos(a) * inner_r, zc])
+
+
+def _opening_outline(hole: Hole) -> CrossSection | None:
+    """The opening's shape seen straight on: u along X, v along Y."""
+    hu, hv = hole.half_extents
+    if hu <= 0 or hv <= 0:
+        return None
+    if hole.kind == ROUND:
+        return CrossSection.circle(hu, _circle_segments(hu, 0.6, 24, 128))
+    r = corner_rounding(hole)
+    if r < 0.05:
+        return CrossSection.square([2 * hu, 2 * hv], center=True)
+    core = CrossSection.square([max(2 * (hu - r), 1e-3), max(2 * (hv - r), 1e-3)], center=True)
+    return core.offset(r, JoinType.Round, circular_segments=_circle_segments(r, 0.4, 8, 64))
 
 
 def build_lid_columns(project: Project) -> Manifold | None:
@@ -378,32 +509,26 @@ def _hole_cutter(project: Project, hole: Hole) -> Manifold | None:
         return None
     wall = project.wall
     zc = project.outer_height / 2 + hole.v
-    w, d = project.outer_width, project.outer_depth
 
     def plug(length: float) -> Manifold:
         """The opening's shape, extruded along Z: u along X, v along Y."""
-        if hole.kind == RECT:
-            return Manifold.cube([hole.width, hole.height, length], True)
-        return Manifold.cylinder(length, hu, -1.0, _circle_segments(hu, 0.6, 24, 128), True)
+        return Manifold.extrude(_opening_outline(hole), length).translate([0.0, 0.0, -length / 2])
 
     def upright(length: float) -> Manifold:
         """Plug pointing along Y, with u along X and v up (Z)."""
         return plug(length).rotate([90.0, 0.0, 0.0])
 
-    if hole.surface in (FRONT, BACK):
-        y = -d / 2 + wall / 2 if hole.surface == FRONT else d / 2 - wall / 2
-        x = hole.u if hole.surface == FRONT else -hole.u
-        return upright(wall + 2.0).translate([x, y, zc])
-    if hole.surface in (LEFT, RIGHT):
-        x = -w / 2 + wall / 2 if hole.surface == LEFT else w / 2 - wall / 2
-        y = -hole.u if hole.surface == LEFT else hole.u
-        return upright(wall + 2.0).rotate([0.0, 0.0, 90.0]).translate([x, y, zc])
+    # Through a frame on the inside too (this hole's own, or a neighbour's).
+    deep = frame_thickness(project) if any(has_frame(project, h) for h in project.holes) else 0.0
+    if hole.surface in (FRONT, BACK, LEFT, RIGHT):
+        return _on_wall_inside(project, hole, plug(wall + deep + 2.0).translate(
+            [0.0, 0.0, (deep - wall) / 2]))
     if hole.surface == SIDE:
         big_r = project.outer_diameter / 2
         inner_r = big_r - wall
         # The inside of a round wall curves away; cut deep enough at the opening's edges.
         sag = inner_r - math.sqrt(max(inner_r ** 2 - hu ** 2, 0.0)) if hu < inner_r else inner_r
-        length = wall + sag + 2.0
+        length = wall + max(sag, deep) + 2.0
         mid = big_r + 1.0 - length / 2
         a = math.radians(hole.u)
         return (upright(length).rotate([0.0, 0.0, hole.u])

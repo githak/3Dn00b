@@ -15,9 +15,10 @@ from .model import (HOLE_KIND_LABELS, INSIDE_CORNER_LABELS, LID_STYLE_LABELS, SC
                     Dividers, Hole, Lid, Mount, Project)
 
 FORMAT_NAME = "3dn00b-project"
-FORMAT_VERSION = 10  # 2: rectangular holes; 3: air vents; 4: dividers; 5: screw posts;
+FORMAT_VERSION = 11  # 2: rectangular holes; 3: air vents; 4: dividers; 5: screw posts;
                      # 6: screwed-down lids; 7: snap-on and sliding lids; 8: threaded lids;
-                     # 9: custom boards with 1 or 2 holes; 10: rounded/angled inside corners
+                     # 9: custom boards with 1 or 2 holes; 10: rounded/angled inside corners;
+                     # 11: rounded hole corners and strengthened hole edges
 PROJECT_SUFFIX = ".3dn00b"
 
 

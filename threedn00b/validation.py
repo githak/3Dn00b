@@ -16,7 +16,8 @@ from .model import (ALONG_V, BACK, BOTTOM, BOX, CYLINDER, FRONT, LEFT, LID, MIN_
                     THREADED, has_screw_lid, has_sliding_lid, has_snap_lid, has_threaded_lid,
                     slide_engage, slide_groove, thread_sizes,
                     lid_ceiling, lid_pilot_depth, lid_screw_positions, wall_corner_zone, clamp_hole, comfortable_margin,
-                    compartment_size, divider_positions, divider_top, has_dividers,
+                    compartment_size, divider_fillet, divider_positions, divider_top,
+                    has_dividers, has_frame,
                     hole_edge_clearance, hole_limits, inside_fillet, lip_outer_offset, lip_wall, opening_gap,
                     point_near_opening)
 
@@ -52,6 +53,8 @@ def _check_inside_corners(p: Project) -> list[Issue]:
     room = min(p.inner_height - 2, min(p.inner_width, p.inner_depth) / 2 - 2)
     if has_threaded_lid(p):
         room = min(room, thread_sizes(p).slope_bottom - p.bottom - 1)
+    if has_dividers(p):
+        room = min(room, min(compartment_size(p)) / 2 - 2)   # dividers get the same joints
     if f > room:
         return [Issue(ERROR, f"Inside corners of {_mm(f)} are too big for this size.",
                       f"Use {_mm(max(room, 0))} or less, or make the object bigger.")]
@@ -364,9 +367,13 @@ def _check_dividers(p: Project) -> list[Issue]:
     if has_lip(p) and d.height == 0:
         out.append(Issue(INFO, "The dividers have small notches at their ends so the lid's lip fits.",
                          "They also stop just below the lid."))
+    if inside_fillet(p) > 0 and divider_fillet(p) == 0:
+        out.append(Issue(INFO, "The dividers are lower than the inside corners are big, so where "
+                         "they meet the floor and the walls stays sharp.",
+                         "Make the dividers taller or the corners smaller to round them too."))
     xs, ys = divider_positions(p)
     top = divider_top(p)
-    half = d.thickness / 2
+    half = d.thickness / 2 + divider_fillet(p)      # the rounded joint isn't flat either
     for hole in p.holes:
         hu, hv = hole.half_extents
         if hole.surface == BOTTOM:
@@ -440,8 +447,9 @@ def _check_mounts(p: Project) -> list[Issue]:
                              "Use shorter posts or a bigger screw size.", mount_id=m.id))
         r = mounts.post_radius(m)
         posts = mounts.post_positions(m)
-        if any(abs(x - dx) < r + 0.8 for x, _ in posts for dx in xs) or \
-                any(abs(y - dy) < r + 0.8 for _, y in posts for dy in ys):
+        reach = r + 0.8 + divider_fillet(p)
+        if any(abs(x - dx) < reach for x, _ in posts for dx in xs) or \
+                any(abs(y - dy) < reach for _, y in posts for dy in ys):
             out.append(Issue(WARNING, f"{name}: a post stands on a divider.",
                              "Move the posts into a compartment.", mount_id=m.id))
         elif size and div_top > mounts.board_bottom(p, m):
@@ -457,8 +465,31 @@ def _check_mounts(p: Project) -> list[Issue]:
                     point_near_opening(p, hole, x, y, r) for x, y in posts):
                 out.append(Issue(WARNING, f"{hole_name(p, hole)} is under a post of {name}.",
                                  "Move the hole or the posts.", hole.id))
+        out += _check_frames(p, m, name)
     for a, b in itertools.combinations(p.mounts, 2):
         out += _check_stacking(p, a, b)
+    return out
+
+
+FRAME_ROOM = 0.5      # room kept between a board and a hole's strengthening frame
+
+
+def _check_frames(p: Project, m, name: str) -> list[Issue]:
+    """Does the board run into the frame around a strengthened wall hole?"""
+    corners = mounts.board_corners(m)
+    if not corners or not any(has_frame(p, h) for h in p.holes):
+        return []
+    outline = geometry.CrossSection([corners]).offset(FRAME_ROOM, geometry.JoinType.Miter)
+    z = mounts.board_bottom(p, m)
+    board = geometry.Manifold.extrude(outline, mounts.BOARD_THICKNESS).translate([0.0, 0.0, z])
+    out = []
+    for hole in p.holes:
+        frame = geometry.frame_solid(p, hole)
+        if frame is not None and geometry.overlap_volume(board, frame) > 0.001:
+            out.append(Issue(ERROR, f"{name}: the board runs into the frame around "
+                             f"{hole_name(p, hole)}.",
+                             "Move the board away from the wall, change the post length, or turn "
+                             "off the hole's frame.", mount_id=m.id))
     return out
 
 

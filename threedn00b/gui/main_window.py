@@ -36,12 +36,13 @@ COMMON_HOLES = [
 # Typical sizes; real parts vary, which the panel tells the user.
 COMMON_RECTS = [
     ("Common sizes…", None),
-    ("USB-C plug (12.5 × 7 mm)", (12.5, 7.0)),
-    ("Micro-USB plug (11 × 8 mm)", (11.0, 8.0)),
-    ("USB-A plug (16 × 8.5 mm)", (16.0, 8.5)),
-    ("Slide switch (9 × 4 mm)", (9.0, 4.0)),
-    ("Rocker switch (19 × 13 mm)", (19.0, 13.0)),
+    ("USB-C plug (12.5 × 7 mm)", (12.5, 7.0, 3.0)),       # width, height, corner rounding
+    ("Micro-USB plug (11 × 8 mm)", (11.0, 8.0, 1.5)),
+    ("USB-A plug (16 × 8.5 mm)", (16.0, 8.5, 1.0)),
+    ("Slide switch (9 × 4 mm)", (9.0, 4.0, 0.5)),
+    ("Rocker switch (19 × 13 mm)", (19.0, 13.0, 0.5)),
 ]
+NEW_HOLE_ROUNDING = 1.0     # corner radius of new rectangles and vents
 RECT_SIZE_RANGE = (1.0, 150.0)
 TAB_SHAPE, TAB_HOLES, TAB_POSTS, TAB_LID, TAB_CHECK = range(5)
 # Labels and tips for the two spacing fields of each custom board.
@@ -445,6 +446,19 @@ class MainWindow(QMainWindow):
         form.addRow("", self.common_sizes)
         self.measure_hint = hint("Plugs and switches vary: measure yours and add a little room.")
         form.addRow("", self.measure_hint)
+        self.hole_rounding = spin(0.0, 50.0, step=0.5)
+        self.hole_rounding.setToolTip("Round corners are stronger: cracks start in sharp corners.\n"
+                                      "0 = sharp corners.")
+        self.hole_rounding.valueChanged.connect(
+            lambda v: self._edit_hole("Change corner rounding", "rounding", v))
+        form.addRow("Rounded corners", self.hole_rounding)
+        self.hole_strengthen = QCheckBox("Thicker frame around it, inside")
+        self.hole_strengthen.setToolTip(
+            "Adds a frame on the inside of the wall around the opening, so a plug pushed in\n"
+            "at an angle doesn't break the edge. Its sides slope at 45°, so it prints without support.")
+        self.hole_strengthen.toggled.connect(
+            lambda on: self._edit_hole("Strengthen hole edge", "strengthen", on))
+        form.addRow("Strengthen", self.hole_strengthen)
         self.u_label, self.v_label = QLabel(), QLabel()
         self.hole_u = spin(-500, 500, step=1.0)
         self.hole_v = spin(-500, 500, step=1.0)
@@ -839,6 +853,10 @@ class MainWindow(QMainWindow):
             self.hole_form.setRowVisible(widget, is_vent)
         self.hole_form.setRowVisible(self.common_sizes, not is_vent)
         self.hole_form.setRowVisible(self.measure_hint, hole.kind == RECT)
+        set_quietly(self.hole_rounding, hole.rounding)
+        set_quietly(self.hole_strengthen, hole.strengthen)
+        self.hole_form.setRowVisible(self.hole_rounding, is_rect)
+        self.hole_form.setRowVisible(self.hole_strengthen, not flat)
         self.hole_height.setToolTip("Front to back" if hole.surface in (BOTTOM, LID) else "Up and down")
         if self._common_kind != hole.kind:
             self._common_kind = hole.kind
@@ -1034,7 +1052,8 @@ class MainWindow(QMainWindow):
             surface = current.surface if current else (FRONT if p.shape == BOX else SIDE)
         if kind in (RECT, VENT):
             size = (picking.fitting_rect if kind == RECT else picking.fitting_vent)(p, surface)
-            hole = Hole(surface=surface, kind=kind, u=u, v=v)
+            hole = Hole(surface=surface, kind=kind, u=u, v=v, rounding=NEW_HOLE_ROUNDING,
+                        strengthen=kind == RECT)
             if size:
                 hole.width, hole.height = size
         else:
@@ -1098,7 +1117,8 @@ class MainWindow(QMainWindow):
             return
         if isinstance(value, tuple):
             def change(p):
-                p.hole(hole_id).width, p.hole(hole_id).height = value
+                h = p.hole(hole_id)
+                h.width, h.height, h.rounding = value
             self.edit("Change hole size", change)
         else:
             self._edit_hole("Change hole size", "diameter", value)
@@ -1112,6 +1132,8 @@ class MainWindow(QMainWindow):
             h = p.hole(hole_id)
             if h.kind == kind:
                 return
+            if h.kind == ROUND and h.rounding == 0:
+                h.rounding = NEW_HOLE_ROUNDING
             h.kind = kind
             if kind == VENT:
                 size = picking.fitting_vent(p, h.surface)
