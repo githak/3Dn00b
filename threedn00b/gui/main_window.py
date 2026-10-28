@@ -17,7 +17,8 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox,
                                QSplitter, QStyle, QTabWidget, QToolBar, QToolButton,
                                QVBoxLayout, QWidget)
 
-from .. import APP_NAME, __version__, geometry, mounts, picking, project_io, validation
+from .. import (APP_NAME, __version__, geometry, mounts, picking, project_io, templates,
+                validation)
 from ..model import (ALONG_U, ALONG_V, BOTTOM, BOX, CYLINDER, FIT_LABELS, FIT_PRESETS,
                      FRONT, HOLE_DIAMETER_RANGE, HOLE_KIND_LABELS, INSIDE, LID, MIN_EDGE,
                      OUTSIDE, RECT, ROUND, SIDE, SIZE_RANGE, SURFACE_LABELS, VENT,
@@ -298,6 +299,21 @@ class MainWindow(QMainWindow):
         self.name_edit.textEdited.connect(
             lambda t: self.edit("Rename", lambda p: setattr(p, "name", t), merge="name"))
         form.addRow("Name", self.name_edit)
+        self.template_combo = QComboBox()
+        self.template_combo.addItem("Start from a template…", None)
+        # Cases for boards first, then containers, with a line between.
+        for keys in (templates.ELECTRONICS,
+                     [k for k in templates.TEMPLATES if k not in templates.ELECTRONICS]):
+            self.template_combo.insertSeparator(self.template_combo.count())
+            for key in keys:
+                t = templates.TEMPLATES[key]
+                self.template_combo.addItem(t.label, key)
+                self.template_combo.setItemData(self.template_combo.count() - 1, t.description,
+                                                Qt.ItemDataRole.ToolTipRole)
+        self.template_combo.setToolTip("Ready-made boxes, sized to fit: you can change "
+                                       "everything afterwards.")
+        self.template_combo.activated.connect(self._on_template)
+        form.addRow("Template", self.template_combo)
         layout.addLayout(form)
 
         layout.addWidget(QLabel("<b>The sizes below are</b>"))
@@ -847,6 +863,20 @@ class MainWindow(QMainWindow):
         if custom:
             ui.rest.setText(f"the rest: {sizes[-1]:.1f} mm")
             ui.rest.setStyleSheet("" if sizes[-1] >= 3 else "color: #b02020;")
+
+    def _on_template(self, index: int):
+        key = self.template_combo.itemData(index)
+        self.template_combo.setCurrentIndex(0)
+        if key is None:
+            return
+        template = templates.TEMPLATES[key]
+        fresh = template.build()
+        self.selected_id = self.selected_mount_id = None
+        self.edit(f"Start from “{template.label}”", lambda p: p.__dict__.update(fresh.__dict__))
+        self.viewer._fitted_size = None          # show the whole new object
+        self.rebuild()
+        self.statusBar().showMessage(f"{template.label}: {template.description} "
+                                     "Undo goes back to what you had.", 10000)
 
     def _refresh_dividers(self):
         p, d = self.project, self.project.dividers

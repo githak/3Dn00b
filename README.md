@@ -8,8 +8,14 @@ Software for people getting into 3D printing and want to start with something ea
 sizes in millimetres, add holes and a lid, and export files your slicer can
 print. No sketches, no constraints, no feature trees.
 
-## What it can do (version 0.16)
+## What it can do (version 0.17)
 
+- **Templates** to start from, already sized to fit: cases for the Raspberry Pi
+  3 / 4 / 5, the Pi Zero / Zero 2 W, two Pi Zero 2 W boards stacked crosswise,
+  and the Arduino Uno (with posts, openings for the sockets and a lid), plus a
+  storage box, a parts tray, a screw sorter, an AA battery box, a pencil cup, a
+  jar with a screw-on lid and a pencil box. Pick one under **Template** in the
+  Shape tab, then change anything you like; Undo takes you back.
 - **Box** (with rounded corners) or **round container**.
 - Sizes as **outside size** or **inside space**, with a single switch.
   The other measurement is always shown.
@@ -77,7 +83,7 @@ Download `3dn00b_<version>-1_amd64.deb` from the
 [Releases page](https://github.com/githak/3Dn00b/releases) and install it:
 
 ```bash
-sudo apt install ./3dn00b_0.16.0-1_amd64.deb
+sudo apt install ./3dn00b_0.17.0-1_amd64.deb
 ```
 
 That's all: 3Dn00b appears in your applications menu, `.3dn00b` project files open

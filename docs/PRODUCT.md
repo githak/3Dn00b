@@ -134,6 +134,17 @@ Defaults I chose myself, which are easy to change:
   lid's hold, and both are better than prying with a fingernail or a tool. Off
   by default so existing designs don't change. A looser fit remains the other
   answer for a lid that is simply too tight.
+- Templates (0.17), requested by the project owner so beginners don't size a
+  case by trial and error: a Template list in the Shape tab, under the name.
+  Board cases are built from the board catalogue, so the box fits the board with
+  1.5 to 2.5 mm of room (more where a socket sticks out, such as the Arduino's
+  USB socket), the posts match the holes, and openings sit in front of the
+  sockets, made larger than the plugs. One Raspberry Pi 3 / 4 / 5 case works for
+  all three: their power and HDMI sockets share one opening along the front, and
+  USB and network one on the right. The stacked Zero 2 W template crosses the
+  boards like a +, so the upper board's posts miss the lower board; its sockets
+  face the middle, so cables reach them through openings in the walls. Picking a
+  template is one undo step.
 - Push-on lid that follows the box size, with fit presets.
 - Plain-language checks covering impossible sizes, thin walls, holes off the
   edge, holes behind the lid lip, overlapping or too-close holes, a lid that

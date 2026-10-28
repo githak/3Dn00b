@@ -1649,3 +1649,53 @@ def test_opening_only_for_lids_with_a_lip(tmp_path):
         project_io.from_dict(data)
     del data["project"]["lid"]["opening"]                # older files: nothing extra
     assert project_io.from_dict(data).lid.opening == "none"
+
+
+# ---- templates --------------------------------------------------------------------
+
+from threedn00b import templates  # noqa: E402
+
+
+@pytest.mark.parametrize("key", list(templates.TEMPLATES))
+def test_templates_are_ready_to_print(key, tmp_path):
+    p = templates.from_template(key)
+    parts = geometry.build_parts(p)
+    issues = validation.check(p, parts)
+    assert [i.message for i in issues if i.level != "info"] == []
+    assert geometry.piece_count(parts.body) == 1 and _edges_shared_twice(parts.body)
+    if parts.lid is not None:
+        assert geometry.overlap_volume(parts.body, parts.lid) < 1e-6
+    path = tmp_path / "t.3dn00b"
+    project_io.save_project(p, path)
+    assert project_io.load_project(path) == p
+    assert templates.from_template(key) is not p      # a fresh copy every time
+
+
+@pytest.mark.parametrize("key", templates.ELECTRONICS)
+def test_board_openings_face_the_sockets(key):
+    """Every wall opening is next to a board edge and at the height of its sockets."""
+    p = templates.from_template(key)
+    walls = [h for h in p.holes if h.surface in (FRONT, BACK, LEFT, RIGHT)]
+    assert walls
+    for hole in walls:
+        z0 = p.outer_height / 2 + hole.v - hole.height / 2
+        z1 = z0 + hole.height
+        near = []
+        for m in p.mounts:
+            low = mounts.board_bottom(p, m)
+            top = low + mounts.BOARD_THICKNESS
+            xs = [c[0] for c in mounts.board_corners(m)]
+            ys = [c[1] for c in mounts.board_corners(m)]
+            # How far the board's nearest edge is from this wall.
+            gap = {FRONT: min(ys) + p.inner_depth / 2, BACK: p.inner_depth / 2 - max(ys),
+                   LEFT: min(xs) + p.inner_width / 2, RIGHT: p.inner_width / 2 - max(xs)}
+            if z0 < top + 3 and z1 > low - 4:
+                near.append(gap[hole.surface])
+        assert near and min(near) <= 20.5, hole
+
+
+def test_stacked_template_is_approved():
+    p = templates.from_template("pi-zero-stack")
+    lower, upper = p.mounts
+    assert upper.rotation == 90 and upper.length > lower.length
+    assert not any(i.mount_id for i in validation.check(p) if i.level != "info")
