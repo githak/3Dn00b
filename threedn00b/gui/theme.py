@@ -66,6 +66,9 @@ ICONS = {
     "redo": '<path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/>',
     "export": '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 20.5h14"/>',
     "info": '<circle cx="12" cy="12" r="9"/><path d="M12 11v6"/><path d="M12 7.6h.01"/>',
+    "help": '<circle cx="12" cy="12" r="9"/><path d="M9.4 9.2a2.7 2.7 0 1 1 3.9 2.4c-.8.4-1.3 '
+            '1-1.3 1.9v.4"/><path d="M12 16.9h.01"/>',
+    "tour": '<path d="M12 3l2.3 5.2L20 9l-4.2 3.8L17 18.5 12 15.6 7 18.5l1.2-5.7L4 9l5.7-.8z"/>',
     "shape": '<path d="M12 2.8 20.5 7.4v9.2L12 21.2l-8.5-4.6V7.4z"/>'
              '<path d="M3.5 7.4 12 12l8.5-4.6M12 12v9.2"/>',
     "holes": '<rect x="3" y="3" width="18" height="18" rx="3.5"/><circle cx="9" cy="10" r="2.6"/>'
@@ -347,6 +350,16 @@ QStatusBar QLabel { color: $MUTED; padding: 0 4px; }
 QSplitter::handle { background: $BORDER; }
 QSplitter::handle:hover { background: $ACCENT; }
 QTabWidget::pane { border: none; }
+
+/* ---- welcome tour ---- */
+QDialog#welcome { background: $BG0; }
+QLabel#welcomeTitle { font-size: 17pt; font-weight: 600; }
+QLabel#welcomeText { color: $MUTED; font-size: 10.5pt; }
+QLabel#welcomeShot { background: $BG1; border: 1px solid $BORDER; border-radius: 12px; color: $FAINT; }
+QFrame#welcomeFooter { background: $BG1; border-top: 1px solid $BORDER; }
+QPushButton#flat { background: transparent; border-color: transparent; color: $MUTED; }
+QPushButton#flat:hover { background: $BG3; color: $TEXT; }
+QToolBar#header QToolButton::menu-indicator { image: none; width: 0; }
 
 /* ---- floating controls over the 3D view ---- */
 QFrame#viewOverlay { background: $OVERLAY; border: 1px solid $BORDER; border-radius: 10px; }

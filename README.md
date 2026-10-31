@@ -8,7 +8,7 @@ Software for people getting into 3D printing and want to start with something ea
 sizes in millimetres, add holes and a lid, and export files your slicer can
 print. No sketches, no constraints, no feature trees.
 
-## What it can do (version 0.23)
+## What it can do (version 0.24)
 
 - **Templates** to start from, already sized to fit. Pick one under **What are you making?**
   in the Shape step, then change anything you like; Undo takes you back.
@@ -93,7 +93,7 @@ Download `3dn00b_<version>-1_amd64.deb` from the
 [Releases page](https://github.com/githak/3Dn00b/releases) and install it:
 
 ```bash
-sudo apt install ./3dn00b_0.23.0-1_amd64.deb
+sudo apt install ./3dn00b_0.24.0-1_amd64.deb
 ```
 
 That's all: 3Dn00b appears in your applications menu, `.3dn00b` project files open
@@ -150,6 +150,11 @@ versions are installed. (For example, PySide6 6.12.0 has a bug that crashes the
 app on Python 3.11, and 3Dn00b now avoids that version.)
 
 ## How to use it
+
+The first time you start 3Dn00b, a **welcome tour** explains what it is (and
+isn't) and shows each part of the window on a highlighted screenshot. It takes
+about a minute. Open it again any time from the **?** button at the top right, or
+press F1; tick *Show this welcome when 3Dn00b starts* if you'd like it every time.
 
 The window has three parts: the **steps** down the left side, the settings for
 the step you're on, and the 3D preview. Work through the steps from top to

@@ -149,6 +149,14 @@ Defaults I chose myself, which are easy to change:
   status chip in the corner and the Export step's icon show the result of the
   checks at all times. Problems for a selected hole or board appear at the top of
   its card, and its list row gets a red or amber sign.
+- Welcome tour (0.24), requested by the project owner: shown on the first start,
+  then only from Help (the ? button, or F1) unless the user ticks "Show this
+  welcome when 3Dn00b starts". The first page says what the app is and isn't
+  and how it works in three steps; seven short pages then explain the steps,
+  templates, holes, posts, lids, the 3D view and checking/export. Their
+  screenshots are taken live from a hidden example window (a Raspberry Pi case),
+  so they always match the app; everything but the part being explained is
+  darkened, and that part is outlined in the accent colour.
 - Templates (0.17), requested by the project owner so beginners don't size a
   case by trial and error: a template list in the Shape tab, right under the Box
   and Round container buttons, so a template is the third way to start.

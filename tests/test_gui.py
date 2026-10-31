@@ -660,3 +660,52 @@ def test_shape_change_keeps_your_own_holes(window):
     window.shape_buttons[CYLINDER].click()               # your own design: just reshaped
     assert window.project.shape == CYLINDER and len(window.project.holes) == 1
     assert window.project.holes[0].surface == "side"
+
+
+def test_welcome_tour(window):
+    from PySide6.QtCore import QTimer
+    from threedn00b.gui.welcome import PAGES, WelcomeDialog
+    assert window.welcome_due()                            # first start: show it
+    dialog = WelcomeDialog(window)
+    dialog.show()
+    assert not dialog.back_button.isVisible() and dialog.next_button.text() == "Take the tour"
+    dialog.go(1)                                           # takes the pictures once
+    assert len(dialog._shots) == len(PAGES)
+    size = dialog._shots[0].size()
+    assert all(not s.isNull() and s.size() == size for s in dialog._shots)
+    for _ in PAGES[1:]:
+        dialog._next()
+    assert dialog.next_button.text() == "Start designing" and not dialog.skip_button.isVisible()
+    dialog._next()
+    assert dialog.result() == dialog.DialogCode.Accepted
+
+    def close_tour(check):
+        from PySide6.QtWidgets import QApplication
+        tour = QApplication.activeModalWidget()
+        tour.startup_check.setChecked(check)
+        tour.accept()
+    QTimer.singleShot(0, lambda: close_tour(False))
+    window.show_welcome()
+    assert not window.welcome_due()                        # seen, and not asked for again
+    QTimer.singleShot(0, lambda: close_tour(True))
+    window.welcome_action.trigger()                        # Help > Welcome tour (F1)
+    assert window.welcome_due()                            # the user asked to see it each time
+
+
+def test_tour_highlights_the_right_parts(window):
+    from PySide6.QtCore import QRect
+    from PySide6.QtGui import QColor, QPixmap
+    from threedn00b import templates
+    from threedn00b.gui.welcome import PAGES, highlight, visible_rect
+    window._load(templates.from_template("pi"), None)
+    for page in PAGES:
+        window.tabs.setCurrentIndex(page.step)
+        page.prepare(window)
+        QApplication.processEvents()
+        rects = [visible_rect(w, window) for w in page.targets(window)]
+        assert rects and all(not r.isEmpty() and window.rect().contains(r.center()) for r in rects)
+    plain = QPixmap(200, 100)
+    plain.fill(QColor("#808080"))
+    marked = highlight(plain, [QRect(20, 20, 60, 60)]).toImage()
+    assert marked.pixelColor(50, 50).name() == "#808080"   # the highlighted part stays bright
+    assert marked.pixelColor(150, 50).value() < 80         # the rest is darkened
