@@ -2,16 +2,16 @@
 
 Software for people getting into 3D printing and want to start with something easier than CAD software. The goal is to have everyone interested in starting 3D printing in focus, not advanced designers. The program is vibe-coded, so if that's not you thing you can look elsewhere.
 
-![3Dn00b showing a box with holes and a push-on lid](docs/screenshot.png)
+![3Dn00b showing a Raspberry Pi case with posts, openings and a lid](docs/screenshot.png)
 
 **3Dn00b is deliberately *not* a CAD program.** You pick a shape, type the
 sizes in millimetres, add holes and a lid, and export files your slicer can
 print. No sketches, no constraints, no feature trees.
 
-## What it can do (version 0.21)
+## What it can do (version 0.22)
 
 - **Templates** to start from, already sized to fit. Pick one under **What are you making?**
-  in the Shape tab, then change anything you like; Undo takes you back.
+  in the Shape step, then change anything you like; Undo takes you back.
   - *Cases for boards* (posts, openings for the sockets, a lid): Raspberry Pi
     3 / 4 / 5 (also with a 30 mm fan or a GPIO ribbon-cable slot in the lid),
     Pi 3 A+, Pi Zero / Zero 2 W, two Pi Zero 2 W stacked crosswise, Pi Pico,
@@ -91,7 +91,7 @@ Download `3dn00b_<version>-1_amd64.deb` from the
 [Releases page](https://github.com/githak/3Dn00b/releases) and install it:
 
 ```bash
-sudo apt install ./3dn00b_0.21.0-1_amd64.deb
+sudo apt install ./3dn00b_0.22.0-1_amd64.deb
 ```
 
 That's all: 3Dn00b appears in your applications menu, `.3dn00b` project files open
@@ -149,21 +149,31 @@ app on Python 3.11, and 3Dn00b now avoids that version.)
 
 ## How to use it
 
-1. **Shape**: choose Box or Round container, type the sizes and, for a box,
-   choose how many compartments you want.
-2. **Holes**: click **Round hole**, **Rectangle** or **Air vent** (or double-click a
+The window has three parts: the **steps** down the left side, the settings for
+the step you're on, and the 3D preview. Work through the steps from top to
+bottom (or jump with Ctrl+1 to Ctrl+5):
+
+1. **Shape**: choose Box or Round container, or start from a template, then type
+   the sizes and, for a box, choose how many compartments you want.
+2. **Holes**: click **Round**, **Rectangle** or **Air vent** (or double-click a
    wall in the 3D view), then pick where it goes, how big it is and where on
    that surface it sits. Positions
    are measured from the middle of the surface, so `0` means centred.
 3. **Posts** (optional): add screw posts for a circuit board.
-4. **Lid**: tick **Add a lid** and choose its type: push-on, snap-on, sliding
-   screwed down or threaded.
-5. **Check & Export**: read the checks, fix anything marked ✖, pick the file
-   type and click **Export for printing**.
+4. **Lid**: switch on **Add a lid** and choose its type: push-on, snap-on,
+   sliding, screwed down or threaded.
+5. **Export**: read the checks, fix anything marked in red, pick the file type
+   and click **Export for printing**.
+
+The coloured status in the bottom right corner always says whether the design is
+ready to print; click it to see the checks. The Export step's icon turns amber
+for warnings and red for problems.
 
 In the 3D view: drag a hole to move it, drag anywhere else to turn the view,
 scroll or right-drag to zoom, middle-drag to pan, and double-click a wall to
-add a hole. Each drag is one step for Undo.
+add a hole. Each drag is one step for Undo. The buttons in its top right corner
+show it from the front, the top or the side (Ctrl+0 for the normal view), and
+hide or show the lid.
 
 ## Examples
 

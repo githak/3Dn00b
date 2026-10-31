@@ -13,6 +13,7 @@ from PySide6.QtGui import QSurfaceFormat, QVector4D
 from PySide6.QtWidgets import QLabel
 
 from .. import geometry, mounts
+from . import theme
 from ..model import (BOTTOM, LID, RECT, SIDE, VENT, Hole, Project, hole_center_3d,
                      corner_rounding, surface_frame, vent_openings)
 
@@ -49,14 +50,17 @@ SOFT_SHADER = shaders.ShaderProgram("n00b_soft", [
     """),
 ])
 
-BODY_COLOR = (0.35, 0.62, 0.86, 1.0)
-LID_COLOR = (0.98, 0.73, 0.35, 1.0)
-HOLE_COLOR = (0.15, 0.15, 0.15, 0.9)
-SELECTED_COLOR = (1.0, 0.25, 0.55, 1.0)
-PROBLEM_COLOR = (0.9, 0.1, 0.1, 1.0)
-BOARD_COLOR = (0.1, 0.6, 0.25, 1.0)
-BACKGROUND = (236, 239, 243)
+BODY_COLOR = (0.40, 0.60, 0.90, 1.0)        # soft blue, like the accent colour
+LID_COLOR = (0.95, 0.66, 0.32, 1.0)         # warm amber, so the lid stands apart
+HOLE_COLOR = (0.06, 0.07, 0.09, 0.95)
+SELECTED_COLOR = theme.gl_color("#ff5fa2")
+PROBLEM_COLOR = theme.gl_color(theme.DANGER)
+BOARD_COLOR = theme.gl_color(theme.SUCCESS)
+BACKGROUND = (19, 22, 28)
+GRID_COLOR = (74, 83, 101, 110)
 LID_LIFT = 15.0   # extra space between body and lid in the preview
+# Camera presets: (elevation, azimuth) in degrees. The front of the object faces -y.
+VIEWS = {"3d": (28.0, -62.0), "front": (6.0, -90.0), "top": (89.9, -90.0), "side": (6.0, 0.0)}
 
 
 def prepare_opengl():
@@ -94,17 +98,35 @@ class Viewer(gl.GLViewWidget):
         self._marker_items: list = []
         self._mount_items: list = []
         self._grid = gl.GLGridItem()
-        self._grid.setColor((150, 160, 175, 120))
+        self._grid.setColor(GRID_COLOR)
         self.addItem(self._grid)
         self.show_lid = True
         self._fitted_size = None
+        self._overlay = None
 
         self.hint = QLabel(
-            "Drag to turn  ·  Right-drag or scroll to zoom  ·  Middle-drag to move\n"
-            "Drag a hole to move it  ·  Double-click a wall to add a hole", self)
-        self.hint.setStyleSheet("color: #445; background: rgba(255,255,255,170);"
-                                "padding: 4px 8px; border-radius: 4px;")
-        self.hint.move(8, 8)
+            "Drag to turn  ·  Scroll or right-drag to zoom  ·  Middle-drag to move\n"
+            "Drag a hole or board to move it  ·  Double-click a wall to add a hole", self)
+        self.hint.setObjectName("viewHint")
+
+    def set_overlay(self, widget):
+        """Floating controls shown in the top right corner of the view."""
+        widget.setParent(self)
+        self._overlay = widget
+        self._place_overlays()
+
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        self._place_overlays()
+
+    def _place_overlays(self):
+        margin = 12
+        if self._overlay is not None:
+            self._overlay.adjustSize()
+            self._overlay.move(self.width() - self._overlay.width() - margin, margin)
+            self._overlay.raise_()
+        self.hint.adjustSize()
+        self.hint.move(margin, self.height() - self.hint.height() - margin)
 
     # ---- content --------------------------------------------------------
     def set_parts(self, project: Project, parts: geometry.Parts | None):
@@ -193,11 +215,16 @@ class Viewer(gl.GLViewWidget):
                 self._mount_items.append(item)
 
     def reset_view(self, project: Project):
+        self.set_view(project, "3d")
+
+    def set_view(self, project: Project, name: str):
+        """Look at the whole object from one of the VIEWS."""
         size = max(project.outer_width, project.outer_depth, project.closed_height)
         center_z = (project.closed_height + (LID_LIFT + project.lid.lip_height
                                              if project.lid.enabled else 0)) / 2
+        elevation, azimuth = VIEWS[name]
         self.setCameraPosition(pos=Vector(0, 0, center_z), distance=size * 2.6,
-                               elevation=28, azimuth=-62)
+                               elevation=elevation, azimuth=azimuth)
 
     # ---- picking --------------------------------------------------------
     # ---- mouse: drag holes, otherwise turn the view ------------------------
