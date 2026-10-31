@@ -1718,8 +1718,8 @@ def test_fan_fits_under_the_lid():
     assert fan.u + 15 < usb_x or h - 10 > top + 16
     screws = [x for x in p.holes if x.surface == LID and x.diameter == 3.4]
     assert sorted({round(abs(s.u - fan.u), 6) for s in screws}) == [12.0]
-    # Right over the Pi 5's processor (32.5 x 23.5 mm from the board's corner).
-    x, y = templates._floor_point(m, 32.5, 23.5)
+    # Right over the Pi 5's processor (33.2 x 22.9 mm from the board's corner).
+    x, y = templates._floor_point(m, 33.2, 22.9)
     assert (fan.u, fan.v) == pytest.approx((x, y))
 
 
@@ -1820,38 +1820,40 @@ def test_templates_remember_where_they_came_from(tmp_path):
 # ---- connector positions in the board templates ------------------------------------
 #
 # Where the sockets really are, measured from each board's lower-left corner (the edge
-# with power/HDMI at the bottom, USB/network on the right), from the Raspberry Pi and
-# Arduino mechanical drawings as modelled in NopSCADlib (vitamins/pcbs.scad) and
-# @jwc/jscad-raspberrypi. Each socket: (edge, position along the edge, height of its
-# centre above the board's top, plug width, plug height, how far it sticks out past the
-# board edge). Plug sizes are the moulded part of common cables, which has to fit
-# through the opening when the socket sits back from the wall.
+# with power/HDMI at the bottom, USB/network on the right), from the official mechanical
+# drawings (datasheets.raspberrypi.com, the Pico datasheet and the Arduino Uno and Mega
+# datasheets); how far each socket sticks out was measured on those drawings. Each
+# socket: (edge, position along the edge, height of its centre above the board's top,
+# plug width, plug height, how far it sticks out past the board edge). Plug sizes are the
+# moulded part of common cables, which has to fit through the opening when the socket
+# sits back from the wall.
 
-PI3 = [("front", 10.6, 1.3, 10.5, 6.5, 2.0), ("front", 32.0, 3.25, 15.0, 8.0, 2.0),
-       ("front", 53.5, 2.8, 7.0, 7.0, 0.5),
+PI3 = [("front", 10.6, 1.3, 10.5, 6.5, 1.3), ("front", 32.0, 3.25, 15.0, 8.0, 1.5),
+       ("front", 53.5, 3.0, 7.0, 7.0, 2.6),
        ("right", 10.25, 6.75, 16.0, 13.5, 2.0), ("right", 29.0, 8.0, 15.0, 16.0, 2.0),
        ("right", 47.0, 8.0, 15.0, 16.0, 2.0)]
-PI4 = [("front", 11.2, 1.6, 12.5, 6.5, 1.0), ("front", 26.0, 1.5, 11.0, 6.5, 1.0),
-       ("front", 39.5, 1.5, 11.0, 6.5, 1.0), ("front", 54.0, 2.8, 7.0, 7.0, 0.5),
+PI4 = [("front", 11.2, 1.6, 12.5, 6.5, 1.2), ("front", 26.0, 1.5, 11.0, 6.5, 1.4),
+       ("front", 39.5, 1.5, 11.0, 6.5, 1.4), ("front", 54.0, 3.0, 7.0, 7.0, 2.5),
        ("right", 9.0, 8.0, 15.0, 16.0, 3.0), ("right", 27.0, 8.0, 15.0, 16.0, 3.0),
-       ("right", 45.75, 6.9, 16.0, 13.8, 3.0)]
-PI5 = [("front", 11.2, 1.6, 12.5, 6.5, 1.0), ("front", 25.8, 1.5, 11.0, 6.5, 1.0),
-       ("front", 39.2, 1.5, 11.0, 6.5, 1.0),
+       ("right", 45.75, 6.75, 16.0, 13.5, 3.0)]
+PI5 = [("front", 11.2, 1.6, 12.5, 6.5, 1.3), ("front", 25.8, 1.7, 11.0, 6.5, 1.6),
+       ("front", 39.2, 1.7, 11.0, 6.5, 1.6),
        ("right", 10.2, 6.75, 16.5, 13.5, 3.0), ("right", 29.1, 8.0, 15.0, 16.5, 3.0),
-       ("right", 47.0, 8.0, 15.0, 16.5, 3.0), ("left", 18.4, 1.85, 3.0, 3.0, 1.0)]
+       ("right", 47.0, 8.0, 15.0, 16.5, 3.0), ("left", 18.4, 1.85, 3.0, 3.0, 0.5)]
 PI_SD = [("left", 28.0, -2.4, 12.0, 2.0, 2.5)]                   # under the board
-PI3A = [("front", 10.6, 1.3, 10.5, 6.5, 2.0), ("front", 32.0, 3.25, 15.0, 8.0, 2.0),
-        ("front", 53.5, 2.8, 7.0, 7.0, 0.5), ("right", 31.45, 3.5, 15.0, 8.0, 2.0)] + PI_SD
-ZERO = [("front", 12.4, 1.6, 11.5, 6.5, 0.4), ("front", 41.4, 1.3, 10.5, 6.5, 0.8),
-        ("front", 54.0, 1.3, 10.5, 6.5, 0.8), ("left", 16.7, 0.7, 12.0, 2.0, 1.0)]
+PI3A = [("front", 10.6, 1.3, 10.5, 6.5, 1.3), ("front", 32.0, 3.25, 15.0, 8.0, 1.5),
+        ("front", 53.5, 3.0, 7.0, 7.0, 2.5), ("right", 31.5, 3.5, 15.0, 8.0, 2.5)] + PI_SD
+ZERO = [("front", 12.4, 1.6, 11.5, 6.5, 0.6), ("front", 41.4, 1.3, 10.5, 6.5, 1.35),
+        ("front", 54.0, 1.3, 10.5, 6.5, 1.35), ("left", 16.7, 0.7, 12.0, 2.0, 1.0)]
 ZERO_CAMERA = [("right", 15.0, 1.0, 12.0, 2.0, 0.0)]
-PICO = [("left", 10.5, 1.3, 10.5, 6.5, 1.1)]
-UNO = [("left", 37.78, 5.5, 12.0, 11.0, 6.4), ("left", 7.62, 6.5, 10.0, 10.0, 2.4)]
+PICO = [("left", 10.5, 1.3, 10.5, 6.5, 1.3)]
+UNO = [("left", 37.78, 5.5, 12.0, 11.0, 6.4), ("left", 7.62, 6.5, 10.0, 10.0, 1.5)]
+MEGA = [("left", 38.6, 5.5, 12.0, 11.0, 6.4), ("left", 7.62, 6.5, 10.0, 10.0, 1.5)]
 
 BOARD_SOCKETS = {
     "pi": [PI3 + PI_SD, PI4 + PI_SD, PI5 + PI_SD], "pi-gpio": [PI3 + PI_SD, PI4 + PI_SD, PI5 + PI_SD],
     "pi5-fan": [PI5 + PI_SD], "pi-3a": [PI3A], "pi-zero": [ZERO + ZERO_CAMERA],
-    "pi-zero-stack": [ZERO], "pico": [PICO], "arduino": [UNO], "mega": [UNO],
+    "pi-zero-stack": [ZERO], "pico": [PICO], "arduino": [UNO], "mega": [MEGA],
 }
 
 
