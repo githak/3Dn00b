@@ -139,6 +139,16 @@ Defaults I chose myself, which are easy to change:
   those sides. Both are made as if at the front and then turned, so the groove,
   the lowered wall and the panel always match; tests slide the lid out each way
   and check it's held in every other direction.
+- Dark, modern interface (0.22), requested by the project owner. One colour scheme
+  defined in `gui/theme.py` (cool dark greys, one blue accent, green / amber / red
+  only for status) and line icons drawn from SVG. The layout follows the work:
+  a rail of steps on the left (Shape, Holes, Posts, Lid, Export, with Ctrl+1 to 5),
+  the settings of the current step grouped in cards, and the 3D view with floating
+  camera buttons (3D, Front, Top, Side) and the lid toggle. The header holds the
+  file actions, Undo / Redo, the design's name and one accent button: Export. A
+  status chip in the corner and the Export step's icon show the result of the
+  checks at all times. Problems for a selected hole or board appear at the top of
+  its card, and its list row gets a red or amber sign.
 - Templates (0.17), requested by the project owner so beginners don't size a
   case by trial and error: a template list in the Shape tab, right under the Box
   and Round container buttons, so a template is the third way to start.

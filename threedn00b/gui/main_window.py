@@ -4,18 +4,20 @@ from __future__ import annotations
 
 import copy
 import gc
+from html import escape
 from pathlib import Path
 from types import SimpleNamespace
 
-from PySide6.QtCore import QSettings, Qt, QTimer
-from PySide6.QtGui import QAction, QKeySequence, QUndoCommand, QUndoStack
+from PySide6.QtCore import QRect, QSettings, QSize, Qt, QTimer
+from PySide6.QtGui import (QAction, QColor, QIcon, QKeySequence, QPainter, QShortcut,
+                           QTextDocument, QUndoCommand, QUndoStack)
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox,
                                QDoubleSpinBox, QFileDialog, QFormLayout, QFrame,
                                QHBoxLayout, QLabel, QLineEdit, QListWidget,
-                               QListWidgetItem, QMainWindow, QMessageBox,
+                               QListView, QListWidgetItem, QMainWindow, QMessageBox,
                                QMenu, QPushButton, QRadioButton, QScrollArea, QSizePolicy, QSpinBox,
-                               QSplitter, QStyle, QTabWidget, QToolBar, QToolButton,
-                               QVBoxLayout, QWidget)
+                               QSplitter, QStyle, QStyledItemDelegate, QTabWidget, QToolBar,
+                               QToolButton, QVBoxLayout, QWidget)
 
 from .. import (APP_NAME, __version__, geometry, mounts, picking, project_io, templates,
                 validation)
@@ -26,6 +28,7 @@ from ..model import (ALONG_U, ALONG_V, BOTTOM, BOX, CYLINDER, FIT_LABELS, FIT_PR
                      SNAP, THREADED, TRAY_TEMPLATE, WALL_RANGE, Hole, Project,
                      clamp_hole, compartment_depths, compartment_widths, default_project,
                      has_set_sizes, hole_limits, resized_sizes)
+from . import theme
 from .viewer import Viewer
 
 COMMON_HOLES = [
@@ -73,6 +76,12 @@ LID_STYLE_HINTS = {
               "with a thread. Only for round containers.",
 }
 CHECK_TAB_TITLE = "5 Check && Export"
+LABEL_WIDTH = 120            # the field labels of every card line up
+HOLE_ICONS = {ROUND: "round-hole", RECT: "rect-hole", VENT: "vent"}
+# The steps in the rail: (icon, label, tooltip). Same order as the TAB_* pages.
+STEPS = (("shape", "Shape", "Shape and size"), ("holes", "Holes", "Holes, openings and vents"),
+         ("posts", "Posts", "Screw posts for circuit boards"), ("lid", "Lid", "The lid"),
+         ("check", "Export", "Check the design and export it for printing"))
 
 
 class SnapshotCommand(QUndoCommand):
@@ -133,8 +142,139 @@ def scrolling(page: QWidget) -> QScrollArea:
 def hint(text: str) -> QLabel:
     label = QLabel(text)
     label.setWordWrap(True)
-    label.setStyleSheet("color: #556;")
+    label.setObjectName("hint")
     return label
+
+
+def error_label() -> QLabel:
+    """Red text under a panel saying what is wrong with the selected item."""
+    label = QLabel()
+    label.setWordWrap(True)
+    label.setObjectName("error")
+    return label
+
+
+def card(title: str | None = None) -> tuple[QFrame, QVBoxLayout]:
+    """A rounded panel that groups related settings, with a small heading."""
+    frame = QFrame()
+    frame.setObjectName("card")
+    layout = QVBoxLayout(frame)
+    layout.setContentsMargins(14, 12, 14, 14)
+    layout.setSpacing(10)
+    if title:
+        heading = QLabel(title.upper())
+        heading.setObjectName("cardTitle")
+        layout.addWidget(heading)
+    return frame, layout
+
+
+def form_layout(parent: QWidget | None = None) -> QFormLayout:
+    form = QFormLayout(parent) if parent is not None else QFormLayout()
+    form.setContentsMargins(0, 0, 0, 0)
+    form.setHorizontalSpacing(14)
+    form.setVerticalSpacing(8)
+    form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+    form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+    form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.DontWrapRows)
+    return form
+
+
+def page(title: str, subtitle: str) -> tuple[QWidget, QVBoxLayout]:
+    """One step's page: a title, a line saying what it's for, then cards."""
+    widget = QWidget()
+    widget.setObjectName("page")
+    layout = QVBoxLayout(widget)
+    layout.setContentsMargins(18, 18, 14, 18)
+    layout.setSpacing(12)
+    heading = QLabel(title)
+    heading.setObjectName("pageTitle")
+    sub = QLabel(subtitle)
+    sub.setObjectName("pageSubtitle")
+    sub.setWordWrap(True)
+    layout.addWidget(heading)
+    layout.addWidget(sub)
+    layout.addSpacing(2)
+    return widget, layout
+
+
+def icon_button(text: str, icon_name: str, kind: str | None = None, tip: str = "") -> QPushButton:
+    """A push button with a line icon; kind is "primary", "danger", "tile" or None."""
+    button = QPushButton(text)
+    color = {"primary": "#ffffff", "danger": theme.DANGER}.get(kind, theme.TEXT)
+    button.setIcon(theme.icon(icon_name, color))
+    button.setIconSize(theme.ICON_SIZE)
+    if kind:
+        button.setObjectName(kind)
+    if tip:
+        button.setToolTip(tip)
+    button.setCursor(Qt.CursorShape.PointingHandCursor)
+    return button
+
+
+class IssueDelegate(QStyledItemDelegate):
+    """Draws a check: its icon, the message, and the hint in grey below, wrapped."""
+
+    PAD, ICON = 9, 18
+
+    def _document(self, index, font, width: int) -> QTextDocument:
+        message, extra = index.data(Qt.ItemDataRole.UserRole) or (index.data(), "")
+        html = f"<div style='color:{theme.TEXT}'>{escape(message)}</div>"
+        if extra:
+            html += f"<div style='color:{theme.MUTED}; margin-top:3px'>{escape(extra)}</div>"
+        doc = QTextDocument()
+        doc.setDefaultFont(font)
+        doc.setDocumentMargin(0)
+        doc.setHtml(html)
+        doc.setTextWidth(max(width, 50))
+        return doc
+
+    def _text_width(self, total: int) -> int:
+        return total - 3 * self.PAD - self.ICON
+
+    def sizeHint(self, option, index):
+        width = self.parent().viewport().width() - 4
+        doc = self._document(index, option.font, self._text_width(width))
+        return QSize(width, int(max(self.ICON, doc.size().height())) + 2 * self.PAD)
+
+    def paint(self, painter, option, index):
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = option.rect.adjusted(1, 1, -1, -1)
+        if option.state & QStyle.StateFlag.State_Selected:
+            painter.setBrush(QColor(theme.ACCENT).darker(260))
+        elif option.state & QStyle.StateFlag.State_MouseOver:
+            painter.setBrush(QColor(theme.BG3))
+        else:
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawRoundedRect(rect, 6, 6)
+        icon = index.data(Qt.ItemDataRole.DecorationRole)
+        if isinstance(icon, QIcon):
+            icon.paint(painter, QRect(rect.x() + self.PAD, rect.y() + self.PAD, self.ICON, self.ICON))
+        doc = self._document(index, option.font, self._text_width(rect.width()))
+        painter.translate(rect.x() + 2 * self.PAD + self.ICON, rect.y() + self.PAD)
+        doc.drawContents(painter)
+        painter.restore()
+
+
+def summary_table(rows: list[tuple[str, str]]) -> str:
+    """Rich text for a small two-column summary: grey names, bright values."""
+    cells = "".join(f"<tr><td style='color:{theme.MUTED}; padding:1px 14px 1px 0'>{escape(name)}</td>"
+                    f"<td style='padding:1px 0'>{escape(value)}</td></tr>" for name, value in rows)
+    return f"<table cellspacing='0' cellpadding='0'>{cells}</table>"
+
+
+def fit_list(widget: QListWidget, rows: int) -> None:
+    """Make a list as tall as its items, up to `rows` rows (then it scrolls)."""
+    height = sum(widget.sizeHintForRow(i) + 2 for i in range(min(widget.count(), rows)))
+    widget.setFixedHeight(max(height, 20) + 2 * widget.frameWidth() + 10)
+
+
+def app_icon() -> QIcon:
+    icon = QApplication.windowIcon()
+    if icon.isNull():
+        icon = QIcon(str(Path(__file__).resolve().parent.parent / "resources" / "3dn00b.svg"))
+    return icon
 
 
 def _ordinal(n: int) -> str:
@@ -168,6 +308,7 @@ def set_quietly(widget, value):
 class MainWindow(QMainWindow):
     def __init__(self, project: Project | None = None):
         super().__init__()
+        theme.apply(QApplication.instance())
         self.project = project or default_project()
         self.path: Path | None = None
         self.selected_id: str | None = None
@@ -187,27 +328,67 @@ class MainWindow(QMainWindow):
         self.viewer.drag_handler = self
         self.viewer.surfaceDoubleClicked.connect(self._on_surface_double_clicked)
 
+        # The steps' pages. The tab bar is hidden: the rail on the left picks the page.
         self.tabs = QTabWidget()
-        self.tabs.addTab(scrolling(self._build_shape_tab()), "1 Shape")
-        self.tabs.addTab(scrolling(self._build_holes_tab()), "2 Holes")
-        self.tabs.addTab(scrolling(self._build_posts_tab()), "3 Posts")
-        self.tabs.addTab(scrolling(self._build_lid_tab()), "4 Lid")
-        self.tabs.addTab(scrolling(self._build_check_tab()), CHECK_TAB_TITLE)
-        self.tabs.setMinimumWidth(420)
-        self.tabs.setMaximumWidth(500)
+        self.tabs.setDocumentMode(True)
+        self.tabs.tabBar().hide()
+        for build, title in ((self._build_shape_tab, "1 Shape"), (self._build_holes_tab, "2 Holes"),
+                             (self._build_posts_tab, "3 Posts"), (self._build_lid_tab, "4 Lid"),
+                             (self._build_check_tab, CHECK_TAB_TITLE)):
+            self.tabs.addTab(scrolling(build()), title)
+        self.tabs.currentChanged.connect(self._on_step_changed)
+        for combo in self.tabs.findChildren(QComboBox):
+            # Lets the style sheet give the drop-down lists roomy, rounded rows, and keeps
+            # long entries (board names) from making the panel wider than the window.
+            combo.setItemDelegate(QStyledItemDelegate(combo))
+            combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+            combo.setMinimumContentsLength(8)
+        for form in self.tabs.findChildren(QFormLayout):
+            # Line up the fields of every card.
+            for row in range(form.rowCount()):
+                item = form.itemAt(row, QFormLayout.ItemRole.LabelRole)
+                if item is not None and item.widget() is not None:
+                    item.widget().setMinimumWidth(LABEL_WIDTH if form.parent() is not None
+                                                  and form.contentsMargins().left() == 0
+                                                  else 0)
+
+        panel = QWidget()
+        panel.setObjectName("panel")
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(0, 0, 0, 0)
+        panel_layout.addWidget(self.tabs)
+        panel.setMinimumWidth(390)
+        panel.setMaximumWidth(560)
 
         splitter = QSplitter()
+        splitter.setHandleWidth(1)
+        splitter.addWidget(panel)
         splitter.addWidget(self.viewer)
-        splitter.addWidget(self.tabs)
-        splitter.setStretchFactor(0, 1)
-        splitter.setSizes([800, 440])
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([430, 930])
         splitter.setChildrenCollapsible(False)
-        self.setCentralWidget(splitter)
+
+        central = QWidget()
+        central.setObjectName("central")
+        row = QHBoxLayout(central)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(0)
+        row.addWidget(self._build_rail())
+        row.addWidget(splitter, 1)
+        self.setCentralWidget(central)
 
         self._build_toolbar()
-        self.status_badge = QLabel()
+        self._build_view_overlay()
+        self.status_badge = QPushButton()
+        self.status_badge.setObjectName("statusChip")
+        self.status_badge.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.status_badge.setToolTip("Open Check & Export")
+        self.status_badge.clicked.connect(lambda: self.tabs.setCurrentIndex(TAB_CHECK))
         self.statusBar().addPermanentWidget(self.status_badge)
-        self.resize(1240, 780)
+        self.statusBar().setSizeGripEnabled(False)
+        self.statusBar().setContentsMargins(6, 0, 10, 0)
+        self.resize(1360, 860)
 
         self.refresh_controls()
         self.rebuild()
@@ -218,13 +399,24 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     def _build_toolbar(self):
         bar = QToolBar("Main")
+        bar.setObjectName("header")
         bar.setMovable(False)
+        bar.setFloatable(False)
+        bar.setIconSize(theme.ICON_SIZE)
         bar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        bar.setContextMenuPolicy(Qt.ContextMenuPolicy.PreventContextMenu)
         self.addToolBar(bar)
-        style = self.style()
 
-        def action(text, icon, slot, shortcut=None, tip=None):
-            act = QAction(style.standardIcon(icon), text, self)
+        logo = QLabel()
+        logo.setPixmap(app_icon().pixmap(24, 24))
+        bar.addWidget(logo)
+        brand = QLabel(APP_NAME)
+        brand.setObjectName("brand")
+        bar.addWidget(brand)
+        bar.addSeparator()
+
+        def action(text, icon_name, slot, shortcut=None, tip=None, color=theme.TEXT):
+            act = QAction(theme.icon(icon_name, color), text, self)
             act.triggered.connect(slot)
             if shortcut:
                 act.setShortcut(shortcut)
@@ -234,16 +426,17 @@ class MainWindow(QMainWindow):
             return act
 
         # A lambda, because triggered() would otherwise pass its 'checked' flag as `template`.
-        new = action("New", QStyle.StandardPixmap.SP_FileIcon, lambda: self.new_project(),
-                     QKeySequence.StandardKey.New, "Start a new design")
+        new = action("New", "new", lambda: self.new_project(), QKeySequence.StandardKey.New,
+                     "Start a new design")
         menu = QMenu(self)
         for label, template in (("Box", BOX), ("Round container", CYLINDER),
                                 ("Shallow tray with compartments", TRAY_TEMPLATE)):
             menu.addAction(label, lambda t=template: self.new_project(t))
         new.setMenu(menu)
         bar.widgetForAction(new).setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
-        action("Open", QStyle.StandardPixmap.SP_DialogOpenButton, self.open_project, QKeySequence.StandardKey.Open)
-        action("Save", QStyle.StandardPixmap.SP_DialogSaveButton, self.save_project, QKeySequence.StandardKey.Save,
+        action("Open", "open", self.open_project, QKeySequence.StandardKey.Open,
+               "Open a project file")
+        action("Save", "save", self.save_project, QKeySequence.StandardKey.Save,
                "Save an editable project file")
         save_as = QAction("Save As…", self)
         save_as.setShortcut(QKeySequence.StandardKey.SaveAs)
@@ -251,50 +444,135 @@ class MainWindow(QMainWindow):
         self.addAction(save_as)
         bar.addSeparator()
         undo = self.undo_stack.createUndoAction(self, "Undo")
-        undo.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_ArrowBack))
+        undo.setIcon(theme.icon("undo"))
         undo.setShortcut(QKeySequence.StandardKey.Undo)
         redo = self.undo_stack.createRedoAction(self, "Redo")
-        redo.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_ArrowForward))
+        redo.setIcon(theme.icon("redo"))
         redo.setShortcut(QKeySequence.StandardKey.Redo)
-        bar.addAction(undo)
-        bar.addAction(redo)
-        bar.addSeparator()
-        action("Reset view", QStyle.StandardPixmap.SP_BrowserReload,
-               lambda: self.viewer.reset_view(self.project))
-        self.show_lid_action = QAction("Show lid", self, checkable=True, checked=True)
-        self.show_lid_action.toggled.connect(self._on_show_lid)
-        bar.addAction(self.show_lid_action)
-        spacer = QWidget()
-        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        bar.addWidget(spacer)
-        self.export_action = action("Export for printing…", QStyle.StandardPixmap.SP_DriveHDIcon,
-                                    self.export_stl, QKeySequence("Ctrl+E"),
-                                    "Save STL files you can open in your slicer")
-        bar.addSeparator()
-        self.about_action = action("About", QStyle.StandardPixmap.SP_MessageBoxInformation,
-                                   self.show_about, tip="About 3Dn00b")
+        for act in (undo, redo):
+            bar.addAction(act)
+            # Icon only: the text ("Undo Change width") changes and would shift the bar.
+            bar.widgetForAction(act).setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+
+        # The design's name in the middle.
+        for _ in range(2):
+            spacer = QWidget()
+            spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+            bar.addWidget(spacer)
+            if _ == 0:
+                self.title_label = QLabel()
+                self.title_label.setObjectName("docTitle")
+                bar.addWidget(self.title_label)
+
+        self.export_action = action("Export for printing…", "export", self.export_stl,
+                                    QKeySequence("Ctrl+E"),
+                                    "Save files you can open in your slicer (Ctrl+E)", "#ffffff")
+        export_button = bar.widgetForAction(self.export_action)
+        export_button.setObjectName("primary")
+        export_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        theme.repolish(export_button)
+        gap = QWidget()
+        gap.setFixedWidth(6)
+        bar.addWidget(gap)
+        self.about_action = action("About", "info", self.show_about, tip="About 3Dn00b")
+        bar.widgetForAction(self.about_action).setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonIconOnly)
         delete = QAction(self, shortcut=QKeySequence.StandardKey.Delete)
         delete.triggered.connect(self.remove_selected_hole)
         self.addAction(delete)
 
-    def _build_shape_tab(self):
-        page = QWidget()
-        layout = QVBoxLayout(page)
+    def _build_rail(self) -> QWidget:
+        """The steps down the left side: Shape, Holes, Posts, Lid, Export."""
+        rail = QWidget()
+        rail.setObjectName("rail")
+        rail.setFixedWidth(80)
+        layout = QVBoxLayout(rail)
+        layout.setContentsMargins(8, 12, 8, 12)
+        layout.setSpacing(6)
+        self.rail_group = QButtonGroup(self)
+        self.rail_buttons: list[QToolButton] = []
+        for index, (icon_name, text, tip) in enumerate(STEPS):
+            button = QToolButton()
+            button.setObjectName("railButton")
+            button.setText(text)
+            button.setCheckable(True)
+            button.setIcon(theme.icon(icon_name, theme.MUTED, checked=theme.ACCENT_TEXT))
+            button.setIconSize(QSize(22, 22))
+            button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+            button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            button.setMinimumHeight(60)
+            button.setToolTip(f"{tip}  (Ctrl+{index + 1})")
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.clicked.connect(lambda _=False, i=index: self.tabs.setCurrentIndex(i))
+            QShortcut(QKeySequence(f"Ctrl+{index + 1}"), self,
+                      lambda i=index: self.tabs.setCurrentIndex(i))
+            self.rail_group.addButton(button, index)
+            self.rail_buttons.append(button)
+            layout.addWidget(button)
+        layout.addStretch()
+        self.rail_buttons[0].setChecked(True)
+        return rail
 
-        layout.addWidget(QLabel("<b>What are you making?</b>"))
+    def _on_step_changed(self, index: int):
+        self.rail_buttons[index].setChecked(True)
+
+    def _build_view_overlay(self):
+        """Floating buttons over the 3D view: camera presets and the lid toggle."""
+        frame = QFrame()
+        frame.setObjectName("viewOverlay")
+        row = QHBoxLayout(frame)
+        row.setContentsMargins(4, 4, 4, 4)
+        row.setSpacing(2)
+        for key, text, tip in (("3d", "3D", "Look at it from the front left, from above (Ctrl+0)"),
+                               ("front", "Front", "Look straight at the front"),
+                               ("top", "Top", "Look down from above"),
+                               ("side", "Side", "Look at the right side")):
+            button = QToolButton()
+            button.setText(text)
+            button.setToolTip(tip)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.clicked.connect(lambda _=False, k=key: self.viewer.set_view(self.project, k))
+            row.addWidget(button)
+        QShortcut(QKeySequence("Ctrl+0"), self, lambda: self.viewer.reset_view(self.project))
+        divider = QFrame()
+        divider.setObjectName("overlayDivider")
+        divider.setFixedSize(1, 18)
+        row.addWidget(divider)
+        self.show_lid_action = QAction(theme.icon("eye", theme.MUTED, checked=theme.ACCENT_TEXT),
+                                       "Lid", self, checkable=True, checked=True)
+        self.show_lid_action.setToolTip("Show or hide the lid in the preview")
+        self.show_lid_action.toggled.connect(self._on_show_lid)
+        lid_button = QToolButton()
+        lid_button.setDefaultAction(self.show_lid_action)
+        lid_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        lid_button.setIconSize(QSize(16, 16))
+        lid_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        row.addWidget(lid_button)
+        self.viewer.set_overlay(frame)
+
+    def _build_shape_tab(self):
+        widget, layout = page("Shape & size",
+                              "Choose what you're making, then type its size in millimetres.")
+        box, lay = card("What are you making?")
         row = QHBoxLayout()
+        row.setSpacing(8)
         self.shape_group = QButtonGroup(self)
         self.shape_buttons = {}
-        for shape, text in ((BOX, "▭  Box"), (CYLINDER, "◯  Round container")):
+        for shape, text, icon_name in ((BOX, "Box", "box"), (CYLINDER, "Round container", "cylinder")):
             btn = QPushButton(text, checkable=True)
-            btn.setMinimumHeight(40)
+            btn.setObjectName("tile")
+            btn.setIcon(theme.icon(icon_name, theme.MUTED, checked=theme.ACCENT_TEXT))
+            btn.setIconSize(QSize(22, 22))
+            btn.setMinimumHeight(48)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
             self.shape_group.addButton(btn)
             self.shape_buttons[shape] = btn
             btn.clicked.connect(lambda _=False, s=shape: self.edit("Change shape", lambda p: p.set_shape(s)))
             row.addWidget(btn)
-        layout.addLayout(row)
+        lay.addLayout(row)
         self.template_combo = QComboBox()
-        self.template_combo.addItem("…or start from a template", None)
+        self.template_combo.addItem(theme.icon("template", theme.MUTED),
+                                    "…or start from a template", None)
         for heading, keys in templates.GROUPS:
             # A heading that can't be picked, then the group's templates.
             self.template_combo.addItem(heading, None)
@@ -312,46 +590,62 @@ class MainWindow(QMainWindow):
                                        "everything afterwards.")
         self.template_combo.activated.connect(self._on_template)
         self.template_combo.setMinimumHeight(34)
-        layout.addWidget(self.template_combo)
-
-        form = QFormLayout()
+        self.template_combo.setMaxVisibleItems(20)
+        lay.addWidget(self.template_combo)
+        form = form_layout()
         self.name_edit = QLineEdit()
+        self.name_edit.setPlaceholderText("Give it a name")
         self.name_edit.textEdited.connect(
             lambda t: self.edit("Rename", lambda p: setattr(p, "name", t), merge="name"))
         form.addRow("Name", self.name_edit)
-        layout.addLayout(form)
+        lay.addLayout(form)
+        layout.addWidget(box)
 
-        layout.addWidget(QLabel("<b>The sizes below are</b>"))
+        box, lay = card("Size")
         row = QHBoxLayout()
-        self.mode_outside = QRadioButton("Outside size")
-        self.mode_inside = QRadioButton("Inside space")
-        for btn, mode in ((self.mode_outside, OUTSIDE), (self.mode_inside, INSIDE)):
+        row.setSpacing(0)
+        self.mode_group = QButtonGroup(self)
+        self.mode_outside = QPushButton("Outside size", checkable=True)
+        self.mode_inside = QPushButton("Inside space", checkable=True)
+        for btn, mode, name in ((self.mode_outside, OUTSIDE, "segmentLeft"),
+                                (self.mode_inside, INSIDE, "segmentRight")):
+            btn.setObjectName(name)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.mode_group.addButton(btn)
             btn.toggled.connect(lambda on, m=mode: on and self.edit(
                 "Change measuring", lambda p: p.set_size_mode(m)))
-            row.addWidget(btn)
-        row.addStretch()
-        layout.addLayout(row)
-        layout.addWidget(hint("Outside = how big the finished object is. "
-                              "Inside = how much room there is for your things."))
-
-        form = QFormLayout()
+            row.addWidget(btn, 1)
+        lay.addLayout(row)
+        lay.addWidget(hint("Outside = how big the finished object is. "
+                           "Inside = how much room there is for your things."))
+        form = form_layout()
         self.width_spin = spin(*SIZE_RANGE)
         self.depth_spin = spin(*SIZE_RANGE)
         self.diameter_spin = spin(*SIZE_RANGE)
         self.height_spin = spin(*SIZE_RANGE)
-        self.wall_spin = spin(*WALL_RANGE, step=0.2, decimals=2)
-        self.bottom_spin = spin(*WALL_RANGE, step=0.2, decimals=2)
-        self.corner_spin = spin(0.0, 150.0, step=1.0)
         self.width_spin.setToolTip("Left to right")
         self.depth_spin.setToolTip("Front to back")
         self.height_spin.setToolTip("Bottom to top, without the lid")
-        self.corner_spin.setToolTip("How round the corners are when seen from above. 0 = sharp corners.")
         self.width_label, self.depth_label = QLabel("Width"), QLabel("Depth")
-        self.diameter_label, self.corner_label = QLabel("Diameter"), QLabel("Rounded corners")
+        self.diameter_label = QLabel("Diameter")
         form.addRow(self.width_label, self.width_spin)
         form.addRow(self.depth_label, self.depth_spin)
         form.addRow(self.diameter_label, self.diameter_spin)
         form.addRow("Height", self.height_spin)
+        lay.addLayout(form)
+        self.size_summary = QLabel()
+        self.size_summary.setObjectName("summary")
+        self.size_summary.setWordWrap(True)
+        lay.addWidget(self.size_summary)
+        layout.addWidget(box)
+
+        box, lay = card("Walls & corners")
+        form = form_layout()
+        self.wall_spin = spin(*WALL_RANGE, step=0.2, decimals=2)
+        self.bottom_spin = spin(*WALL_RANGE, step=0.2, decimals=2)
+        self.corner_spin = spin(0.0, 150.0, step=1.0)
+        self.corner_spin.setToolTip("How round the corners are when seen from above. 0 = sharp corners.")
+        self.corner_label = QLabel("Rounded corners")
         form.addRow("Wall thickness", self.wall_spin)
         form.addRow("Bottom thickness", self.bottom_spin)
         form.addRow(self.corner_label, self.corner_spin)
@@ -372,8 +666,9 @@ class MainWindow(QMainWindow):
         form.addRow("Inside corners", self.inside_corners)
         form.addRow("Corner size", self.inside_corner_size)
         self.shape_form = form
-        layout.addLayout(form)
-        for widget, attr, label in (
+        lay.addLayout(form)
+        layout.addWidget(box)
+        for widget_, attr, label in (
                 (self.width_spin, "width", "Change width"),
                 (self.depth_spin, "depth", "Change depth"),
                 (self.diameter_spin, "diameter", "Change diameter"),
@@ -381,19 +676,12 @@ class MainWindow(QMainWindow):
                 (self.wall_spin, "wall", "Change wall thickness"),
                 (self.bottom_spin, "bottom", "Change bottom thickness"),
                 (self.corner_spin, "corner_radius", "Change corners")):
-            widget.valueChanged.connect(
+            widget_.valueChanged.connect(
                 lambda value, a=attr, lbl=label: self.edit(lbl, lambda p: setattr(p, a, value), merge=a))
 
-        self.size_summary = QLabel()
-        self.size_summary.setWordWrap(True)
-        self.size_summary.setFrameShape(QFrame.Shape.StyledPanel)
-        self.size_summary.setStyleSheet("padding: 6px; background: #f4f6f9;")
-        layout.addWidget(self.size_summary)
-
-        layout.addWidget(QLabel("<b>Compartments</b>"))
+        box, lay = card("Compartments")
         self.divider_box = QWidget()
-        form = self.divider_form = QFormLayout(self.divider_box)
-        form.setContentsMargins(0, 0, 0, 0)
+        form = self.divider_form = form_layout(self.divider_box)
         self.div_across = int_spin(1, MAX_COMPARTMENTS)
         self.div_deep = int_spin(1, MAX_COMPARTMENTS)
         self.div_across.setToolTip("How many compartments from left to right. 1 = no dividers.")
@@ -424,39 +712,44 @@ class MainWindow(QMainWindow):
         self.div_height.valueChanged.connect(
             lambda v: self.edit("Change divider height", lambda p: setattr(p.dividers, "height", v),
                                 merge="div_h"))
-        layout.addWidget(self.divider_box)
+        lay.addWidget(self.divider_box)
         self.divider_info = hint("")
-        layout.addWidget(self.divider_info)
+        lay.addWidget(self.divider_info)
+        layout.addWidget(box)
         layout.addStretch()
-        return page
+        return widget
 
     def _build_holes_tab(self):
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.addWidget(hint("Holes for cables, screws, USB ports, switches or air.\n"
-                              "Tip: double-click a wall in the 3D view to put a hole right there, "
-                              "and drag holes to move them."))
+        widget, layout = page("Holes", "Openings for cables, screws, USB plugs, switches and air.")
+        box, lay = card("Add an opening")
         row = QHBoxLayout()
-        self.add_hole_button = QPushButton("+ Round hole")
-        self.add_rect_button = QPushButton("+ Rectangle")
-        self.add_vent_button = QPushButton("+ Air vent")
-        self.add_vent_button.setToolTip("A row of slots that lets air in and out")
+        row.setSpacing(8)
+        self.add_hole_button = icon_button("Round", "round-hole", "tile", "A round hole: cables, screws")
+        self.add_rect_button = icon_button("Rectangle", "rect-hole", "tile",
+                                           "A rectangular opening: USB plugs, switches, displays")
+        self.add_vent_button = icon_button("Air vent", "vent", "tile",
+                                           "A row of slots that lets air in and out")
         for button in (self.add_hole_button, self.add_rect_button, self.add_vent_button):
-            button.setMinimumHeight(34)
+            button.setMinimumHeight(44)
             row.addWidget(button)
         # Lambdas, because clicked() would otherwise pass its 'checked' flag as `surface`.
         self.add_hole_button.clicked.connect(lambda: self.add_hole())
         self.add_rect_button.clicked.connect(lambda: self.add_hole(kind=RECT))
         self.add_vent_button.clicked.connect(lambda: self.add_hole(kind=VENT))
-        layout.addLayout(row)
+        lay.addLayout(row)
+        lay.addWidget(hint("Tip: double-click a wall in the 3D view to put a hole right there, "
+                           "and drag holes to move them."))
         self.hole_list = QListWidget()
         self.hole_list.setMaximumHeight(150)
         self.hole_list.currentRowChanged.connect(self._on_hole_row_changed)
-        layout.addWidget(self.hole_list)
+        lay.addWidget(self.hole_list)
+        layout.addWidget(box)
 
+        self.hole_card, lay = card("Selected opening")
+        self.hole_problem = error_label()        # first, so it's seen without scrolling
+        lay.addWidget(self.hole_problem)
         self.hole_box = QWidget()
-        form = self.hole_form = QFormLayout(self.hole_box)
-        form.setContentsMargins(0, 0, 0, 0)
+        form = self.hole_form = form_layout(self.hole_box)
         self.surface_combo = QComboBox()
         self.surface_combo.activated.connect(self._on_surface_changed)
         form.addRow("Where", self.surface_combo)
@@ -519,47 +812,46 @@ class MainWindow(QMainWindow):
         form.addRow(self.v_label, self.hole_v)
         form.addRow("", hint("Measured from the middle of the surface. 0 = centred."))
         buttons = QHBoxLayout()
-        center = QPushButton("Centre it")
+        center = icon_button("Centre it", "center")
         center.clicked.connect(self._center_hole)
-        remove = QPushButton("Remove")
+        remove = icon_button("Remove", "trash", "danger")
         remove.clicked.connect(self.remove_selected_hole)
         buttons.addWidget(center)
         buttons.addWidget(remove)
         form.addRow(buttons)
-        layout.addWidget(self.hole_box)
-        self.hole_problem = hint("")
-        self.hole_problem.setStyleSheet("color: #b02020;")
-        layout.addWidget(self.hole_problem)
+        lay.addWidget(self.hole_box)
+        layout.addWidget(self.hole_card)
         layout.addStretch()
-        return page
+        return widget
 
     def _build_posts_tab(self):
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.addWidget(hint("Screw posts hold a circuit board above the floor. Pick a board "
-                              "to add all its posts at once, in the right pattern. "
-                              "Drag the green outline in the 3D view to move them together. "
-                              "Boards may overlap if one sits higher, on taller posts."))
+        widget, layout = page("Screw posts", "Posts hold a circuit board above the floor.")
+        box, lay = card("Add a board")
+        lay.addWidget(hint("Pick a board to add all its posts at once, in the right pattern. "
+                           "Drag the green outline in the 3D view to move them together. "
+                           "Boards may overlap if one sits higher, on taller posts."))
         row = QHBoxLayout()
         self.board_combo = QComboBox()
         for key, board in mounts.BOARDS.items():
             self.board_combo.addItem(board.name, key)
         self.board_combo.setCurrentIndex(self.board_combo.findData("rpi-ab"))
-        self.add_posts_button = QPushButton("+ Add")
-        self.add_posts_button.setMinimumHeight(30)
+        self.add_posts_button = icon_button("Add", "plus", "primary")
         # A lambda, because clicked() would otherwise pass its 'checked' flag.
         self.add_posts_button.clicked.connect(lambda: self.add_mount(self.board_combo.currentData()))
         row.addWidget(self.board_combo, 1)
         row.addWidget(self.add_posts_button)
-        layout.addLayout(row)
+        lay.addLayout(row)
         self.mount_list = QListWidget()
-        self.mount_list.setMaximumHeight(110)
+        self.mount_list.setMaximumHeight(120)
         self.mount_list.currentRowChanged.connect(self._on_mount_row_changed)
-        layout.addWidget(self.mount_list)
+        lay.addWidget(self.mount_list)
+        layout.addWidget(box)
 
+        self.mount_card, lay = card("Selected board")
+        self.mount_problem = error_label()
+        lay.addWidget(self.mount_problem)
         self.mount_box = QWidget()
-        form = self.mount_form = QFormLayout(self.mount_box)
-        form.setContentsMargins(0, 0, 0, 0)
+        form = self.mount_form = form_layout(self.mount_box)
         self.screw_combo = QComboBox()
         for key, screw in mounts.SCREWS.items():
             self.screw_combo.addItem(f"{key} screw", key)
@@ -583,12 +875,12 @@ class MainWindow(QMainWindow):
         # 1-hole board they move the hole left or towards the front.
         self.spacing_x = spin(-300.0, 300.0, step=0.5)
         self.spacing_y = spin(-300.0, 300.0, step=0.5)
-        for widget, attr, text in ((self.board_w, "board_width", "Board width"),
-                                   (self.board_d, "board_depth", "Board depth"),
-                                   (self.spacing_x, "spacing_x", "Holes apart (width)"),
-                                   (self.spacing_y, "spacing_y", "Holes apart (depth)")):
-            widget.valueChanged.connect(lambda v, a=attr: self._edit_mount("Change board", a, v))
-            form.addRow(text, widget)
+        for widget_, attr, text in ((self.board_w, "board_width", "Board width"),
+                                    (self.board_d, "board_depth", "Board depth"),
+                                    (self.spacing_x, "spacing_x", "Holes apart (width)"),
+                                    (self.spacing_y, "spacing_y", "Holes apart (depth)")):
+            widget_.valueChanged.connect(lambda v, a=attr: self._edit_mount("Change board", a, v))
+            form.addRow(text, widget_)
         self.spacing_x.setToolTip("Centre to centre, measured on your board")
         self.spacing_y.setToolTip("Centre to centre, measured on your board")
         self.mount_u = spin(-500, 500)
@@ -598,37 +890,36 @@ class MainWindow(QMainWindow):
         form.addRow("Left / right", self.mount_u)
         form.addRow("Front / back", self.mount_v)
         buttons = QHBoxLayout()
-        turn = QPushButton("Turn 90°")
-        turn.setToolTip("Turn the board so its connectors face another wall")
+        turn = icon_button("Turn 90°", "rotate", tip="Turn the board so its connectors face another wall")
         turn.clicked.connect(self._turn_mount)
-        center = QPushButton("Centre it")
+        center = icon_button("Centre", "center")
         center.clicked.connect(self._center_mount)
-        remove = QPushButton("Remove")
+        remove = icon_button("Remove", "trash", "danger")
         remove.clicked.connect(self.remove_selected_mount)
         for button in (turn, center, remove):
             buttons.addWidget(button)
         form.addRow(buttons)
-        layout.addWidget(self.mount_box)
+        lay.addWidget(self.mount_box)
         self.mount_info = hint("")
-        layout.addWidget(self.mount_info)
-        self.mount_problem = hint("")
-        self.mount_problem.setStyleSheet("color: #b02020;")
-        layout.addWidget(self.mount_problem)
+        lay.addWidget(self.mount_info)
+        layout.addWidget(self.mount_card)
+        self.mount_empty = hint("No posts yet. Pick a board above and press Add.")
+        layout.addWidget(self.mount_empty)
         layout.addStretch()
-        return page
+        return widget
 
     def _build_lid_tab(self):
-        page = QWidget()
-        layout = QVBoxLayout(page)
+        widget, layout = page("Lid", "Add a lid and choose how it closes.")
+        box, lay = card()
         self.lid_check = QCheckBox("Add a lid")
-        self.lid_check.setStyleSheet("font-weight: bold;")
+        self.lid_check.setObjectName("switch")
+        self.lid_check.setCursor(Qt.CursorShape.PointingHandCursor)
         self.lid_check.toggled.connect(
             lambda on: self.edit("Turn lid on" if on else "Turn lid off",
                                  lambda p: setattr(p.lid, "enabled", on)))
-        layout.addWidget(self.lid_check)
+        lay.addWidget(self.lid_check)
         self.lid_box = QWidget()
-        form = self.lid_form = QFormLayout(self.lid_box)
-        form.setContentsMargins(0, 0, 0, 0)
+        form = self.lid_form = form_layout(self.lid_box)
         self.lid_style = QComboBox()
         for key, text in LID_STYLE_LABELS.items():
             self.lid_style.addItem(text, key)
@@ -676,8 +967,8 @@ class MainWindow(QMainWindow):
             self.lid_opening.addItem(text, key)
         self.lid_opening.setToolTip(
             "Makes a tight lid easier to open without prying at it:\n"
-            "a tab sticks out of the lid at the front to push up with your thumb,\n"
-            "a notch in the top of the front wall lets a finger get under the lid.")
+            "a tab sticks out of the lid to push up with your thumb,\n"
+            "a notch in the top of the wall lets a finger get under the lid.")
         self.lid_opening.activated.connect(
             lambda _: self.edit("Change lid opening",
                                 lambda p: setattr(p.lid, "opening", self.lid_opening.currentData())))
@@ -689,11 +980,14 @@ class MainWindow(QMainWindow):
         self.slide_from.setToolTip("The side the lid slides in from. That wall is lower at the "
                                    "top so the lid can pass.")
         form.addRow("Slides in from", self.slide_from)
-        layout.addWidget(self.lid_box)
-        self.lid_tip = hint("")
+        lay.addWidget(self.lid_box)
+        layout.addWidget(box)
+        self.lid_tip = QLabel()
+        self.lid_tip.setObjectName("callout")
+        self.lid_tip.setWordWrap(True)
         layout.addWidget(self.lid_tip)
         layout.addStretch()
-        return page
+        return widget
 
     def _side_combo(self, attr: str, label: str) -> QComboBox:
         combo = QComboBox()
@@ -704,24 +998,45 @@ class MainWindow(QMainWindow):
         return combo
 
     def _build_check_tab(self):
-        page = QWidget()
-        layout = QVBoxLayout(page)
+        widget, layout = page("Check & export", "Check the design, then save files for your slicer.")
+        box, lay = card()
+        head = QHBoxLayout()
+        head.setSpacing(10)
+        self.check_icon = QLabel()
+        self.check_title = QLabel()
+        self.check_title.setObjectName("statusTitle")
+        head.addWidget(self.check_icon)
+        head.addWidget(self.check_title, 1)
+        lay.addLayout(head)
         self.parts_summary = QLabel()
+        self.parts_summary.setObjectName("summary")
         self.parts_summary.setWordWrap(True)
-        self.parts_summary.setFrameShape(QFrame.Shape.StyledPanel)
-        self.parts_summary.setStyleSheet("padding: 6px; background: #f4f6f9;")
-        layout.addWidget(self.parts_summary)
-        layout.addWidget(QLabel("<b>Checks</b>"))
+        lay.addWidget(self.parts_summary)
+        layout.addWidget(box)
+
+        box, lay = card("Checks")
         self.issue_list = QListWidget()
         self.issue_list.setWordWrap(True)
+        self.issue_list.setMinimumHeight(170)
+        self.issue_list.setIconSize(QSize(18, 18))
+        self.issue_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.issue_list.setResizeMode(QListView.ResizeMode.Adjust)
+        self.issue_list.setSpacing(1)
+        self.issue_list.setMouseTracking(True)
+        self.issue_list.setItemDelegate(IssueDelegate(self.issue_list))
         self.issue_list.currentRowChanged.connect(self._on_issue_row_changed)
-        layout.addWidget(self.issue_list, 1)
-        self.fix_button = QPushButton("Fix it")
+        lay.addWidget(self.issue_list, 1)
+        self.fix_button = icon_button("Fix it", "tick", "primary")
         self.fix_button.clicked.connect(self._apply_fix)
         self.fix_button.setVisible(False)
-        layout.addWidget(self.fix_button)
-        row = QHBoxLayout()
-        row.addWidget(QLabel("File type"))
+        lay.addWidget(self.fix_button)
+        lay.addWidget(hint("Checks catch problems in the design. They can't guarantee a "
+                           "perfect print: that also depends on your printer, material "
+                           "and slicer settings."))
+        layout.addWidget(box, 1)
+
+        box, lay = card("Export")
+        form = form_layout()
         self.format_combo = QComboBox()
         self.format_combo.addItem("STL (one file per part)", "stl")
         self.format_combo.addItem("3MF (all parts in one file)", "3mf")
@@ -729,19 +1044,17 @@ class MainWindow(QMainWindow):
                                      "stores the size in millimetres and is smaller.")
         set_quietly(self.format_combo, self.settings.value("export_format", "stl"))
         self.format_combo.currentIndexChanged.connect(self._on_format_changed)
-        row.addWidget(self.format_combo, 1)
-        layout.addLayout(row)
-        self.export_button = QPushButton()
-        self.export_button.setMinimumHeight(40)
+        form.addRow("File type", self.format_combo)
+        lay.addLayout(form)
+        self.export_button = icon_button("", "export", "primary")
+        self.export_button.setMinimumHeight(42)
         self.export_button.clicked.connect(self.export_stl)
-        layout.addWidget(self.export_button)
+        lay.addWidget(self.export_button)
         self._on_format_changed()
         self.export_hint = hint("")
-        layout.addWidget(self.export_hint)
-        layout.addWidget(hint("Checks catch problems in the design. They can't guarantee a "
-                              "perfect print: that also depends on your printer, material "
-                              "and slicer settings."))
-        return page
+        lay.addWidget(self.export_hint)
+        layout.addWidget(box)
+        return widget
 
     # ------------------------------------------------------------------
     # Editing + undo
@@ -804,6 +1117,9 @@ class MainWindow(QMainWindow):
 
         set_quietly(self.lid_check, p.lid.enabled)
         self.lid_box.setEnabled(p.lid.enabled)
+        self.lid_box.setVisible(p.lid.enabled)
+        self.show_lid_action.setEnabled(p.lid.enabled)
+        self.lid_tip.setVisible(p.lid.enabled)
         style = p.lid.style
         set_quietly(self.lid_style, style)
         set_quietly(self.lid_screw, p.lid.screw)
@@ -863,7 +1179,7 @@ class MainWindow(QMainWindow):
                                          merge=f"div_{attr}{i}"))
             ui.form.addRow(f"{i + 1}{_ordinal(i + 1)} {where}", box)
             ui.spins.append(box)
-        ui.rest = QLabel()
+        ui.rest = error_label()          # red when the last one gets too little room
         ui.form.addRow("Last one", ui.rest)
         layout.addLayout(ui.form)
         return ui
@@ -888,7 +1204,7 @@ class MainWindow(QMainWindow):
         ui.form.setRowVisible(ui.rest, custom)
         if custom:
             ui.rest.setText(f"the rest: {sizes[-1]:.1f} mm")
-            ui.rest.setStyleSheet("" if sizes[-1] >= 3 else "color: #b02020;")
+            theme.set_level(ui.rest, "ok" if sizes[-1] >= 3 else "")
 
     def _on_template(self, index: int):
         key = self.template_combo.itemData(index)
@@ -949,29 +1265,31 @@ class MainWindow(QMainWindow):
         else:
             outer = f"⌀ {p.outer_diameter:g} × {p.outer_height:g} mm"
             inner = f"⌀ {p.outer_diameter - 2 * p.wall:g} × {p.inner_height:g} mm"
-        text = f"<b>Outside:</b> {outer}<br><b>Inside space:</b> {inner}"
+        rows = [("Outside", outer), ("Inside space", inner)]
         if p.lid.enabled:
-            text += f"<br><b>Height with lid on:</b> {p.closed_height:g} mm"
-        self.size_summary.setText(text)
+            rows.append(("Height with lid on", f"{p.closed_height:g} mm"))
+        self.size_summary.setText(summary_table(rows))
 
     def refresh_holes(self):
         p = self.project
-        problems = self._problem_holes()
         self.hole_list.blockSignals(True)
         self.hole_list.clear()
         current = -1
         for i, hole in enumerate(p.holes):
             where = SURFACE_LABELS.get(hole.surface, hole.surface)
-            mark = "⚠ " if hole.id in problems else ""
-            item = QListWidgetItem(f"{mark}Hole {i + 1} · {where} · {hole.size_label}")
+            item = QListWidgetItem(self._list_icon(HOLE_ICONS[hole.kind], hole_id=hole.id),
+                                   f"Hole {i + 1} · {where} · {hole.size_label}")
             self.hole_list.addItem(item)
             if hole.id == self.selected_id:
                 current = i
         self.hole_list.setCurrentRow(current)
         self.hole_list.blockSignals(False)
+        fit_list(self.hole_list, 5)
 
         hole = p.hole(self.selected_id) if self.selected_id else None
         self.hole_box.setEnabled(hole is not None)
+        self.hole_card.setVisible(hole is not None)
+        self.hole_list.setVisible(bool(p.holes))
         self.surface_combo.blockSignals(True)
         self.surface_combo.clear()
         for s in p.surfaces():
@@ -1046,25 +1364,28 @@ class MainWindow(QMainWindow):
         self.hole_v.blockSignals(False)
         set_quietly(self.hole_u, hole.u)
         set_quietly(self.hole_v, hole.v)
-        msgs = [i.message for i in self.issues if i.hole_id == hole.id and i.level != validation.INFO]
-        self.hole_problem.setText("\n".join("⚠ " + m for m in msgs))
+        self._show_problems(self.hole_problem, [i for i in self.issues if i.hole_id == hole.id])
 
     def refresh_mounts(self):
         p = self.project
-        problems = self._problem_mounts()
         self.mount_list.blockSignals(True)
         self.mount_list.clear()
         current = -1
         for i, m in enumerate(p.mounts):
-            mark = "⚠ " if m.id in problems else ""
             count = len(mounts.post_positions(m))
-            self.mount_list.addItem(f"{mark}Posts {i + 1} · {mounts.label(m)} · {m.screw} × {count}")
+            self.mount_list.addItem(QListWidgetItem(
+                self._list_icon("posts", mount_id=m.id),
+                f"Posts {i + 1} · {mounts.label(m)} · {m.screw} × {count}"))
             if m.id == self.selected_mount_id:
                 current = i
         self.mount_list.setCurrentRow(current)
         self.mount_list.blockSignals(False)
+        fit_list(self.mount_list, 4)
         m = p.mount(self.selected_mount_id) if self.selected_mount_id else None
         self.mount_box.setEnabled(m is not None)
+        self.mount_card.setVisible(m is not None)
+        self.mount_list.setVisible(bool(p.mounts))
+        self.mount_empty.setVisible(not p.mounts)
         if m is None:
             self.mount_info.setText("" if p.mounts else "No posts yet.")
             self.mount_problem.setText("")
@@ -1102,8 +1423,24 @@ class MainWindow(QMainWindow):
         if m.screw != mounts.BOARDS[m.board].screw and not (m.board == "single" or is_custom):
             info += f" This board is usually fixed with {mounts.BOARDS[m.board].screw} screws."
         self.mount_info.setText(info)
-        msgs = [i.message for i in self.issues if i.mount_id == m.id and i.level != validation.INFO]
-        self.mount_problem.setText("\n".join("⚠ " + msg for msg in msgs))
+        self._show_problems(self.mount_problem, [i for i in self.issues if i.mount_id == m.id])
+
+    def _list_icon(self, name: str, hole_id: str | None = None, mount_id: str | None = None) -> QIcon:
+        """The item's own icon, or a red / amber sign if a check found a problem with it."""
+        levels = {i.level for i in self.issues if i.level != validation.INFO and (
+            (hole_id and i.hole_id == hole_id) or (mount_id and i.mount_id == mount_id))}
+        if validation.ERROR in levels:
+            return theme.icon("error", theme.DANGER)
+        if validation.WARNING in levels:
+            return theme.icon("warning", theme.WARNING)
+        return theme.icon(name, theme.MUTED)
+
+    def _show_problems(self, label: QLabel, issues: list) -> None:
+        issues = [i for i in issues if i.level != validation.INFO]
+        label.setText("\n".join(i.message for i in issues))
+        label.setVisible(bool(issues))
+        theme.set_level(label, "error" if any(i.level == validation.ERROR for i in issues)
+                        else "warning")
 
     def _problem_mounts(self) -> set:
         return {i.mount_id for i in self.issues if i.mount_id and i.level != validation.INFO}
@@ -1135,18 +1472,19 @@ class MainWindow(QMainWindow):
         self.refresh_mounts()
 
     def _refresh_issues(self):
-        icons = {validation.ERROR: QStyle.StandardPixmap.SP_MessageBoxCritical,
-                 validation.WARNING: QStyle.StandardPixmap.SP_MessageBoxWarning,
-                 validation.INFO: QStyle.StandardPixmap.SP_MessageBoxInformation}
+        icons = {validation.ERROR: ("error", theme.DANGER),
+                 validation.WARNING: ("warning", theme.WARNING),
+                 validation.INFO: ("info", theme.ACCENT_TEXT)}
         self.issue_list.blockSignals(True)
         self.issue_list.clear()
         for issue in self.issues:
             text = issue.message + (f"\n{issue.hint}" if issue.hint else "")
-            item = QListWidgetItem(self.style().standardIcon(icons[issue.level]), text)
+            name, color = icons[issue.level]
+            item = QListWidgetItem(theme.icon(name, color), text)
+            item.setData(Qt.ItemDataRole.UserRole, (issue.message, issue.hint))
             self.issue_list.addItem(item)
         if not any(i.level != validation.INFO for i in self.issues):
-            item = QListWidgetItem(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogApplyButton),
-                                   "No problems found.")
+            item = QListWidgetItem(theme.icon("check", theme.SUCCESS), "No problems found.")
             self.issue_list.insertItem(0, item)
         self.issue_list.blockSignals(False)
         self.fix_button.setVisible(False)
@@ -1154,37 +1492,50 @@ class MainWindow(QMainWindow):
         errors = sum(i.level == validation.ERROR for i in self.issues)
         warnings = sum(i.level == validation.WARNING for i in self.issues)
         if errors:
-            badge = (f"<span style='color:#b02020'>✖ {errors} problem{'s' * (errors > 1)} to fix "
-                     "before export</span>")
+            level, name = "error", "error"
+            title = f"{errors} problem{'s' * (errors > 1)} to fix"
+            chip = title + " before export"
         elif warnings:
-            badge = f"<span style='color:#a06000'>⚠ Ready, with {warnings} warning{'s' * (warnings > 1)}</span>"
+            level, name = "warning", "warning"
+            title = f"Ready to print, with {warnings} warning{'s' * (warnings > 1)}"
+            chip = f"Ready · {warnings} warning{'s' * (warnings > 1)}"
         else:
-            badge = "<span style='color:#207020'>✔ Ready to print</span>"
-        self.status_badge.setText(badge + " — see Check & Export")
+            level, name, title, chip = "ok", "check", "Ready to print", "Ready to print"
+        color = theme.LEVEL_COLORS[level]
+        self.status_badge.setText(chip)
+        self.status_badge.setIcon(theme.icon(name, color))
+        theme.set_level(self.status_badge, level)
+        self.check_title.setText(title)
+        self.check_icon.setPixmap(theme.pixmap(name, color, 26))
+        theme.set_level(self.check_title, level)
+        self.rail_buttons[TAB_CHECK].setIcon(theme.icon(name, color, checked=color))
         self.export_action.setEnabled(not errors)
         self.export_button.setEnabled(not errors)
-        self.export_hint.setText("Fix the problems marked ✖ above to export." if errors else
+        self.export_hint.setText("Fix the problems marked in red above to export." if errors else
                                  "Parts are placed flat side down, ready to print.")
         self.tabs.setTabText(TAB_CHECK, CHECK_TAB_TITLE + (" ✖" if errors else " ⚠" if warnings else ""))
         self._refresh_parts_summary()
 
     def _refresh_parts_summary(self):
         if self.parts is None:
-            self.parts_summary.setText("<b>Nothing to print yet:</b> fix the problems below.")
+            self.parts_summary.setText("Nothing to print yet: fix the problems below.")
             return
-        lines = []
+        rows, plastic = [], []
         names = {"body": "Box" if self.project.shape == BOX else "Container", "lid": "Lid"}
         for part, solid in self.parts.printable().items():
             lo = solid.bounding_box()
             size = " × ".join(f"{lo[i + 3] - lo[i]:.1f}" for i in range(3))
-            lines.append(f"<b>{names[part]}:</b> {size} mm, about {solid.volume() / 1000:.0f} cm³ of plastic")
+            rows.append((names[part], f"{size} mm"))
+            plastic.append(solid.volume() / 1000)
+        parts = "" if len(plastic) < 2 else " (" + " + ".join(f"{v:.0f}" for v in plastic) + ")"
+        rows.append(("Plastic", f"about {sum(plastic):.0f} cm³{parts}"))
         holes = len(self.project.holes)
         line = f"{holes} hole{'s' * (holes != 1)}"
         posts = sum(len(mounts.post_positions(m)) for m in self.project.mounts)
         if posts:
             line += f", {posts} screw post{'s' * (posts != 1)}"
-        lines.append(line)
-        self.parts_summary.setText("<br>".join(lines))
+        rows.append(("Features", line))
+        self.parts_summary.setText(summary_table(rows))
 
     # ------------------------------------------------------------------
     # Hole actions
@@ -1629,7 +1980,7 @@ class MainWindow(QMainWindow):
         box.setWindowTitle(f"About {APP_NAME}")
         box.setTextFormat(Qt.TextFormat.RichText)
         box.setText(self.about_text())
-        box.setIconPixmap(QApplication.windowIcon().pixmap(64, 64))
+        box.setIconPixmap(app_icon().pixmap(64, 64))
         box.exec()
 
     def _update_title(self, clean: bool | None = None):
@@ -1638,6 +1989,8 @@ class MainWindow(QMainWindow):
         name = self.path.name if self.path else self.project.name
         star = "" if clean else " •"
         self.setWindowTitle(f"{name}{star} — {APP_NAME}")
+        edited = "" if clean else f"<span style='color:{theme.FAINT}'>  ·  edited</span>"
+        self.title_label.setText(f"<span style='color:{theme.TEXT}'>{escape(name)}</span>{edited}")
 
     def _on_show_lid(self, on):
         self.viewer.show_lid = on
