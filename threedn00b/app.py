@@ -132,6 +132,9 @@ def smoke_test(app) -> int:
             window.rebuild()
             image = window.viewer.grabFramebuffer()
             assert not image.isNull() and image.width() > 100, "the 3D view didn't draw"
+            from .gui.welcome import PAGES, capture_tour
+            shots = capture_tour()
+            assert len(shots) == len(PAGES) and not shots[0].isNull(), "no welcome tour pictures"
             with tempfile.TemporaryDirectory() as tmp:
                 stl = project_io.export_stl_files(window.project, tmp)
                 three_mf = project_io.export_3mf_file(window.project, tmp)

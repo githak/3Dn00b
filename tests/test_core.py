@@ -1800,3 +1800,14 @@ def test_lid_sides_are_saved(tmp_path):
     del data["project"]["lid"]["slide_from"], data["project"]["lid"]["opening_side"]
     old = project_io.from_dict(data).lid                    # older files: the front
     assert old.slide_from == old.opening_side == "front"
+
+
+def test_templates_remember_where_they_came_from(tmp_path):
+    p = templates.from_template("pi")
+    assert p.template == "pi" and default_project(BOX).template == ""
+    path = tmp_path / "pi.3dn00b"
+    project_io.save_project(p, path)
+    assert project_io.load_project(path).template == "pi"
+    data = project_io.to_dict(p)
+    del data["project"]["template"]                       # older files: not from a template
+    assert project_io.from_dict(data).template == ""

@@ -471,19 +471,35 @@ class MainWindow(QMainWindow):
         export_button.setObjectName("primary")
         export_button.setCursor(Qt.CursorShape.PointingHandCursor)
         theme.repolish(export_button)
+        self.export_tool_button = export_button
         gap = QWidget()
         gap.setFixedWidth(6)
         bar.addWidget(gap)
-        self.about_action = action("About", "info", self.show_about, tip="About 3Dn00b")
-        bar.widgetForAction(self.about_action).setToolButtonStyle(
-            Qt.ToolButtonStyle.ToolButtonIconOnly)
+        # Help: the welcome tour and About, behind one "?" button.
+        self.welcome_action = QAction(theme.icon("tour"), "Welcome tour", self)
+        self.welcome_action.setShortcut(QKeySequence(Qt.Key.Key_F1))
+        self.welcome_action.triggered.connect(lambda: self.show_welcome())
+        self.about_action = QAction(theme.icon("info"), "About", self)
+        self.about_action.triggered.connect(self.show_about)
+        for act in (self.welcome_action, self.about_action):
+            self.addAction(act)               # so F1 works while the menu is closed
+        help_menu = QMenu(self)
+        help_menu.addAction(self.welcome_action)
+        help_menu.addAction(self.about_action)
+        help_button = QToolButton()
+        help_button.setIcon(theme.icon("help"))
+        help_button.setToolTip("Help: the welcome tour (F1) and About")
+        help_button.setMenu(help_menu)
+        help_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        help_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        bar.addWidget(help_button)
         delete = QAction(self, shortcut=QKeySequence.StandardKey.Delete)
         delete.triggered.connect(self.remove_selected_hole)
         self.addAction(delete)
 
     def _build_rail(self) -> QWidget:
         """The steps down the left side: Shape, Holes, Posts, Lid, Export."""
-        rail = QWidget()
+        rail = self.rail = QWidget()
         rail.setObjectName("rail")
         rail.setFixedWidth(80)
         layout = QVBoxLayout(rail)
@@ -554,6 +570,7 @@ class MainWindow(QMainWindow):
         widget, layout = page("Shape & size",
                               "Choose what you're making, then type its size in millimetres.")
         box, lay = card("What are you making?")
+        self.start_card = box
         row = QHBoxLayout()
         row.setSpacing(8)
         self.shape_group = QButtonGroup(self)
@@ -567,7 +584,7 @@ class MainWindow(QMainWindow):
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             self.shape_group.addButton(btn)
             self.shape_buttons[shape] = btn
-            btn.clicked.connect(lambda _=False, s=shape: self.edit("Change shape", lambda p: p.set_shape(s)))
+            btn.clicked.connect(lambda _=False, s=shape: self._on_shape_clicked(s))
             row.addWidget(btn)
         lay.addLayout(row)
         self.template_combo = QComboBox()
@@ -592,6 +609,8 @@ class MainWindow(QMainWindow):
         self.template_combo.setMinimumHeight(34)
         self.template_combo.setMaxVisibleItems(20)
         lay.addWidget(self.template_combo)
+        self.template_note = hint("")
+        lay.addWidget(self.template_note)
         form = form_layout()
         self.name_edit = QLineEdit()
         self.name_edit.setPlaceholderText("Give it a name")
@@ -602,6 +621,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(box)
 
         box, lay = card("Size")
+        self.size_card = box
         row = QHBoxLayout()
         row.setSpacing(0)
         self.mode_group = QButtonGroup(self)
@@ -722,6 +742,7 @@ class MainWindow(QMainWindow):
     def _build_holes_tab(self):
         widget, layout = page("Holes", "Openings for cables, screws, USB plugs, switches and air.")
         box, lay = card("Add an opening")
+        self.add_holes_card = box
         row = QHBoxLayout()
         row.setSpacing(8)
         self.add_hole_button = icon_button("Round", "round-hole", "tile", "A round hole: cables, screws")
@@ -827,6 +848,7 @@ class MainWindow(QMainWindow):
     def _build_posts_tab(self):
         widget, layout = page("Screw posts", "Posts hold a circuit board above the floor.")
         box, lay = card("Add a board")
+        self.add_posts_card = box
         lay.addWidget(hint("Pick a board to add all its posts at once, in the right pattern. "
                            "Drag the green outline in the 3D view to move them together. "
                            "Boards may overlap if one sits higher, on taller posts."))
@@ -911,6 +933,7 @@ class MainWindow(QMainWindow):
     def _build_lid_tab(self):
         widget, layout = page("Lid", "Add a lid and choose how it closes.")
         box, lay = card()
+        self.lid_card = box
         self.lid_check = QCheckBox("Add a lid")
         self.lid_check.setObjectName("switch")
         self.lid_check.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1000,6 +1023,7 @@ class MainWindow(QMainWindow):
     def _build_check_tab(self):
         widget, layout = page("Check & export", "Check the design, then save files for your slicer.")
         box, lay = card()
+        self.check_card = box
         head = QHBoxLayout()
         head.setSpacing(10)
         self.check_icon = QLabel()
@@ -1097,6 +1121,14 @@ class MainWindow(QMainWindow):
         for shape, btn in self.shape_buttons.items():
             set_quietly(btn, shape == p.shape)
         set_quietly(self.name_edit, p.name)
+        if p.template:
+            self.template_note.setText(f"Based on the {self._template_label()}. Choose Box or "
+                                       "Round container to start over with a plain one.")
+        self.template_note.setVisible(bool(p.template))
+        for shape, btn in self.shape_buttons.items():
+            what = "box" if shape == BOX else "round container"
+            btn.setToolTip(f"Start over with a plain {what}" if p.template else
+                           f"Make this design a {what}")
         set_quietly(self.mode_outside, p.size_mode == OUTSIDE)
         set_quietly(self.mode_inside, p.size_mode == INSIDE)
         for widget, value in ((self.width_spin, p.width), (self.depth_spin, p.depth),
@@ -1212,13 +1244,31 @@ class MainWindow(QMainWindow):
         if key is None:
             return
         template = templates.TEMPLATES[key]
-        fresh = template.build()
-        self.selected_id = self.selected_mount_id = None
-        self.edit(f"Start from “{template.label}”", lambda p: p.__dict__.update(fresh.__dict__))
-        self.viewer._fitted_size = None          # show the whole new object
-        self.rebuild()
+        self._replace_project(f"Start from “{template.label}”", templates.from_template(key))
         self.statusBar().showMessage(f"{template.label}: {template.description} "
                                      "Undo goes back to what you had.", 10000)
+
+    def _on_shape_clicked(self, shape: str):
+        """Box or Round container: reshape your own design, or start over after a template."""
+        if not self.project.template:
+            self.edit("Change shape", lambda p: p.set_shape(shape))
+            return
+        what = "box" if shape == BOX else "round container"
+        before = self._template_label()
+        self._replace_project(f"Start a plain {what}", default_project(shape))
+        self.statusBar().showMessage(f"Started a plain {what}. Undo brings back the {before}.",
+                                     10000)
+
+    def _replace_project(self, label: str, fresh: Project):
+        """Swap in a whole new design as one undo step, and show all of it."""
+        self.selected_id = self.selected_mount_id = None
+        self.edit(label, lambda p: p.__dict__.update(fresh.__dict__))
+        self.viewer._fitted_size = None
+        self.rebuild()
+
+    def _template_label(self) -> str:
+        template = templates.TEMPLATES.get(self.project.template)
+        return f"“{template.label}” template" if template else "template"
 
     def _refresh_dividers(self):
         p, d = self.project, self.project.dividers
@@ -1868,7 +1918,9 @@ class MainWindow(QMainWindow):
     def new_project(self, template: str = BOX):
         if not self._confirm_discard():
             return
-        self._load(default_project(template), None)
+        # The tray is a template too, so Box or Round container start over from it.
+        self._load(templates.from_template("tray") if template == TRAY_TEMPLATE
+                   else default_project(template), None)
 
     def _load(self, project: Project, path: Path | None):
         self.project = project
@@ -1983,6 +2035,19 @@ class MainWindow(QMainWindow):
         box.setIconPixmap(app_icon().pixmap(64, 64))
         box.exec()
 
+    def show_welcome(self) -> None:
+        """The welcome tour; remembers that it was seen and whether to show it at startup."""
+        from .welcome import WelcomeDialog
+        dialog = WelcomeDialog(self, self.settings.value("welcome/show_at_startup", False, type=bool))
+        dialog.exec()
+        self.settings.setValue("welcome/seen", True)
+        self.settings.setValue("welcome/show_at_startup", dialog.show_at_startup())
+
+    def welcome_due(self) -> bool:
+        """Show the tour at startup? The first time, and later only if the user asked to."""
+        return (not self.settings.value("welcome/seen", False, type=bool)
+                or self.settings.value("welcome/show_at_startup", False, type=bool))
+
     def _update_title(self, clean: bool | None = None):
         if clean is None:
             clean = self.undo_stack.isClean()
@@ -2027,6 +2092,8 @@ def main_window_app(argv) -> int:
     if len(argv) > 1:
         window.open_path(Path(argv[1]))
     window.show()
+    if window.welcome_due():
+        QTimer.singleShot(400, window.show_welcome)   # once the window is on screen
     code = app.exec()
     release_window(window)
     del window

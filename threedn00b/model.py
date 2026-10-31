@@ -240,6 +240,10 @@ class Project:
     name: str = "My box"
     dividers: Dividers = field(default_factory=Dividers)   # boxes only
     mounts: list[Mount] = field(default_factory=list)
+    # The template this design was started from ("" = none). Choosing Box or Round
+    # container then starts over with a plain one rather than reshaping the template.
+    # Older versions ignore it, so files stay readable there.
+    template: str = ""
 
     def mount(self, mount_id: str) -> Mount | None:
         return next((m for m in self.mounts if m.id == mount_id), None)

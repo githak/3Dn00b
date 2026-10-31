@@ -507,4 +507,6 @@ ELECTRONICS = GROUPS[0][1]
 
 
 def from_template(key: str) -> Project:
-    return TEMPLATES[key].build()
+    project = TEMPLATES[key].build()
+    project.template = key
+    return project
