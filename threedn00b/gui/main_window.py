@@ -556,14 +556,25 @@ class MainWindow(QMainWindow):
         row.addWidget(divider)
         self.show_lid_action = QAction(theme.icon("eye", theme.MUTED, checked=theme.ACCENT_TEXT),
                                        "Lid", self, checkable=True, checked=True)
-        self.show_lid_action.setToolTip("Show or hide the lid in the preview")
+        self.show_lid_action.setToolTip("Show or hide the lid in the preview (Ctrl+L)")
+        self.show_lid_action.setShortcut(QKeySequence("Ctrl+L"))
         self.show_lid_action.toggled.connect(self._on_show_lid)
-        lid_button = QToolButton()
-        lid_button.setDefaultAction(self.show_lid_action)
-        lid_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        lid_button.setIconSize(QSize(16, 16))
-        lid_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        row.addWidget(lid_button)
+        self.see_through_action = QAction(theme.icon("xray", theme.MUTED, checked=theme.ACCENT_TEXT),
+                                          "See-through", self, checkable=True)
+        self.see_through_action.setToolTip(
+            "See through the walls and the lid, to check where holes, posts and boards sit "
+            "(Ctrl+T)")
+        self.see_through_action.setShortcut(QKeySequence("Ctrl+T"))
+        self.see_through_action.toggled.connect(self._on_see_through)
+        for act in (self.show_lid_action, self.see_through_action):
+            self.addAction(act)                 # so the shortcuts work anywhere in the window
+            button = QToolButton()
+            button.setDefaultAction(act)
+            button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+            button.setIconSize(QSize(16, 16))
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            row.addWidget(button)
+        self.view_overlay = frame
         self.viewer.set_overlay(frame)
 
     def _build_shape_tab(self):
@@ -2059,6 +2070,10 @@ class MainWindow(QMainWindow):
 
     def _on_show_lid(self, on):
         self.viewer.show_lid = on
+        self.rebuild()
+
+    def _on_see_through(self, on):
+        self.viewer.see_through = on
         self.rebuild()
 
     def closeEvent(self, event):

@@ -158,6 +158,12 @@ Defaults I chose myself, which are easy to change:
   so they always match the app; everything but the part being explained is
   darkened, and that part is outlined in the accent colour, together with the
   step's button in the rail (0.24.1) so it's clear which step is open.
+- See-through view (0.26), requested by the project owner: a toggle next to Lid in
+  the 3D view (Ctrl+T; Lid got Ctrl+L). The box and lid are drawn faint (blended,
+  without hiding what's behind them) and the outlines of holes, boards and posts
+  are drawn on top of everything, in a light colour, so their places against the
+  walls are easy to check, also from straight above with Top. The welcome tour
+  has a page about it.
 - Templates (0.17), requested by the project owner so beginners don't size a
   case by trial and error: a template list in the Shape tab, right under the Box
   and Round container buttons, so a template is the third way to start.

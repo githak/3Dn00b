@@ -30,11 +30,16 @@ class TourPage:
     show_step: bool = True                     # also highlight the step's button in the rail
 
     def highlights(self, window) -> list:
-        """The widgets to highlight: the page's own, plus its step in the rail."""
+        """What to highlight: the page's own widgets or areas, plus its step in the rail."""
         widgets = list(self.targets(window))
         if self.show_step:
             widgets.insert(0, window.rail_buttons[self.step])
         return widgets
+
+    def rects(self, window) -> list[QRect]:
+        """The highlighted areas, in window coordinates (hidden widgets left out)."""
+        return [t if isinstance(t, QRect) else visible_rect(t, window)
+                for t in self.highlights(window) if isinstance(t, QRect) or t.isVisible()]
 
 
 def _select_first_hole(window) -> None:
@@ -50,6 +55,26 @@ def _select_first_board(window) -> None:
 def _select_nothing(window) -> None:
     window.select_hole(None)
     window.select_mount(None)
+
+
+def _see_through(window) -> None:
+    _select_nothing(window)
+    window.see_through_action.setChecked(True)
+
+
+def _model_area(window) -> QRect:
+    """The middle of the 3D view, between its buttons and its hint, where the model is."""
+    view = visible_rect(window.viewer, window)
+    top = visible_rect(window.view_overlay, window).bottom() + 16
+    bottom = visible_rect(window.viewer.hint, window).top() - 16
+    return QRect(view.left() + 16, top, view.width() - 32, max(bottom - top, 50))
+
+
+def _plain_view(window) -> None:
+    """How every tour picture starts: solid, with the lid, from the usual angle."""
+    window.see_through_action.setChecked(False)
+    window.show_lid_action.setChecked(True)
+    window.viewer.reset_view(window.project)
 
 
 PAGES = (
@@ -77,8 +102,14 @@ PAGES = (
              "finger notch so they're easy to open.", 3, lambda w: [w.lid_card]),
     TourPage("See it in 3D",
              "The preview updates as you type. Drag to turn it, scroll to zoom and middle-drag "
-             "to move it. The buttons in the corner show it from the front, the top or the side, "
-             "and hide the lid.", 0, lambda w: [w.viewer], _select_nothing, show_step=False),
+             "to move it. The buttons in the corner show it from the front, the top or the side.",
+             0, lambda w: [w.viewer], _select_nothing, show_step=False),
+    TourPage("See inside",
+             "Turn on See-through to look through the walls and the lid: the outlines of holes "
+             "and boards show on top, so you can check where everything sits against the walls. "
+             "Lid hides the lid, and Top looks straight down into the box. Shortcuts: Ctrl+T "
+             "and Ctrl+L.", 0, lambda w: [w.view_overlay, _model_area(w)], _see_through,
+             show_step=False),
     TourPage("Check and export",
              "The app checks your design while you work and explains any problem in plain words. "
              "The status in the corner says when it's ready to print, and Export saves STL or 3MF "
@@ -147,12 +178,12 @@ def capture_tour(pages=PAGES) -> list[QPixmap]:
     shots = []
     try:
         for page in pages:
+            _plain_view(demo)
             demo.tabs.setCurrentIndex(page.step)
             page.prepare(demo)
             for _ in range(3):
                 app.processEvents()
-            rects = [visible_rect(w, demo) for w in page.highlights(demo) if w.isVisible()]
-            shots.append(highlight(demo.grab(), rects))
+            shots.append(highlight(demo.grab(), page.rects(demo)))
     finally:
         demo.undo_stack.setClean()
         demo.hide()

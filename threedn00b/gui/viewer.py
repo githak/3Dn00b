@@ -6,6 +6,7 @@ import math
 
 import numpy as np
 import pyqtgraph.opengl as gl
+from OpenGL import GL
 from pyqtgraph.opengl import shaders
 from pyqtgraph import Vector
 from PySide6.QtCore import QCoreApplication, QPoint, Qt, Signal
@@ -59,6 +60,14 @@ BOARD_COLOR = theme.gl_color(theme.SUCCESS)
 BACKGROUND = (19, 22, 28)
 GRID_COLOR = (74, 83, 101, 110)
 LID_LIFT = 15.0   # extra space between body and lid in the preview
+# See-through view: the parts are drawn faint, and the outlines of holes and boards on
+# top of everything, so you can see where things sit against the walls.
+GHOST_ALPHA = {"body": 0.30, "lid": 0.22}
+GHOST_HOLE_COLOR = (0.86, 0.90, 1.0, 0.95)        # light: the walls behind are dark
+BLEND = (GL.GL_SRC_ALPHA, GL.GL_ONE_MINUS_SRC_ALPHA)
+GHOST_OPTIONS = {GL.GL_DEPTH_TEST: True, GL.GL_BLEND: True, GL.GL_CULL_FACE: False,
+                 "glBlendFunc": BLEND, "glDepthMask": (GL.GL_FALSE,)}
+ON_TOP_OPTIONS = {GL.GL_DEPTH_TEST: False, GL.GL_BLEND: True, "glBlendFunc": BLEND}
 # Camera presets: (elevation, azimuth) in degrees. The front of the object faces -y.
 VIEWS = {"3d": (28.0, -62.0), "front": (6.0, -90.0), "top": (89.9, -90.0), "side": (6.0, 0.0)}
 
@@ -73,6 +82,14 @@ def prepare_opengl():
     fmt = QSurfaceFormat.defaultFormat()
     fmt.setSamples(4)            # smoother edges in the 3D preview
     QSurfaceFormat.setDefaultFormat(fmt)
+
+
+class GhostMesh(gl.GLMeshItem):
+    """A see-through mesh: blended, and not hiding what's behind it (no depth writes)."""
+
+    def paint(self):
+        super().paint()
+        GL.glDepthMask(GL.GL_TRUE)      # the next frame must be able to clear the depth buffer
 
 
 class Viewer(gl.GLViewWidget):
@@ -101,6 +118,7 @@ class Viewer(gl.GLViewWidget):
         self._grid.setColor(GRID_COLOR)
         self.addItem(self._grid)
         self.show_lid = True
+        self.see_through = False
         self._fitted_size = None
         self._overlay = None
 
@@ -137,10 +155,10 @@ class Viewer(gl.GLViewWidget):
         if parts is None:
             return
         self._lid_offset = project.lid.lip_height + LID_LIFT
-        self._add_mesh(parts.body, BODY_COLOR, 0.0)
+        self._add_mesh(parts.body, BODY_COLOR, 0.0, "body")
         self._solids["body"] = parts.body
         if parts.lid is not None and self.show_lid:
-            self._add_mesh(parts.lid, LID_COLOR, self._lid_offset)
+            self._add_mesh(parts.lid, LID_COLOR, self._lid_offset, "lid")
             self._solids["lid"] = parts.lid
         size = max(project.outer_width, project.outer_depth)
         grid = max(50.0, math.ceil(size * 1.6 / 10) * 10)
@@ -155,13 +173,18 @@ class Viewer(gl.GLViewWidget):
         """Forget the solids used for click picking (see release_window)."""
         self._solids.clear()
 
-    def _add_mesh(self, solid, color, z_offset):
+    def _add_mesh(self, solid, color, z_offset, part):
         verts, tris = geometry.mesh_arrays(solid)
         if len(tris) == 0:
             return
         data = gl.MeshData(vertexes=verts.astype(np.float32), faces=tris.astype(np.int32))
-        item = gl.GLMeshItem(meshdata=data, smooth=False, shader=SOFT_SHADER, color=color,
-                             glOptions="opaque")
+        if self.see_through:
+            item = GhostMesh(meshdata=data, smooth=False, shader=SOFT_SHADER,
+                             color=color[:3] + (GHOST_ALPHA[part],), glOptions=GHOST_OPTIONS)
+            item.setDepthValue(5)                   # after the solid things, before outlines
+        else:
+            item = gl.GLMeshItem(meshdata=data, smooth=False, shader=SOFT_SHADER, color=color,
+                                 glOptions="opaque")
         item.translate(0, 0, z_offset)
         self.addItem(item)
         self._mesh_items.append(item)
@@ -178,14 +201,11 @@ class Viewer(gl.GLViewWidget):
             elif hole.id in problem_ids:
                 color, width = PROBLEM_COLOR, 3
             else:
-                color, width = HOLE_COLOR, 1.5
+                color, width = (GHOST_HOLE_COLOR if self.see_through else HOLE_COLOR), 1.5
             for ring in _hole_rings(project, hole):
                 if hole.surface == LID:
                     ring = ring + np.array([0, 0, self._lid_offset])
-                item = gl.GLLinePlotItem(pos=ring, color=color, width=width, antialias=True,
-                                         glOptions="translucent")
-                self.addItem(item)
-                self._marker_items.append(item)
+                self._marker_items.append(self._outline(ring, color, width))
 
     def set_mount_markers(self, project: Project, selected_id: str | None, problem_ids: set):
         """Board outlines (where the board will sit, not printed) and post rings."""
@@ -209,10 +229,15 @@ class Viewer(gl.GLViewWidget):
             for x, y in mounts.post_positions(m):
                 lines.append(np.column_stack([x + r * np.cos(t), y + r * np.sin(t), np.full_like(t, z)]))
             for line in lines:
-                item = gl.GLLinePlotItem(pos=line, color=color, width=width, antialias=True,
-                                         glOptions="translucent")
-                self.addItem(item)
-                self._mount_items.append(item)
+                self._mount_items.append(self._outline(line, color, width))
+
+    def _outline(self, points, color, width):
+        """A marker line; in the see-through view it's drawn on top of everything."""
+        item = gl.GLLinePlotItem(pos=points, color=color, width=width, antialias=True,
+                                 glOptions=ON_TOP_OPTIONS if self.see_through else "translucent")
+        item.setDepthValue(10)
+        self.addItem(item)
+        return item
 
     def reset_view(self, project: Project):
         self.set_view(project, "3d")

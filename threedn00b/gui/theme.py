@@ -98,6 +98,8 @@ ICONS = {
     "rotate": '<path d="M20.5 12a8.5 8.5 0 1 1-2.6-6.1L20.5 8.5"/><path d="M20.5 3.5v5h-5"/>',
     "fit": '<path d="M3 8V5a2 2 0 0 1 2-2h3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 '
            '21H5a2 2 0 0 1-2-2v-3"/>',
+    "xray": '<path d="M12 2.8 20.5 7.4v9.2L12 21.2l-8.5-4.6V7.4z"/>'
+            '<path d="M3.5 7.4 12 12l8.5-4.6M12 12v9.2" stroke-dasharray="1.6 2"/>',
     "eye": '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
     "template": '<rect x="3" y="3" width="7.5" height="7.5" rx="1.5"/><rect x="13.5" y="3" '
                 'width="7.5" height="7.5" rx="1.5"/><rect x="3" y="13.5" width="7.5" height="7.5" '

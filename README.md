@@ -8,7 +8,7 @@ Software for people getting into 3D printing and want to start with something ea
 sizes in millimetres, add holes and a lid, and export files your slicer can
 print. No sketches, no constraints, no feature trees.
 
-## What it can do (version 0.25)
+## What it can do (version 0.26)
 
 - **Templates** to start from, already sized to fit. Pick one under **What are you making?**
   in the Shape step, then change anything you like; Undo takes you back.
@@ -93,7 +93,7 @@ Download `3dn00b_<version>-1_amd64.deb` from the
 [Releases page](https://github.com/githak/3Dn00b/releases) and install it:
 
 ```bash
-sudo apt install ./3dn00b_0.25.1-1_amd64.deb
+sudo apt install ./3dn00b_0.26.0-1_amd64.deb
 ```
 
 That's all: 3Dn00b appears in your applications menu, `.3dn00b` project files open
@@ -179,8 +179,11 @@ for warnings and red for problems.
 In the 3D view: drag a hole to move it, drag anywhere else to turn the view,
 scroll or right-drag to zoom, middle-drag to pan, and double-click a wall to
 add a hole. Each drag is one step for Undo. The buttons in its top right corner
-show it from the front, the top or the side (Ctrl+0 for the normal view), and
-hide or show the lid.
+show it from the front, the top or the side (Ctrl+0 for the normal view), hide or
+show the lid (Ctrl+L), and turn on **See-through** (Ctrl+T): the walls and the lid
+become transparent and the outlines of holes and boards show on top, so you can
+check where everything sits against the walls. With **Top** you look straight
+down into the box.
 
 ## Examples
 

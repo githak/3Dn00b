@@ -696,15 +696,16 @@ def test_tour_highlights_the_right_parts(window):
     from PySide6.QtCore import QRect
     from PySide6.QtGui import QColor, QPixmap
     from threedn00b import templates
-    from threedn00b.gui.welcome import PAGES, highlight, visible_rect
+    from threedn00b.gui.welcome import PAGES, highlight
     window._load(templates.from_template("pi"), None)
     for page in PAGES:
         window.tabs.setCurrentIndex(page.step)
         page.prepare(window)
         QApplication.processEvents()
         widgets = page.highlights(window)
-        rects = [visible_rect(w, window) for w in widgets]
-        assert rects and all(not r.isEmpty() and window.rect().contains(r.center()) for r in rects)
+        rects = page.rects(window)
+        assert len(rects) == len(widgets)                  # everything named is on screen
+        assert all(not r.isEmpty() and window.rect().contains(r.center()) for r in rects)
         # The step being explained is highlighted in the rail too, and it's the selected one.
         step = window.rail_buttons[page.step]
         assert (step in widgets) == page.show_step
@@ -714,3 +715,29 @@ def test_tour_highlights_the_right_parts(window):
     marked = highlight(plain, [QRect(20, 20, 60, 60)]).toImage()
     assert marked.pixelColor(50, 50).name() == "#808080"   # the highlighted part stays bright
     assert marked.pixelColor(150, 50).value() < 80         # the rest is darkened
+
+
+def test_see_through_view(window):
+    from threedn00b.gui.viewer import BACKGROUND, GhostMesh, ON_TOP_OPTIONS
+    window.lid_check.setChecked(True)
+    window.add_hole()
+    window.rebuild()
+    viewer = window.viewer
+    assert not window.see_through_action.isChecked() and not viewer.see_through
+    assert window.see_through_action.shortcut().toString() == "Ctrl+T"
+    window.see_through_action.setChecked(True)
+    assert viewer.see_through
+    assert viewer._mesh_items and all(isinstance(m, GhostMesh) for m in viewer._mesh_items)
+    assert all(m.opts["color"][3] < 0.5 for m in viewer._mesh_items)        # faint
+    # The hole outlines are drawn on top (pyqtgraph keeps the options in a private field).
+    assert all(m._GLGraphicsItem__glOpts == ON_TOP_OPTIONS for m in viewer._marker_items)
+    shot = viewer.grabFramebuffer()
+    assert not shot.isNull()
+    window.see_through_action.setChecked(False)                 # back to solid
+    assert not any(isinstance(m, GhostMesh) for m in viewer._mesh_items)
+    image = viewer.grabFramebuffer()
+    # Still draws normally afterwards: the box covers the middle of the view.
+    c = image.pixelColor(image.width() // 2, image.height() // 2)
+    assert (c.red(), c.green(), c.blue()) != BACKGROUND
+    window.show_lid_action.trigger()                           # Lid (Ctrl+L) hides the lid
+    assert "lid" not in viewer._solids
