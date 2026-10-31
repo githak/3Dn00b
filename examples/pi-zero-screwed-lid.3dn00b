@@ -1,6 +1,6 @@
 {
   "format": "3dn00b-project",
-  "version": 11,
+  "version": 14,
   "project": {
     "shape": "box",
     "size_mode": "inside",
@@ -20,24 +20,12 @@
       "fit": "normal",
       "custom_gap": 0.25,
       "thickness": 2.0,
-      "lip_height": 5.0
+      "lip_height": 5.0,
+      "opening": "none",
+      "opening_side": "front",
+      "slide_from": "front"
     },
     "holes": [
-      {
-        "surface": "front",
-        "diameter": 8.0,
-        "u": 0.0,
-        "v": 0.0,
-        "id": "f414c42d",
-        "kind": "rect",
-        "width": 12.5,
-        "height": 7.0,
-        "slot": 2.0,
-        "gap": 2.0,
-        "slot_direction": "along_v",
-        "rounding": 3.0,
-        "strengthen": true
-      },
       {
         "surface": "lid",
         "diameter": 8.0,
@@ -52,6 +40,51 @@
         "slot_direction": "along_v",
         "rounding": 0.0,
         "strengthen": false
+      },
+      {
+        "surface": "front",
+        "diameter": 8.0,
+        "u": -20.1,
+        "v": -2.4000000000000004,
+        "id": "73dbb54b",
+        "kind": "rect",
+        "width": 14.0,
+        "height": 9.0,
+        "slot": 2.0,
+        "gap": 2.0,
+        "slot_direction": "along_v",
+        "rounding": 2.0,
+        "strengthen": false
+      },
+      {
+        "surface": "front",
+        "diameter": 8.0,
+        "u": 15.2,
+        "v": -2.6500000000000004,
+        "id": "fb24ae7a",
+        "kind": "rect",
+        "width": 24.199999999999996,
+        "height": 7.5,
+        "slot": 2.0,
+        "gap": 2.0,
+        "slot_direction": "along_v",
+        "rounding": 2.0,
+        "strengthen": false
+      },
+      {
+        "surface": "left",
+        "diameter": 8.0,
+        "u": 4.300000000000001,
+        "v": -3.1500000000000004,
+        "id": "b79af2d8",
+        "kind": "rect",
+        "width": 14.0,
+        "height": 4.5,
+        "slot": 2.0,
+        "gap": 2.0,
+        "slot_direction": "along_v",
+        "rounding": 1.0,
+        "strengthen": false
       }
     ],
     "name": "Pi Zero box with screwed lid",
@@ -59,7 +92,9 @@
       "across": 1,
       "deep": 1,
       "thickness": 1.6,
-      "height": 0.0
+      "height": 0.0,
+      "widths": [],
+      "depths": []
     },
     "mounts": [
       {
@@ -67,7 +102,7 @@
         "screw": "M2.5",
         "length": 6.0,
         "u": 0.0,
-        "v": 0.0,
+        "v": -6.0,
         "rotation": 0,
         "board_width": 60.0,
         "board_depth": 40.0,
@@ -76,6 +111,7 @@
         "id": "286b021e",
         "parts_height": -1.0
       }
-    ]
+    ],
+    "template": ""
   }
 }

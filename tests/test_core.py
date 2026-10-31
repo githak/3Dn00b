@@ -1,4 +1,5 @@
 import math
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -1697,7 +1698,7 @@ def test_board_openings_face_the_sockets(key):
 
 def test_stacked_template_is_approved():
     p = templates.from_template("pi-zero-stack")
-    lower, upper = p.mounts
+    lower, upper = sorted(p.mounts, key=lambda m: m.length)
     assert upper.rotation == 90 and upper.length > lower.length
     assert not any(i.mount_id for i in validation.check(p) if i.level != "info")
 
@@ -1717,6 +1718,9 @@ def test_fan_fits_under_the_lid():
     assert fan.u + 15 < usb_x or h - 10 > top + 16
     screws = [x for x in p.holes if x.surface == LID and x.diameter == 3.4]
     assert sorted({round(abs(s.u - fan.u), 6) for s in screws}) == [12.0]
+    # Right over the Pi 5's processor (32.5 x 23.5 mm from the board's corner).
+    x, y = templates._floor_point(m, 32.5, 23.5)
+    assert (fan.u, fan.v) == pytest.approx((x, y))
 
 
 def test_template_groups_list_every_template_once():
@@ -1811,3 +1815,94 @@ def test_templates_remember_where_they_came_from(tmp_path):
     data = project_io.to_dict(p)
     del data["project"]["template"]                       # older files: not from a template
     assert project_io.from_dict(data).template == ""
+
+
+# ---- connector positions in the board templates ------------------------------------
+#
+# Where the sockets really are, measured from each board's lower-left corner (the edge
+# with power/HDMI at the bottom, USB/network on the right), from the Raspberry Pi and
+# Arduino mechanical drawings as modelled in NopSCADlib (vitamins/pcbs.scad) and
+# @jwc/jscad-raspberrypi. Each socket: (edge, position along the edge, height of its
+# centre above the board's top, plug width, plug height, how far it sticks out past the
+# board edge). Plug sizes are the moulded part of common cables, which has to fit
+# through the opening when the socket sits back from the wall.
+
+PI3 = [("front", 10.6, 1.3, 10.5, 6.5, 2.0), ("front", 32.0, 3.25, 15.0, 8.0, 2.0),
+       ("front", 53.5, 2.8, 7.0, 7.0, 0.5),
+       ("right", 10.25, 6.75, 16.0, 13.5, 2.0), ("right", 29.0, 8.0, 15.0, 16.0, 2.0),
+       ("right", 47.0, 8.0, 15.0, 16.0, 2.0)]
+PI4 = [("front", 11.2, 1.6, 12.5, 6.5, 1.0), ("front", 26.0, 1.5, 11.0, 6.5, 1.0),
+       ("front", 39.5, 1.5, 11.0, 6.5, 1.0), ("front", 54.0, 2.8, 7.0, 7.0, 0.5),
+       ("right", 9.0, 8.0, 15.0, 16.0, 3.0), ("right", 27.0, 8.0, 15.0, 16.0, 3.0),
+       ("right", 45.75, 6.9, 16.0, 13.8, 3.0)]
+PI5 = [("front", 11.2, 1.6, 12.5, 6.5, 1.0), ("front", 25.8, 1.5, 11.0, 6.5, 1.0),
+       ("front", 39.2, 1.5, 11.0, 6.5, 1.0),
+       ("right", 10.2, 6.75, 16.5, 13.5, 3.0), ("right", 29.1, 8.0, 15.0, 16.5, 3.0),
+       ("right", 47.0, 8.0, 15.0, 16.5, 3.0), ("left", 18.4, 1.85, 3.0, 3.0, 1.0)]
+PI_SD = [("left", 28.0, -2.4, 12.0, 2.0, 2.5)]                   # under the board
+PI3A = [("front", 10.6, 1.3, 10.5, 6.5, 2.0), ("front", 32.0, 3.25, 15.0, 8.0, 2.0),
+        ("front", 53.5, 2.8, 7.0, 7.0, 0.5), ("right", 31.45, 3.5, 15.0, 8.0, 2.0)] + PI_SD
+ZERO = [("front", 12.4, 1.6, 11.5, 6.5, 0.4), ("front", 41.4, 1.3, 10.5, 6.5, 0.8),
+        ("front", 54.0, 1.3, 10.5, 6.5, 0.8), ("left", 16.7, 0.7, 12.0, 2.0, 1.0)]
+ZERO_CAMERA = [("right", 15.0, 1.0, 12.0, 2.0, 0.0)]
+PICO = [("left", 10.5, 1.3, 10.5, 6.5, 1.1)]
+UNO = [("left", 37.78, 5.5, 12.0, 11.0, 6.4), ("left", 7.62, 6.5, 10.0, 10.0, 2.4)]
+
+BOARD_SOCKETS = {
+    "pi": [PI3 + PI_SD, PI4 + PI_SD, PI5 + PI_SD], "pi-gpio": [PI3 + PI_SD, PI4 + PI_SD, PI5 + PI_SD],
+    "pi5-fan": [PI5 + PI_SD], "pi-3a": [PI3A], "pi-zero": [ZERO + ZERO_CAMERA],
+    "pi-zero-stack": [ZERO], "pico": [PICO], "arduino": [UNO], "mega": [UNO],
+}
+
+
+def _socket_on_wall(p, m, edge, along, height, width, tall):
+    """The socket's plug as (wall, u, v, half width, half height) in hole coordinates."""
+    from threedn00b.templates import _facing
+    w, d = mounts.board_size(m)
+    x, y = {"front": (along, 0), "back": (along, d), "left": (0, along), "right": (w, along)}[edge]
+    wall, pos = _facing(p, m, x, y)
+    u = {FRONT: pos, BACK: -pos, LEFT: -pos, RIGHT: pos}[wall]
+    z = mounts.board_bottom(p, m) + mounts.BOARD_THICKNESS + height
+    return wall, u, z - p.outer_height / 2, width / 2, tall / 2
+
+
+def _edge_gap(p, m, edge):
+    """Room between a board edge and the wall it faces."""
+    from threedn00b.templates import _facing
+    w, d = mounts.board_size(m)
+    x, y = {"front": (w / 2, 0), "back": (w / 2, d), "left": (0, d / 2), "right": (w, d / 2)}[edge]
+    wall, _ = _facing(p, m, x, y)
+    fx, fy = mounts._to_floor(m, x - w / 2, y - d / 2)
+    return {FRONT: fy + p.inner_depth / 2, BACK: p.inner_depth / 2 - fy,
+            LEFT: fx + p.inner_width / 2, RIGHT: p.inner_width / 2 - fx}[wall]
+
+
+@pytest.mark.parametrize("key", list(BOARD_SOCKETS))
+def test_every_socket_has_an_opening_in_front_of_it(key):
+    _check_sockets(templates.from_template(key), BOARD_SOCKETS[key], key)
+
+
+EXAMPLE_SOCKETS = {"raspberry-pi-box": [PI3 + PI_SD, PI4 + PI_SD, PI5 + PI_SD],
+                   "pi-zero-screwed-lid": [ZERO]}
+
+
+@pytest.mark.parametrize("name", list(EXAMPLE_SOCKETS))
+def test_example_boxes_have_openings_in_front_of_the_sockets(name):
+    path = Path(__file__).parent.parent / "examples" / f"{name}.3dn00b"
+    _check_sockets(project_io.load_project(path), EXAMPLE_SOCKETS[name], name)
+
+
+def _check_sockets(p, variants, key):
+    for m in p.mounts:
+        for sockets in variants:
+            for edge, along, height, width, tall, sticks_out in sockets:
+                wall, u, v, hu, hv = _socket_on_wall(p, m, edge, along, height, width, tall)
+                fits = any(h.surface == wall and h.kind == RECT
+                           and abs(h.u - u) + hu <= h.width / 2 + 0.01
+                           and abs(h.v - v) + hv <= h.height / 2 + 0.01 for h in p.holes)
+                assert fits, f"{key}: {edge} socket at {along} mm ({wall} wall) has no opening"
+                # The board must drop into the box without the socket catching on the wall,
+                # and the socket mustn't sit so far in that a plug can't reach it.
+                gap = _edge_gap(p, m, edge)
+                assert gap >= sticks_out + 0.3, f"{key}: {edge} edge too close to the wall"
+                assert gap - sticks_out <= 10, f"{key}: {edge} sockets too far from the wall"

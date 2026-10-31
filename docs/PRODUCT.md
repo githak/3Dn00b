@@ -175,6 +175,19 @@ Defaults I chose myself, which are easy to change:
   lid rarely fit another shape); for the user's own designs those buttons keep
   reshaping the design. A note under the template list says so, and Undo brings
   the template back. The field is optional, so older versions still open the file.
+  Checked in 0.25 against the Raspberry Pi and Arduino mechanical drawings (as
+  modelled in NopSCADlib and @jwc/jscad-raspberrypi; the official PDFs couldn't be
+  reached from the build environment): every board case leaves room for the
+  sockets that stick out past the board (up to 3 mm for the Pi 4/5's USB and
+  network, 2.5 mm for the SD card, 6.4 mm for the Arduino's USB B) so the board
+  drops in, and every opening sits in front of its socket and is big enough for
+  the moulded part of a normal plug. The Pi case got an opening for the Pi 5's
+  power button and its fan sits over the Pi 5's processor; the Zero cases' two
+  micro USB sockets share one opening (12.6 mm apart is too close for two). The
+  stacked Zero template now puts the upper board's sockets right behind the right
+  wall and the lower board's about 10 mm from the front wall (the closest the
+  upper board's posts allow); before, the lower board's sockets were 20 mm in.
+  A test checks every socket of every board template and example this way.
   Added in 0.18: a Pi 5 case with a 30 mm fan in the lid (26 mm opening and four
   M3 holes 24 mm apart, over the processor and clear of the tall sockets), a Pi
   Pico case (8 mm posts leave room for pin headers underneath), and an ESP32

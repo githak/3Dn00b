@@ -1,6 +1,6 @@
 {
   "format": "3dn00b-project",
-  "version": 13,
+  "version": 14,
   "project": {
     "shape": "box",
     "size_mode": "inside",
@@ -20,25 +20,12 @@
       "fit": "normal",
       "custom_gap": 0.25,
       "thickness": 2.0,
-      "lip_height": 5.0,
-      "opening": "tab"
+      "lip_height": 4.0,
+      "opening": "tab",
+      "opening_side": "front",
+      "slide_from": "front"
     },
     "holes": [
-      {
-        "surface": "left",
-        "diameter": 8.0,
-        "u": 0.0,
-        "v": -3.0,
-        "id": "7864e4b7",
-        "kind": "rect",
-        "width": 12.5,
-        "height": 7.0,
-        "slot": 2.0,
-        "gap": 2.0,
-        "slot_direction": "along_v",
-        "rounding": 3.0,
-        "strengthen": true
-      },
       {
         "surface": "lid",
         "diameter": 8.0,
@@ -52,6 +39,51 @@
         "gap": 2.0,
         "slot_direction": "along_v",
         "rounding": 0.0,
+        "strengthen": false
+      },
+      {
+        "surface": "front",
+        "diameter": 8.0,
+        "u": -11.25,
+        "v": -4.399999999999999,
+        "id": "31f28819",
+        "kind": "rect",
+        "width": 55.5,
+        "height": 12.000000000000002,
+        "slot": 2.0,
+        "gap": 2.0,
+        "slot_direction": "along_v",
+        "rounding": 2.0,
+        "strengthen": false
+      },
+      {
+        "surface": "right",
+        "diameter": 8.0,
+        "u": 0.0,
+        "v": 0.8500000000000014,
+        "id": "f991a077",
+        "kind": "rect",
+        "width": 53.0,
+        "height": 18.5,
+        "slot": 2.0,
+        "gap": 2.0,
+        "slot_direction": "along_v",
+        "rounding": 1.0,
+        "strengthen": false
+      },
+      {
+        "surface": "left",
+        "diameter": 8.0,
+        "u": 2.5,
+        "v": -7.4,
+        "id": "b1cb675e",
+        "kind": "rect",
+        "width": 19.0,
+        "height": 9.0,
+        "slot": 2.0,
+        "gap": 2.0,
+        "slot_direction": "along_v",
+        "rounding": 2.0,
         "strengthen": false
       }
     ],
@@ -79,6 +111,7 @@
         "id": "a5811061",
         "parts_height": -1.0
       }
-    ]
+    ],
+    "template": ""
   }
 }
