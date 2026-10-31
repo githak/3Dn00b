@@ -161,6 +161,11 @@ Defaults I chose myself, which are easy to change:
   boards like a +, so the upper board's posts miss the lower board; its sockets
   face the middle, so cables reach them through openings in the walls. Picking a
   template is one undo step.
+  From 0.23 a design remembers which template it came from. Choosing Box or Round
+  container then starts over with a plain one (the template's holes, posts and
+  lid rarely fit another shape); for the user's own designs those buttons keep
+  reshaping the design. A note under the template list says so, and Undo brings
+  the template back. The field is optional, so older versions still open the file.
   Added in 0.18: a Pi 5 case with a 30 mm fan in the lid (26 mm opening and four
   M3 holes 24 mm apart, over the processor and clear of the tall sockets), a Pi
   Pico case (8 mm posts leave room for pin headers underneath), and an ESP32

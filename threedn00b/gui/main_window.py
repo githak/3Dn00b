@@ -567,7 +567,7 @@ class MainWindow(QMainWindow):
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             self.shape_group.addButton(btn)
             self.shape_buttons[shape] = btn
-            btn.clicked.connect(lambda _=False, s=shape: self.edit("Change shape", lambda p: p.set_shape(s)))
+            btn.clicked.connect(lambda _=False, s=shape: self._on_shape_clicked(s))
             row.addWidget(btn)
         lay.addLayout(row)
         self.template_combo = QComboBox()
@@ -592,6 +592,8 @@ class MainWindow(QMainWindow):
         self.template_combo.setMinimumHeight(34)
         self.template_combo.setMaxVisibleItems(20)
         lay.addWidget(self.template_combo)
+        self.template_note = hint("")
+        lay.addWidget(self.template_note)
         form = form_layout()
         self.name_edit = QLineEdit()
         self.name_edit.setPlaceholderText("Give it a name")
@@ -1097,6 +1099,14 @@ class MainWindow(QMainWindow):
         for shape, btn in self.shape_buttons.items():
             set_quietly(btn, shape == p.shape)
         set_quietly(self.name_edit, p.name)
+        if p.template:
+            self.template_note.setText(f"Based on the {self._template_label()}. Choose Box or "
+                                       "Round container to start over with a plain one.")
+        self.template_note.setVisible(bool(p.template))
+        for shape, btn in self.shape_buttons.items():
+            what = "box" if shape == BOX else "round container"
+            btn.setToolTip(f"Start over with a plain {what}" if p.template else
+                           f"Make this design a {what}")
         set_quietly(self.mode_outside, p.size_mode == OUTSIDE)
         set_quietly(self.mode_inside, p.size_mode == INSIDE)
         for widget, value in ((self.width_spin, p.width), (self.depth_spin, p.depth),
@@ -1212,13 +1222,31 @@ class MainWindow(QMainWindow):
         if key is None:
             return
         template = templates.TEMPLATES[key]
-        fresh = template.build()
-        self.selected_id = self.selected_mount_id = None
-        self.edit(f"Start from “{template.label}”", lambda p: p.__dict__.update(fresh.__dict__))
-        self.viewer._fitted_size = None          # show the whole new object
-        self.rebuild()
+        self._replace_project(f"Start from “{template.label}”", templates.from_template(key))
         self.statusBar().showMessage(f"{template.label}: {template.description} "
                                      "Undo goes back to what you had.", 10000)
+
+    def _on_shape_clicked(self, shape: str):
+        """Box or Round container: reshape your own design, or start over after a template."""
+        if not self.project.template:
+            self.edit("Change shape", lambda p: p.set_shape(shape))
+            return
+        what = "box" if shape == BOX else "round container"
+        before = self._template_label()
+        self._replace_project(f"Start a plain {what}", default_project(shape))
+        self.statusBar().showMessage(f"Started a plain {what}. Undo brings back the {before}.",
+                                     10000)
+
+    def _replace_project(self, label: str, fresh: Project):
+        """Swap in a whole new design as one undo step, and show all of it."""
+        self.selected_id = self.selected_mount_id = None
+        self.edit(label, lambda p: p.__dict__.update(fresh.__dict__))
+        self.viewer._fitted_size = None
+        self.rebuild()
+
+    def _template_label(self) -> str:
+        template = templates.TEMPLATES.get(self.project.template)
+        return f"“{template.label}” template" if template else "template"
 
     def _refresh_dividers(self):
         p, d = self.project, self.project.dividers
@@ -1868,7 +1896,9 @@ class MainWindow(QMainWindow):
     def new_project(self, template: str = BOX):
         if not self._confirm_discard():
             return
-        self._load(default_project(template), None)
+        # The tray is a template too, so Box or Round container start over from it.
+        self._load(templates.from_template("tray") if template == TRAY_TEMPLATE
+                   else default_project(template), None)
 
     def _load(self, project: Project, path: Path | None):
         self.project = project

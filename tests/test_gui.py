@@ -629,3 +629,34 @@ def test_lid_side_controls(window):
     assert window.project.lid.slide_from == "right"
     assert "from the right" in window.lid_tip.text()
     assert not validation_errors(window)
+
+
+def test_shape_after_template_starts_over(window):
+    from threedn00b.model import default_project
+    combo = window.template_combo
+    combo.activated.emit(combo.findData("pi"))
+    assert window.project.mounts and window.template_note.isVisibleTo(window)
+    window.shape_buttons[BOX].click()                     # a plain box, not the Pi case
+    plain = default_project(BOX)
+    p = window.project
+    assert (p.name, p.holes, p.mounts, p.lid.enabled, p.template) == (
+        plain.name, [], [], False, "")
+    assert (p.width, p.depth, p.height, p.size_mode) == (plain.width, plain.depth, plain.height,
+                                                         plain.size_mode)
+    assert not window.template_note.isVisibleTo(window)
+    window.undo_stack.undo()                              # the Pi case comes back
+    assert window.project.template == "pi" and window.project.mounts
+    window.shape_buttons[CYLINDER].click()
+    assert window.project.shape == CYLINDER and not window.project.holes
+    assert window.project.name == "My container" and not window.project.mounts
+    combo.activated.emit(combo.findData("jar"))           # a round template, then round again
+    window.shape_buttons[CYLINDER].click()
+    assert not window.project.lid.enabled and window.project.template == ""
+    assert not validation_errors(window)
+
+
+def test_shape_change_keeps_your_own_holes(window):
+    window.add_hole()
+    window.shape_buttons[CYLINDER].click()               # your own design: just reshaped
+    assert window.project.shape == CYLINDER and len(window.project.holes) == 1
+    assert window.project.holes[0].surface == "side"
