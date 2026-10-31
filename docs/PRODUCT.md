@@ -156,7 +156,8 @@ Defaults I chose myself, which are easy to change:
   templates, holes, posts, lids, the 3D view and checking/export. Their
   screenshots are taken live from a hidden example window (a Raspberry Pi case),
   so they always match the app; everything but the part being explained is
-  darkened, and that part is outlined in the accent colour.
+  darkened, and that part is outlined in the accent colour, together with the
+  step's button in the rail (0.24.1) so it's clear which step is open.
 - Templates (0.17), requested by the project owner so beginners don't size a
   case by trial and error: a template list in the Shape tab, right under the Box
   and Round container buttons, so a template is the third way to start.

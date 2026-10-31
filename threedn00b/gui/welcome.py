@@ -27,6 +27,14 @@ class TourPage:
     step: int                                  # which step (page of the panel) to show
     targets: Callable[[object], list]          # window -> the widgets to highlight
     prepare: Callable[[object], None] = lambda window: None
+    show_step: bool = True                     # also highlight the step's button in the rail
+
+    def highlights(self, window) -> list:
+        """The widgets to highlight: the page's own, plus its step in the rail."""
+        widgets = list(self.targets(window))
+        if self.show_step:
+            widgets.insert(0, window.rail_buttons[self.step])
+        return widgets
 
 
 def _select_first_hole(window) -> None:
@@ -48,7 +56,7 @@ PAGES = (
     TourPage("Work through the steps",
              "The steps down the left side take you from an idea to a file you can print: "
              "Shape, Holes, Posts, Lid and Export. Click a step to open it, or press Ctrl+1 "
-             "to Ctrl+5.", 0, lambda w: [w.rail]),
+             "to Ctrl+5.", 0, lambda w: [w.rail], show_step=False),
     TourPage("Start with a shape or a template",
              "Pick a box or a round container, or start from a ready-made template: cases for "
              "Raspberry Pi and Arduino boards, storage boxes, trays and more. Then type the sizes "
@@ -70,7 +78,7 @@ PAGES = (
     TourPage("See it in 3D",
              "The preview updates as you type. Drag to turn it, scroll to zoom and middle-drag "
              "to move it. The buttons in the corner show it from the front, the top or the side, "
-             "and hide the lid.", 0, lambda w: [w.viewer], _select_nothing),
+             "and hide the lid.", 0, lambda w: [w.viewer], _select_nothing, show_step=False),
     TourPage("Check and export",
              "The app checks your design while you work and explains any problem in plain words. "
              "The status in the corner says when it's ready to print, and Export saves STL or 3MF "
@@ -143,7 +151,7 @@ def capture_tour(pages=PAGES) -> list[QPixmap]:
             page.prepare(demo)
             for _ in range(3):
                 app.processEvents()
-            rects = [visible_rect(w, demo) for w in page.targets(demo) if w.isVisible()]
+            rects = [visible_rect(w, demo) for w in page.highlights(demo) if w.isVisible()]
             shots.append(highlight(demo.grab(), rects))
     finally:
         demo.undo_stack.setClean()

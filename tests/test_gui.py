@@ -702,8 +702,13 @@ def test_tour_highlights_the_right_parts(window):
         window.tabs.setCurrentIndex(page.step)
         page.prepare(window)
         QApplication.processEvents()
-        rects = [visible_rect(w, window) for w in page.targets(window)]
+        widgets = page.highlights(window)
+        rects = [visible_rect(w, window) for w in widgets]
         assert rects and all(not r.isEmpty() and window.rect().contains(r.center()) for r in rects)
+        # The step being explained is highlighted in the rail too, and it's the selected one.
+        step = window.rail_buttons[page.step]
+        assert (step in widgets) == page.show_step
+        assert step.isChecked()
     plain = QPixmap(200, 100)
     plain.fill(QColor("#808080"))
     marked = highlight(plain, [QRect(20, 20, 60, 60)]).toImage()
