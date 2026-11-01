@@ -323,24 +323,27 @@ Defaults I chose myself, which are easy to change:
   - arm64 .deb: for the Raspberry Pi 4 and 5 and other ARM computers. PySide6's ARM
     wheels need glibc 2.39, so it's for Ubuntu 24.04, Debian 13 and Raspberry Pi OS
     Trixie or newer (Python 3.12 to 3.14 only); Bookworm is too old. Tested in ARM
-    Ubuntu 24.04 and 26.04 containers, emulated with qemu-user-static.
+    Debian 13, Ubuntu 24.04 and 26.04 containers, emulated with qemu-user-static.
   - .rpm: Fedora 40 and newer, openSUSE Tumbleweed (Python 3.12 to 3.14). The system
     libraries are required by file name (libxcb-cursor.so.0()(64bit) …), checked
     against everything the kept Qt parts link to (readelf), except the GTK theme
     plugin's; so the package manager finds them whatever the distribution calls
-    them. Fedora 43's rpm accepts it; a full test (test_rpm.sh) needs Fedora's
-    package servers, which the build environment can't reach yet.
+    them. Tested on Fedora 42 and 43 (test_rpm.sh: dnf installs it and what it needs,
+    the smoke test runs, it uninstalls cleanly).
   - AppImage instead of Flatpak (a Flatpak needs Flathub's runtimes to build): one
     file with its own Python (python-build-standalone, fetched with uv, without Tk and
     the test suite) and the X11 helper libraries not every desktop has (xcb-util,
     xkbcommon, from Ubuntu 22.04), everything compiled to .pyc beforehand. Needs
-    glibc 2.34 (PySide6's wheels). Tested on Ubuntu 22.04, 24.04 and 26.04 containers
-    with only desktop basics (OpenGL, fonts, X11, D-Bus) and no Python. The test found
+    glibc 2.34 (PySide6's wheels). Tested on Debian 12 and 13, Ubuntu 22.04, 24.04 and
+    26.04 and Fedora 42 and 43 containers with only desktop basics (OpenGL, fonts, X11,
+    D-Bus) and no Python. The test found
     that the libxcb-cursor check (ctypes.util.find_library) ignores the AppImage's own
     copy; it now tries to load the library, which finds it.
-  Not done: Flatpak (Flathub can't be reached), and testing in Debian containers
-  (deb.debian.org can't be reached; Debian 12 and 13 have the same libraries as the
-  Ubuntu releases tested).
+  Every build also checks that each bundled library finds what it needs (inside the
+  package through its RUNPATH, or on the system). That found numpy's libraries cut off
+  from numpy in the arm64 .deb and the .rpm (the step that stores libraries shared by
+  all Python versions once had moved numpy.libs away from numpy), and that Qt's ARM X11
+  library also needs libSM and libICE. Not done: Flatpak (Flathub can't be reached).
 - Push-on lid that follows the box size, with fit presets.
 - Plain-language checks covering impossible sizes, thin walls, holes off the
   edge, holes behind the lid lip, overlapping or too-close holes, a lid that
@@ -359,8 +362,7 @@ STL import and editing.
 ## Postponed (candidates for later, in rough priority order)
 
 Picked by the project owner and still open: the ESP32-S3 DevKit and Orange Pi Zero 3
-boards (once Espressif's and Orange Pi's drawings can be reached), and a full test of
-the .rpm on Fedora (once Fedora's package servers can be reached).
+boards (once Espressif's and Orange Pi's drawings can be reached).
 
 Each addition must pass the brief's test: does it make a common beginner task
 much easier, without CAD vocabulary, and without making the interface busier?

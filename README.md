@@ -184,10 +184,13 @@ double-click it. (Some systems need `libfuse2` for AppImages; without it, run it
 
 | Package | Works on | Tested automatically |
 | --- | --- | --- |
-| .deb (amd64) | Debian 12 and 13, Ubuntu 22.04 to 26.10, Mint 21 and 22, Pop!_OS, Zorin | Ubuntu 22.04, 24.04 and 26.04 |
-| .deb (arm64) | Raspberry Pi OS Trixie, Debian 13, Ubuntu 24.04 and newer | Ubuntu 24.04 and 26.04 (ARM, emulated) |
-| .rpm | Fedora 40 and newer, openSUSE Tumbleweed | its libraries are checked, and Fedora 43 accepts the package; not yet installed and run on Fedora |
-| AppImage | most Linux systems with glibc 2.34 or newer | Ubuntu 22.04, 24.04 and 26.04 with only desktop basics |
+| .deb (amd64) | Debian 12 and 13, Ubuntu 22.04 to 26.10, Mint 21 and 22, Pop!_OS, Zorin | Debian 12 and 13, Ubuntu 22.04, 24.04 and 26.04 |
+| .deb (arm64) | Raspberry Pi OS Trixie, Debian 13, Ubuntu 24.04 and newer | Debian 13, Ubuntu 24.04 and 26.04 (ARM, emulated) |
+| .rpm | Fedora 40 and newer, openSUSE Tumbleweed | Fedora 42 and 43 |
+| AppImage | most Linux systems with glibc 2.34 or newer | Debian 12 and 13, Ubuntu 22.04, 24.04 and 26.04, Fedora 42 and 43, each with only desktop basics (no Python) |
+
+Each test installs the package (or runs the AppImage) on a clean system, starts 3Dn00b
+on a virtual screen, builds and exports a design, and removes it again.
 
 The .deb and .rpm contain their own copies of the libraries the distributions don't
 provide, for each Python version they use (3.10 to 3.14); a future Linux release with
