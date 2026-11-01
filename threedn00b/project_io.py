@@ -242,3 +242,33 @@ def export_3mf_file(project: Project, folder: str | Path, stem: str | None = Non
     path = Path(folder) / f"{safe_file_stem(stem or project.name)}.3mf"
     write_3mf(geometry.build_parts(project).printable(), path, project.name)
     return path
+
+
+FIT_TEST = "fit-test"
+
+
+def fit_test_files(project: Project, folder: str | Path, fmt: str,
+                   pieces: dict, stem: str | None = None) -> list[Path]:
+    """Where export_fit_test() writes its files (for asking before replacing them)."""
+    stem = f"{safe_file_stem(stem or project.name)}-{FIT_TEST}"
+    if fmt == "3mf":
+        return [Path(folder) / f"{stem}.3mf"]
+    return [Path(folder) / f"{stem}-{name}.stl" for name in pieces]
+
+
+def export_fit_test(project: Project, folder: str | Path, fmt: str = "stl", lid: bool = True,
+                    openings: bool = True, stem: str | None = None,
+                    parts: geometry.Parts | None = None, pieces: dict | None = None) -> list[Path]:
+    """Export the fit test pieces (STL: one file each, 3MF: one file)."""
+    if pieces is None:
+        pieces = geometry.fit_test_parts(project, lid, openings, parts)
+    if not pieces:
+        return []
+    files = fit_test_files(project, folder, fmt, pieces, stem)
+    title = f"{project.name} fit test"
+    if fmt == "3mf":
+        write_3mf(pieces, files[0], title)
+    else:
+        for (name, solid), path in zip(pieces.items(), files):
+            write_stl(solid, path, f"{title} {name}")
+    return files

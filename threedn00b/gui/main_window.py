@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import copy
 import gc
+import json
+from dataclasses import replace
 from html import escape
 from pathlib import Path
 from types import SimpleNamespace
 
-from PySide6.QtCore import QRect, QSettings, QSize, Qt, QTimer
+from PySide6.QtCore import QLocale, QRect, QSettings, QSize, Qt, QTimer
 from PySide6.QtGui import (QAction, QColor, QIcon, QKeySequence, QPainter, QShortcut,
                            QTextDocument, QUndoCommand, QUndoStack)
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox,
@@ -19,8 +21,8 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox,
                                QSplitter, QStyle, QStyledItemDelegate, QTabWidget, QToolBar,
                                QToolButton, QVBoxLayout, QWidget)
 
-from .. import (APP_NAME, __version__, geometry, mounts, picking, project_io, templates,
-                validation)
+from .. import (APP_NAME, __version__, geometry, mounts, picking, printers, project_io,
+                templates, validation)
 from ..model import (ALONG_U, ALONG_V, BOTTOM, BOX, CYLINDER, FIT_LABELS, FIT_PRESETS,
                      FRONT, HOLE_DIAMETER_RANGE, HOLE_KIND_LABELS, INSIDE, LID, MIN_EDGE,
                      OUTSIDE, RECT, ROUND, SIDE, SIZE_RANGE, SURFACE_LABELS, VENT,
@@ -255,6 +257,24 @@ class IssueDelegate(QStyledItemDelegate):
         painter.translate(rect.x() + 2 * self.PAD + self.ICON, rect.y() + self.PAD)
         doc.drawContents(painter)
         painter.restore()
+
+
+def default_filament_price() -> float:
+    """A typical price for 1 kg of PLA in the user's currency."""
+    code = QLocale().currencySymbol(QLocale.CurrencySymbolFormat.CurrencyIsoCode)
+    return {"NOK": 250.0, "SEK": 250.0, "DKK": 180.0, "JPY": 3000.0, "INR": 1500.0}.get(code, 25.0)
+
+
+def price_suffix() -> str:
+    """" kr per kg", " € per kg" … or just " per kg" when the system has no currency set."""
+    symbol = QLocale().currencySymbol().strip()
+    return f" {symbol} per kg" if symbol else " per kg"
+
+
+def money(value: float) -> str:
+    """An amount in the user's currency (plain number when the system has no currency set)."""
+    return QLocale().toCurrencyString(value).strip() if QLocale().currencySymbol().strip() \
+        else f"{value:.2f}"
 
 
 def summary_table(rows: list[tuple[str, str]]) -> str:
@@ -531,6 +551,8 @@ class MainWindow(QMainWindow):
 
     def _on_step_changed(self, index: int):
         self.rail_buttons[index].setChecked(True)
+        if index == TAB_CHECK:
+            self._refresh_fit_test()
 
     def _build_view_overlay(self):
         """Floating buttons over the 3D view: camera presets and the lid toggle."""
@@ -1089,7 +1111,152 @@ class MainWindow(QMainWindow):
         self.export_hint = hint("")
         lay.addWidget(self.export_hint)
         layout.addWidget(box)
+        layout.addWidget(self._build_fit_test_card())
+        layout.addWidget(self._build_printer_card())
         return widget
+
+    def _build_fit_test_card(self) -> QFrame:
+        """Print just the parts that must fit, to check them before the whole thing."""
+        box, lay = card("Fit test print")
+        self.fit_card = box
+        lay.addWidget(hint("Print only the parts that have to fit, to check them with a little "
+                           "plastic before you print the whole thing."))
+        self.fit_lid_check = QCheckBox("The lid: the top of the box and the edge of the lid")
+        self.fit_openings_check = QCheckBox("Openings in the walls")
+        for check in (self.fit_lid_check, self.fit_openings_check):
+            check.setChecked(True)
+            check.toggled.connect(self._refresh_fit_test)
+            lay.addWidget(check)
+        self.fit_summary = hint("")
+        lay.addWidget(self.fit_summary)
+        self.fit_button = icon_button("", "export")
+        self.fit_button.clicked.connect(self.export_fit_test)
+        lay.addWidget(self.fit_button)
+        self._fit_cache: dict = {}
+        self._on_format_changed()
+        return box
+
+    def fit_test_choice(self) -> tuple[bool, bool]:
+        """Which tests are ticked (and possible): (lid, openings)."""
+        return (self.fit_lid_check.isChecked() and not self.fit_lid_check.isHidden(),
+                self.fit_openings_check.isChecked() and not self.fit_openings_check.isHidden())
+
+    def _refresh_fit_test(self, *_):
+        p = self.project
+        lid_ok = (self.parts is not None and self.parts.lid is not None
+                  and geometry.fit_test_lid_band(p) is not None)
+        openings_ok = geometry.fit_test_openings_band(p) is not None
+        posts = any(m.length > 0 for m in p.mounts)
+        holes = any(h.surface in geometry.WALL_SURFACES and h.kind != VENT for h in p.holes)
+        self.fit_openings_check.setText(
+            "Screw posts and openings in the walls" if posts and holes else
+            "Screw posts, to try the board on them" if posts else "Openings in the walls")
+        self.fit_lid_check.setHidden(not lid_ok)
+        self.fit_openings_check.setHidden(not openings_ok)
+        lid, openings = self.fit_test_choice()
+        ready = False
+        if not lid_ok and not openings_ok:
+            text = "Nothing to test yet: add a lid, openings in the walls or screw posts."
+        elif self.parts is None or validation.has_errors(self.issues):
+            text = "Fix the problems marked in red above first."
+        elif not lid and not openings:
+            text = "Tick what you want to test."
+        elif self.tabs.currentIndex() != TAB_CHECK:
+            return                      # the weight is worked out when this step is shown
+        else:
+            ready = True
+            material = self.material_combo.currentData()
+            key = (json.dumps(project_io.to_dict(p), sort_keys=True), lid, openings)
+            if key not in self._fit_cache:
+                pieces = geometry.fit_test_parts(p, lid, openings, self.parts)
+                self._fit_cache = {key: (sum(s.volume() for s in pieces.values()),
+                                         sum(s.volume() for s in self.parts.printable().values()))}
+            test, whole = self._fit_cache[key]
+            text = (f"About {printers.grams(test, material):.0f} g of {material}, instead of "
+                    f"{printers.grams(whole, material):.0f} g for the whole thing.")
+        self.fit_summary.setText(text)
+        self.fit_button.setEnabled(ready)
+
+    def _build_printer_card(self) -> QFrame:
+        """The user's printer and filament: for the size checks and the plastic estimate."""
+        box, lay = card("Your printer and filament")
+        self.printer_card = box
+        form = self.printer_form = form_layout()
+        self.printer_combo = QComboBox()
+        self.printer_combo.addItem("Not set", "")
+        for key, printer in printers.PRINTERS.items():
+            self.printer_combo.addItem(printer.name, key)
+        self.printer_combo.addItem("Other (type its size)", printers.CUSTOM)
+        form.addRow("Printer", self.printer_combo)
+        self.bed_w, self.bed_d, self.bed_h = (spin(50.0, 1000.0, step=5.0, decimals=0)
+                                              for _ in range(3))
+        bed = QHBoxLayout()
+        bed.setSpacing(6)
+        for widget, tip in ((self.bed_w, "Plate, left to right"), (self.bed_d, "Plate, front to back"),
+                            (self.bed_h, "Tallest print")):
+            widget.setToolTip(tip)
+            bed.addWidget(widget)
+        self.bed_row = QWidget()
+        self.bed_row.setLayout(bed)
+        bed.setContentsMargins(0, 0, 0, 0)
+        form.addRow("Build size", self.bed_row)
+        self.nozzle_combo = QComboBox()
+        for nozzle in printers.NOZZLES:
+            self.nozzle_combo.addItem(f"{nozzle:g} mm", nozzle)
+        form.addRow("Nozzle", self.nozzle_combo)
+        self.material_combo = QComboBox()
+        for material in printers.MATERIALS:
+            self.material_combo.addItem(material, material)
+        form.addRow("Filament", self.material_combo)
+        self.price_spin = spin(0.0, 10000.0, step=5.0, decimals=0)
+        self.price_spin.setSuffix(price_suffix())
+        self.price_spin.setToolTip("What a 1 kg spool costs you, for the cost estimate. "
+                                   "0 = don't show a cost.")
+        form.addRow("Price", self.price_spin)
+        lay.addLayout(form)
+        lay.addWidget(hint("Used to check that the parts fit on your printer and to estimate "
+                           "the plastic. Saved for all your designs."))
+        # Load the saved choice.
+        value = self.settings.value
+        set_quietly(self.printer_combo, value("printer/model", ""))
+        set_quietly(self.bed_w, float(value("printer/width", 220)))
+        set_quietly(self.bed_d, float(value("printer/depth", 220)))
+        set_quietly(self.bed_h, float(value("printer/height", 250)))
+        set_quietly(self.nozzle_combo, float(value("printer/nozzle", 0.4)))
+        set_quietly(self.material_combo, value("printer/material", "PLA"))
+        set_quietly(self.price_spin, float(value("printer/price", default_filament_price())))
+        for widget in (self.printer_combo, self.nozzle_combo, self.material_combo):
+            widget.activated.connect(self._on_printer_changed)
+        for widget in (self.bed_w, self.bed_d, self.bed_h, self.price_spin):
+            widget.valueChanged.connect(self._on_printer_changed)
+        self._show_printer_rows()
+        return box
+
+    def _show_printer_rows(self):
+        self.printer_form.setRowVisible(self.bed_row, self.printer_combo.currentData() == printers.CUSTOM)
+
+    def _on_printer_changed(self, *_):
+        settings = self.settings
+        settings.setValue("printer/model", self.printer_combo.currentData())
+        settings.setValue("printer/width", self.bed_w.value())
+        settings.setValue("printer/depth", self.bed_d.value())
+        settings.setValue("printer/height", self.bed_h.value())
+        settings.setValue("printer/nozzle", self.nozzle_combo.currentData())
+        settings.setValue("printer/material", self.material_combo.currentData())
+        settings.setValue("printer/price", self.price_spin.value())
+        self._show_printer_rows()
+        self.rebuild()
+
+    def printer(self) -> printers.Printer | None:
+        """The user's printer, or None when it isn't set."""
+        key = self.printer_combo.currentData()
+        nozzle = self.nozzle_combo.currentData()
+        if key == printers.CUSTOM:
+            return printers.Printer("printer", self.bed_w.value(), self.bed_d.value(),
+                                    self.bed_h.value(), nozzle)
+        if key in printers.PRINTERS:
+            return replace(printers.PRINTERS[key], nozzle=nozzle)
+        return None
 
     # ------------------------------------------------------------------
     # Editing + undo
@@ -1520,7 +1687,7 @@ class MainWindow(QMainWindow):
                 self.parts, self.issues = None, size_issues
             else:
                 self.parts = geometry.build_parts(p)
-                self.issues = validation.check(p, self.parts)
+                self.issues = validation.check(p, self.parts, self.printer())
         except Exception as exc:   # never crash the editor because of geometry trouble
             self.parts = None
             self.issues = [validation.Issue(validation.ERROR, "Something went wrong building the shape.",
@@ -1580,16 +1747,21 @@ class MainWindow(QMainWindow):
     def _refresh_parts_summary(self):
         if self.parts is None:
             self.parts_summary.setText("Nothing to print yet: fix the problems below.")
+            self._refresh_fit_test()
             return
-        rows, plastic = [], []
+        rows, weights = [], []
         names = {"body": "Box" if self.project.shape == BOX else "Container", "lid": "Lid"}
+        material = self.material_combo.currentData()
         for part, solid in self.parts.printable().items():
             lo = solid.bounding_box()
             size = " × ".join(f"{lo[i + 3] - lo[i]:.1f}" for i in range(3))
             rows.append((names[part], f"{size} mm"))
-            plastic.append(solid.volume() / 1000)
-        parts = "" if len(plastic) < 2 else " (" + " + ".join(f"{v:.0f}" for v in plastic) + ")"
-        rows.append(("Plastic", f"about {sum(plastic):.0f} cm³{parts}"))
+            weights.append(printers.grams(solid.volume(), material))
+        parts = "" if len(weights) < 2 else " (" + " + ".join(f"{g:.0f}" for g in weights) + ")"
+        rows.append(("Plastic", f"about {sum(weights):.0f} g of {material}{parts}"))
+        price = self.price_spin.value()
+        if price > 0:
+            rows.append(("Cost", "about " + money(sum(weights) / 1000 * price)))
         holes = len(self.project.holes)
         line = f"{holes} hole{'s' * (holes != 1)}"
         posts = sum(len(mounts.post_positions(m)) for m in self.project.mounts)
@@ -1597,6 +1769,7 @@ class MainWindow(QMainWindow):
             line += f", {posts} screw post{'s' * (posts != 1)}"
         rows.append(("Features", line))
         self.parts_summary.setText(summary_table(rows))
+        self._refresh_fit_test()
 
     # ------------------------------------------------------------------
     # Hole actions
@@ -1887,8 +2060,9 @@ class MainWindow(QMainWindow):
 
     def _on_issue_row_changed(self, row):
         issue = self._issue_at(row)
-        self.fix_button.setVisible(bool(issue and issue.fix))
-        if issue and issue.fix:
+        fixable = bool(issue and (issue.fix or issue.fix_values))
+        self.fix_button.setVisible(fixable)
+        if fixable:
             self.fix_button.setText(issue.fix_label or "Fix it")
         if issue and issue.hole_id:
             self.select_hole(issue.hole_id)
@@ -1897,6 +2071,19 @@ class MainWindow(QMainWindow):
 
     def _apply_fix(self):
         issue = self._issue_at(self.issue_list.currentRow())
+        if issue and issue.fix_values:
+            values = dict(issue.fix_values)
+
+            def set_values(p):
+                for path, value in values.items():
+                    target, *rest = path.split(".")
+                    if rest:
+                        setattr(getattr(p, target), rest[0], value)
+                    else:
+                        setattr(p, target, value)
+            self.edit(issue.fix_label or "Fix", set_values)
+            self.statusBar().showMessage("Changed. Press Ctrl+Z to undo.", 5000)
+            return
         if issue and issue.fix and issue.mount_id:
             mount_id, pos = issue.mount_id, issue.fix
             self.edit("Fix post position", lambda p: _set_position(p.mount(mount_id), pos))
@@ -1995,6 +2182,8 @@ class MainWindow(QMainWindow):
         fmt = self.format_combo.currentData()
         self.settings.setValue("export_format", fmt)
         self.export_button.setText(f"Export for printing ({fmt.upper()})…")
+        if hasattr(self, "fit_button"):
+            self.fit_button.setText(f"Export fit test ({fmt.upper()})…")
 
     def export_stl(self):
         """Export the printable parts in the chosen file type (STL or 3MF)."""
@@ -2028,6 +2217,34 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, APP_NAME, "Saved for printing:\n\n"
                                 + "\n".join(f.name for f in files)
                                 + f"\n\nin {folder}\n\nOpen these in your slicer to print them.")
+
+    def export_fit_test(self):
+        """Export the pieces of the fit test, in the chosen file type."""
+        lid, openings = self.fit_test_choice()
+        if self.parts is None or validation.has_errors(self.issues) or not (lid or openings):
+            return
+        fmt = self.format_combo.currentData()
+        folder = QFileDialog.getExistingDirectory(self, "Choose a folder for the fit test",
+                                                  self._last_dir())
+        if not folder:
+            return
+        pieces = geometry.fit_test_parts(self.project, lid, openings, self.parts)
+        existing = [f for f in project_io.fit_test_files(self.project, folder, fmt, pieces)
+                    if f.exists()]
+        if existing and QMessageBox.question(
+                self, APP_NAME, "Replace these files?\n" + "\n".join(f.name for f in existing)
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            files = project_io.export_fit_test(self.project, folder, fmt, pieces=pieces)
+        except OSError as exc:
+            QMessageBox.warning(self, APP_NAME, f"Couldn't export:\n{exc}")
+            return
+        self.settings.setValue("last_dir", folder)
+        QMessageBox.information(self, APP_NAME, "Saved the fit test:\n\n"
+                                + "\n".join(f.name for f in files)
+                                + f"\n\nin {folder}\n\nPrint these first. When the lid fits and the "
+                                "plugs go in, print the whole thing.")
 
     def about_text(self) -> str:
         return (f"<h3>{APP_NAME} {__version__}</h3>"

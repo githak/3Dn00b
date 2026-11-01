@@ -10,7 +10,7 @@ import itertools
 import math
 from dataclasses import dataclass
 
-from . import geometry, mounts
+from . import geometry, mounts, printers
 from .model import (SIDE_LABELS, ALONG_V, BACK, BOTTOM, BOX, CYLINDER, FRONT, LEFT, LID, MIN_EDGE, RIGHT,
                     SCREWS, SIDE, SNAP_BUMP, SURFACE_LABELS, VENT, Hole, Project, has_lip,
                     THREADED, has_screw_lid, has_sliding_lid, has_snap_lid, has_threaded_lid,
@@ -36,6 +36,9 @@ class Issue:
     fix: tuple[float, float] | None = None
     fix_label: str = ""
     mount_id: str | None = None
+    # Or a fix that sets settings of the design, e.g. {"wall": 2.0} or
+    # {"dividers.thickness": 1.6}.
+    fix_values: dict | None = None
 
 
 def _mm(value: float) -> str:
@@ -95,9 +98,12 @@ def check_size(project: Project) -> list[Issue]:
     return sorted(issues, key=lambda i: _ORDER[i.level])
 
 
-def check(project: Project, parts: geometry.Parts | None = None) -> list[Issue]:
+def check(project: Project, parts: geometry.Parts | None = None,
+          printer: printers.Printer | None = None) -> list[Issue]:
+    """All checks. With the user's printer, also whether the parts fit on it and
+    suit its nozzle."""
     issues: list[Issue] = []
-    issues += _check_size(project)
+    issues += _check_size(project, printer is None)
     if not has_errors(issues):
         issues += _check_divider_size(project) + _check_inside_corners(project)
     if not has_errors(issues):
@@ -108,6 +114,8 @@ def check(project: Project, parts: geometry.Parts | None = None) -> list[Issue]:
         if parts is None:
             parts = geometry.build_parts(project)
         issues += _check_geometry(project, parts)
+        if printer is not None:
+            issues += _check_printer(project, parts, printer)
     issues.sort(key=lambda i: _ORDER[i.level])
     return issues
 
@@ -118,7 +126,7 @@ def has_errors(issues: list[Issue]) -> bool:
 
 # ---------------------------------------------------------------------------
 
-def _check_size(p: Project) -> list[Issue]:
+def _check_size(p: Project, generic_printer: bool = True) -> list[Issue]:
     out = []
     if p.inner_width < 2 or p.inner_depth < 2:
         out.append(Issue(ERROR, "The walls are too thick for this size, so there's no room left inside.",
@@ -127,7 +135,7 @@ def _check_size(p: Project) -> list[Issue]:
         out.append(Issue(ERROR, "The bottom is as thick as the whole object.",
                          "Make the bottom thinner or the object taller."))
     largest = max(p.outer_width, p.outer_depth, p.outer_height)
-    if largest > 300:
+    if largest > 300 and generic_printer:          # with a printer set, its size is checked
         out.append(Issue(WARNING, f"The object is {_mm(largest)} across. That's larger than most printers.",
                          "Check your printer's build size."))
     if p.wall < 1.2:
@@ -603,6 +611,52 @@ def _behind_lip(p: Project, hole: Hole) -> bool:
         return False
     z = p.outer_height / 2 + hole.v
     return z + hole.half_extents[1] > p.outer_height - p.lid.lip_height
+
+
+PART_NAMES = {"body": "box", "lid": "lid"}
+
+
+def _check_printer(p: Project, parts: geometry.Parts, printer: printers.Printer) -> list[Issue]:
+    out = []
+    sizes = {}
+    for name, solid in parts.printable().items():
+        lo, hi = geometry._bounds(solid)
+        sizes[name] = tuple(float(hi[i] - lo[i]) for i in range(3))
+    bed = f"{printer.width:g} × {printer.depth:g} × {printer.height:g} mm"
+    for name, size in sizes.items():
+        label = PART_NAMES[name] if p.shape == BOX or name == "lid" else "container"
+        if not printers.fits(size, printer):
+            out.append(Issue(WARNING, f"The {label} ({_mm3(size)}) doesn't fit on your "
+                             f"{printer.name} ({bed}).",
+                             "Make it smaller, or print it on a bigger printer."))
+    if len(sizes) == 2 and all(printers.fits(s, printer) for s in sizes.values()) \
+            and not printers.fit_together(list(sizes.values()), printer):
+        body = "box" if p.shape == BOX else "container"
+        out.append(Issue(INFO, f"The {body} and the lid don't fit on your {printer.name}'s plate "
+                         "at the same time.", "Print them one after the other."))
+    # Walls print best as a whole number of lines from the nozzle.
+    nozzle = printer.nozzle
+    for attr, value, what in (("wall", p.wall, "Walls"),
+                              ("dividers.thickness", p.dividers.thickness, "Dividers")):
+        if attr.startswith("dividers") and not has_dividers(p):
+            continue
+        count = printers.lines(value, nozzle)
+        better = printers.solid_lines(value, nozzle)
+        if count < 2 - 1e-6:
+            out.append(Issue(WARNING, f"{what} of {_mm(value)} are too thin for your "
+                             f"{nozzle:g} mm nozzle.", f"It needs at least {_mm(2 * nozzle)} "
+                             "(two lines of plastic).", fix_values={attr: better},
+                             fix_label=f"Make them {_mm(better)}"))
+        elif abs(count - round(count)) > 0.15:
+            out.append(Issue(INFO, f"{what} of {_mm(value)} are {count:.1f} lines of your "
+                             f"{nozzle:g} mm nozzle.", f"{_mm(better)} ({round(better / nozzle)} "
+                             "lines) prints more solidly.", fix_values={attr: better},
+                             fix_label=f"Make them {_mm(better)}"))
+    return out
+
+
+def _mm3(size) -> str:
+    return " × ".join(f"{v:.0f}" for v in size) + " mm"
 
 
 def _check_geometry(p: Project, parts: geometry.Parts) -> list[Issue]:

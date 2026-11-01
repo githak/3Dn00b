@@ -1908,3 +1908,208 @@ def _check_sockets(p, variants, key):
                 gap = _edge_gap(p, m, edge)
                 assert gap >= sticks_out + 0.3, f"{key}: {edge} edge too close to the wall"
                 assert gap - sticks_out <= 10, f"{key}: {edge} sockets too far from the wall"
+
+
+# ---- printer and plastic -------------------------------------------------
+
+from threedn00b import printers  # noqa: E402
+
+MINI = printers.PRINTERS["prusa-mini"]
+
+
+def test_parts_fit_turned_either_way():
+    mk4 = printers.PRINTERS["prusa-mk4"]            # 250 × 210 × 220
+    assert printers.fits((240, 200, 100), mk4)
+    assert printers.fits((200, 240, 100), mk4)      # turned on the plate
+    assert not printers.fits((240, 240, 100), mk4)
+    assert not printers.fits((100, 100, 230), mk4)  # too tall
+    assert not printers.fits((249, 100, 10), mk4)   # needs a little room at the edges
+
+
+def test_two_parts_side_by_side():
+    assert printers.fit_together([(80, 60, 40), (80, 60, 4)], MINI)
+    assert printers.fit_together([(100, 170, 40), (60, 170, 4)], MINI)
+    assert not printers.fit_together([(120, 170, 40), (120, 170, 4)], MINI)
+
+
+def test_whole_lines_of_the_nozzle():
+    assert printers.solid_lines(1.8, 0.4) == 2.0      # 4.5 lines: halfway goes up
+    assert printers.solid_lines(1.7, 0.4) == 1.6
+    assert printers.solid_lines(0.5, 0.4) == 0.8      # at least two lines
+    assert printers.solid_lines(1.5, 0.6) == 1.8
+    assert printers.lines(1.2, 0.4) == pytest.approx(3)
+
+
+def test_grams_from_volume():
+    assert printers.grams(10_000, "PLA") == pytest.approx(12.4)
+    assert printers.grams(10_000, "ABS") < printers.grams(10_000, "PETG")
+
+
+def test_part_too_big_for_the_printer():
+    p = box_with_lid(width=200.0, depth=120.0)
+    issues = validation.check(p, printer=MINI)
+    big = [i for i in issues if "doesn't fit" in i.message]
+    assert len(big) == 2 and all(i.level == validation.WARNING for i in big), messages(issues)
+    assert "Prusa MINI+" in big[0].message
+    assert not [i for i in validation.check(p) if "doesn't fit" in i.message]
+
+
+def test_huge_box_warning_uses_the_printer():
+    p = Project(width=320.0, depth=100.0, height=40.0)
+    assert any("larger than most printers" in i.message for i in validation.check(p))
+    xl = printers.PRINTERS["prusa-xl"]
+    issues = validation.check(p, printer=xl)
+    assert not any("printers" in i.message or "doesn't fit" in i.message for i in issues)
+
+
+def test_box_and_lid_one_after_the_other():
+    p = box_with_lid(width=170.0, depth=100.0)
+    issues = validation.check(p, printer=MINI)
+    together = [i for i in issues if "at the same time" in i.message]
+    assert together and together[0].level == validation.INFO
+    assert not any("doesn't fit" in i.message for i in issues)
+    p.width = 80.0
+    assert not any("at the same time" in i.message for i in validation.check(p, printer=MINI))
+
+
+def test_walls_in_whole_lines_with_a_fix():
+    p = box_with_lid(wall=1.8)
+    issue = next(i for i in validation.check(p, printer=MINI) if "lines" in i.message)
+    assert issue.level == validation.INFO and "4.5 lines" in issue.message
+    assert issue.fix_values == {"wall": 2.0} and issue.fix_label == "Make them 2 mm"
+    p.wall = 2.0
+    assert not any("lines" in i.message for i in validation.check(p, printer=MINI))
+    nozzle_06 = printers.Printer("printer", 220, 220, 250, 0.6)
+    issue = next(i for i in validation.check(p, printer=nozzle_06) if "lines" in i.message)
+    assert issue.fix_values == {"wall": 1.8}
+
+
+def test_dividers_too_thin_for_a_big_nozzle():
+    p = default_project(BOX)
+    p.dividers.across = 2
+    p.dividers.thickness = 1.2
+    big = printers.Printer("printer", 220, 220, 250, 0.8)
+    issue = next(i for i in validation.check(p, printer=big) if i.message.startswith("Dividers"))
+    assert issue.level == validation.WARNING and "too thin" in issue.message
+    assert issue.fix_values == {"dividers.thickness": 1.6}
+
+
+# ---- fit test print ------------------------------------------------------
+
+from manifold3d import CrossSection, Manifold  # noqa: E402
+from threedn00b.model import VENT  # noqa: E402
+
+
+def _height(m):
+    b = m.bounding_box()
+    return b[5] - b[2]
+
+
+def _assert_printable(pieces):
+    for name, m in pieces.items():
+        assert geometry.is_valid_solid(m), name
+        assert geometry.piece_count(m) == 1, name
+        assert abs(m.bounding_box()[2]) < 1e-6, name        # on the plate
+
+
+def test_fit_test_lid_and_low_openings():
+    p = box_with_lid(holes=[Hole(FRONT, 8, 0, -8)])
+    parts = geometry.build_parts(p)
+    pieces = geometry.fit_test_parts(p, parts=parts)
+    assert list(pieces) == ["box-openings", "box-top", "lid"]
+    _assert_printable(pieces)
+    assert _height(pieces["box-top"]) == pytest.approx(p.lid.lip_height + 3.0)
+    assert _height(pieces["box-openings"]) == pytest.approx(8 + 2 * 2.0)
+    # The lid keeps its edge and lip, not its middle.
+    lid = parts.printable()["lid"]
+    assert pieces["lid"].volume() < 0.6 * lid.volume()
+    assert _height(pieces["lid"]) == pytest.approx(_height(lid))
+    total = sum(m.volume() for m in pieces.values())
+    assert total < 0.5 * sum(m.volume() for m in parts.printable().values())
+
+
+def test_fit_test_pieces_close_together_are_one():
+    p = box_with_lid(holes=[Hole(FRONT, 8, 0, 8)])      # just under the lid's lip
+    pieces = geometry.fit_test_parts(p)
+    assert list(pieces) == ["box", "lid"]
+    _assert_printable(pieces)
+
+
+def test_fit_test_choices():
+    p = box_with_lid(holes=[Hole(FRONT, 8, 0, -8)])
+    assert list(geometry.fit_test_parts(p, lid=False)) == ["box-openings"]
+    assert list(geometry.fit_test_parts(p, openings=False)) == ["box-top", "lid"]
+    p.holes = [Hole(FRONT, kind=VENT, u=0, v=0)]          # vents need no test
+    assert geometry.fit_test_openings_band(p) is None
+    p.lid.enabled = False
+    assert geometry.fit_test_parts(p) == {}
+
+
+@pytest.mark.parametrize("style", ["push", "snap", "screwed", "sliding"])
+def test_fit_test_every_box_lid(style):
+    p = box_with_lid()
+    p.lid.style = style
+    pieces = geometry.fit_test_parts(p)
+    assert list(pieces) == ["box-top", "lid"]
+    _assert_printable(pieces)
+
+
+def test_fit_test_threaded_container():
+    p = default_project(CYLINDER)
+    p.lid.enabled, p.lid.style = True, "threaded"
+    pieces = geometry.fit_test_parts(p)
+    _assert_printable(pieces)
+    assert _height(pieces["box-top"]) < 15
+
+
+def test_fit_test_with_screw_posts_keeps_them_on_an_open_floor():
+    p = templates.from_template("pi")
+    parts = geometry.build_parts(p)
+    pieces = geometry.fit_test_parts(p, lid=False, parts=parts)
+    assert list(pieces) == ["box-openings"]
+    piece = pieces["box-openings"]
+    _assert_printable(pieces)
+    floor = piece.slice(p.bottom / 2)
+    whole_floor = parts.body.slice(p.bottom / 2)
+    assert floor.area() < 0.6 * whole_floor.area()
+    assert len(floor.decompose()) == 1
+    # Every post still stands where it was, with floor under it.
+    from threedn00b import mounts
+    dx, dy = _shift(parts.body, piece)
+    posts = piece.slice(p.bottom + 1.0)
+    for m in p.mounts:
+        screw = mounts.SCREWS[m.screw]
+        middle = (screw.pilot + screw.post) / 4        # between the pilot hole and the outside
+        for x, y in mounts.post_positions(m):
+            spot = CrossSection.circle(0.3).translate([x + dx + middle, y + dy])
+            full = spot.area()
+            assert (posts ^ spot).area() > 0.99 * full and (floor ^ spot).area() > 0.99 * full
+
+
+def _shift(body, piece):
+    """How far a piece was moved sideways to centre it on the plate (compared to the body)."""
+    b, q = body.bounding_box(), piece.bounding_box()
+    return (q[0] + q[3]) / 2 - (b[0] + b[3]) / 2, (q[1] + q[4]) / 2 - (b[1] + b[4]) / 2
+
+
+def test_screw_columns_are_joined_to_the_walls():
+    p = box_with_lid()
+    p.lid.style = "screwed"
+    body = geometry.build_parts(p).body
+    top = body ^ Manifold.cube([200, 200, 10]).translate([-100, -100, p.outer_height - 10])
+    assert geometry.piece_count(top) == 1
+
+
+@pytest.mark.parametrize("fmt", ["stl", "3mf"])
+def test_export_fit_test(tmp_path, fmt):
+    p = box_with_lid(name="Test box", holes=[Hole(FRONT, 8, 0, -8)])
+    files = project_io.export_fit_test(p, tmp_path, fmt)
+    if fmt == "3mf":
+        assert [f.name for f in files] == ["test-box-fit-test.3mf"]
+        assert [q["name"] for q in project_io.read_3mf(files[0])] == [
+            "Test box fit test box-openings", "Test box fit test box-top", "Test box fit test lid"]
+    else:
+        assert [f.name for f in files] == ["test-box-fit-test-box-openings.stl",
+                                           "test-box-fit-test-box-top.stl",
+                                           "test-box-fit-test-lid.stl"]
+        assert all(len(project_io.read_stl(f)) > 0 for f in files)

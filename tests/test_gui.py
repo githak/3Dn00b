@@ -21,7 +21,9 @@ def window(tmp_path, monkeypatch):
     if QApplication.instance() is None:
         prepare_opengl()
     app = QApplication.instance() or QApplication([])
-    from threedn00b.gui.main_window import MainWindow
+    from PySide6.QtCore import QSettings
+    from threedn00b.gui.main_window import APP_NAME, MainWindow
+    QSettings(APP_NAME, APP_NAME).clear()     # Qt keeps the settings file of the first test
     w = MainWindow()
     w.show()
     app.processEvents()
@@ -741,3 +743,86 @@ def test_see_through_view(window):
     assert (c.red(), c.green(), c.blue()) != BACKGROUND
     window.show_lid_action.trigger()                           # Lid (Ctrl+L) hides the lid
     assert "lid" not in viewer._solids
+
+
+def choose(combo, data):
+    combo.setCurrentIndex(combo.findData(data))
+    combo.activated.emit(combo.currentIndex())
+
+
+def test_printer_card_checks_and_remembers(window):
+    from threedn00b.gui.main_window import MainWindow, release_window
+    assert window.printer() is None
+    assert not window.bed_row.isVisibleTo(window)
+    window.tabs.setCurrentIndex(4)
+    choose(window.printer_combo, "prusa-mini")
+    assert window.printer().name == "Prusa MINI+" and window.printer().width == 180
+    window.width_spin.setValue(200)
+    window.rebuild()
+    assert any("doesn't fit" in i.message for i in window.issues)
+    choose(window.printer_combo, "custom")
+    assert window.bed_row.isVisibleTo(window)
+    window.bed_w.setValue(300)
+    assert window.printer().width == 300
+    assert not any("doesn't fit" in i.message for i in window.issues)
+    choose(window.nozzle_combo, 0.6)
+    choose(window.material_combo, "PETG")
+    window.price_spin.setValue(300)
+    # The choice is kept for the next time 3Dn00b starts.
+    again = MainWindow()
+    try:
+        p = again.printer()
+        assert (p.width, p.nozzle) == (300, 0.6)
+        assert again.material_combo.currentData() == "PETG"
+        assert again.price_spin.value() == 300
+    finally:
+        release_window(again)
+
+
+def test_plastic_estimate_and_wall_fix(window):
+    window.lid_check.setChecked(True)
+    window.rebuild()
+    text = window.parts_summary.text()
+    assert "g of PLA (" in text and "Cost" in text      # box + lid, and a price
+    window.price_spin.setValue(0)
+    assert "Cost" not in window.parts_summary.text()
+    window.wall_spin.setValue(1.8)
+    choose(window.printer_combo, "prusa-mk4")
+    window.tabs.setCurrentIndex(4)
+    row = next(i for i, issue in enumerate(window.issues) if issue.fix_values)
+    offset = 0 if any(i.level != "info" for i in window.issues) else 1
+    window.issue_list.setCurrentRow(row + offset)
+    assert window.fix_button.isVisibleTo(window)
+    assert window.fix_button.text() == "Make them 2 mm"
+    window.fix_button.click()
+    assert window.project.wall == 2.0
+    window.undo_stack.undo()
+    assert window.project.wall == 1.8
+
+
+def test_fit_test_card(window, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog, QMessageBox
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: str(tmp_path)))
+    shown = []
+    monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda *a, **k: shown.append(a[2])))
+    window.tabs.setCurrentIndex(4)
+    assert not window.fit_button.isEnabled()
+    assert "Nothing to test yet" in window.fit_summary.text()
+    assert window.fit_lid_check.isHidden() and window.fit_openings_check.isHidden()
+    window.lid_check.setChecked(True)
+    window.rebuild()
+    assert window.fit_button.isEnabled() and not window.fit_lid_check.isHidden()
+    assert "instead of" in window.fit_summary.text()
+    assert window.fit_test_choice() == (True, False)
+    window.fit_lid_check.setChecked(False)
+    assert not window.fit_button.isEnabled()
+    window.fit_lid_check.setChecked(True)
+    window.fit_button.click()
+    assert (tmp_path / "my-box-fit-test-box-top.stl").exists()
+    assert (tmp_path / "my-box-fit-test-lid.stl").exists()
+    assert "Print these first" in shown[-1]
+    window.add_mount("rpi-ab")
+    window.rebuild()
+    assert window.fit_openings_check.text().startswith("Screw posts")
+    window.format_combo.setCurrentIndex(window.format_combo.findData("3mf"))
+    assert window.fit_button.text() == "Export fit test (3MF)…"
