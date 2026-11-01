@@ -173,13 +173,31 @@ TAB_WIDTH, TAB_REACH = 20.0, 5.0            # lid tab: width, how far it sticks 
 NOTCH_WIDTH, NOTCH_DEPTH = 16.0, 3.0        # finger notch in the top of the front wall
 
 PUSH_ON, SNAP, SLIDING, SCREWED, THREADED = "push", "snap", "sliding", "screwed", "threaded"
+MAGNETS = "magnets"
 LID_STYLE_LABELS = {
     PUSH_ON: "Push-on (friction fit)",
     SNAP: "Snap-on (clicks into place)",
     SLIDING: "Sliding (boxes only)",
     SCREWED: "Screwed down",
+    MAGNETS: "Held by magnets",
     THREADED: "Threaded (round containers only)",
 }
+
+
+@dataclass(frozen=True)
+class Magnet:
+    diameter: float
+    thickness: float
+
+
+# Round neodymium magnets in their common sizes: diameter x thickness.
+MAGNET_SIZES = {"5x2": Magnet(5.0, 2.0), "6x2": Magnet(6.0, 2.0), "6x3": Magnet(6.0, 3.0),
+                "8x2": Magnet(8.0, 2.0), "8x3": Magnet(8.0, 3.0), "10x2": Magnet(10.0, 2.0),
+                "10x3": Magnet(10.0, 3.0), "12x3": Magnet(12.0, 3.0)}
+MAGNET_ROOM = 0.3     # a pocket is this much wider than its magnet (printed holes come out smaller)
+MAGNET_GLUE = 0.2     # and this much deeper, for a drop of glue
+MAGNET_WALL = 1.2     # plastic around a pocket in a corner column
+MAGNET_SKIN = 0.8     # plastic left over a pocket in the lid
 THREAD_PITCH = 4.0     # mm the threaded lid moves per turn
 THREAD_DEPTH = 1.2     # how far the thread stands out; with this pitch the flanks stay under 45°
 THREAD_TURNS = 2.25    # length of the thread on the neck, in turns
@@ -203,6 +221,7 @@ class Lid:
     opening_side: str = FRONT      # where the tab and notch are: FRONT, BACK, LEFT or RIGHT
     slide_from: str = FRONT        # sliding lids: the side the lid slides in from
     inserts: bool = False          # screwed lids: heat-set inserts in the corner columns
+    magnet: str = "6x3"            # lids held by magnets: key of MAGNET_SIZES
 
     @property
     def gap(self) -> float:
@@ -507,12 +526,17 @@ def has_lip(project: Project) -> bool:
     return project.lid.enabled and project.lid.style in (PUSH_ON, SNAP)
 
 
+def has_easy_opening(project: Project) -> bool:
+    """Lids that can have a tab and a finger notch: those that sit on the walls and lift off."""
+    return has_lip(project) or has_magnet_lid(project)
+
+
 def has_lid_tab(project: Project) -> bool:
-    return has_lip(project) and project.lid.opening in ("tab", "both")
+    return has_easy_opening(project) and project.lid.opening in ("tab", "both")
 
 
 def has_finger_notch(project: Project) -> bool:
-    return has_lip(project) and project.lid.opening in ("notch", "both")
+    return has_easy_opening(project) and project.lid.opening in ("notch", "both")
 
 
 # The sides a lid can slide in from, or where its tab and notch can be. The angle
@@ -624,17 +648,40 @@ def has_screw_lid(project: Project) -> bool:
     return project.lid.enabled and project.lid.style == SCREWED
 
 
+def has_magnet_lid(project: Project) -> bool:
+    return project.lid.enabled and project.lid.style == MAGNETS
+
+
+def has_corner_columns(project: Project) -> bool:
+    """Screwed-down lids and lids held by magnets need a column in each corner."""
+    return has_screw_lid(project) or has_magnet_lid(project)
+
+
+def magnet_pocket(project: Project) -> tuple[float, float]:
+    """(Diameter, depth) of the pockets the lid's magnets go in."""
+    m = MAGNET_SIZES[project.lid.magnet]
+    return m.diameter + MAGNET_ROOM, m.thickness + MAGNET_GLUE
+
+
+def magnet_lid_thickness(project: Project) -> float:
+    """The thinnest lid that holds its magnets with plastic over them."""
+    return magnet_pocket(project)[1] + MAGNET_SKIN
+
+
 def lid_column_radius(project: Project) -> float:
+    if has_magnet_lid(project):
+        return magnet_pocket(project)[0] / 2 + MAGNET_WALL
     return post_diameter(project.lid.screw, project.lid.inserts) / 2
 
 
-def lid_screw_positions(project: Project) -> list[tuple[float, float]]:
-    """Where the screws of a screwed-down lid go: one column in each corner.
+def lid_column_positions(project: Project) -> list[tuple[float, float]]:
+    """Where the columns of a screwed-down lid, or of a lid held by magnets, go: one in
+    each corner.
 
     Each column touches both walls of its corner (or, with rounded corners,
     the curve), so it fuses with the walls.
     """
-    if not has_screw_lid(project):
+    if not has_corner_columns(project):
         return []
     r = lid_column_radius(project)
     if project.shape == CYLINDER:
@@ -658,10 +705,10 @@ def lid_pilot_depth(project: Project) -> float:
 def wall_corner_zone(project: Project, surface: str) -> float:
     """Distance from the end of a wall's inside face where holes can't go.
 
-    That's the rounded corner, or the lid's screw column if it is bigger.
+    That's the rounded corner, or the lid's corner column if it is bigger.
     """
     zone = project.inner_corner_radius
-    positions = lid_screw_positions(project)
+    positions = lid_column_positions(project)
     if positions and project.shape != CYLINDER:
         r = lid_column_radius(project)
         if surface in (FRONT, BACK):

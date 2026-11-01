@@ -11,18 +11,19 @@ from pathlib import Path
 import numpy as np
 
 from . import geometry, mounts
-from .model import (HOLE_KIND_LABELS, INSIDE_CORNER_LABELS, LID_STYLE_LABELS, OPENING_LABELS,
+from .model import (HOLE_KIND_LABELS, INSIDE_CORNER_LABELS, LID_STYLE_LABELS, MAGNET_SIZES, OPENING_LABELS,
                     LABEL_STYLE_LABELS, SCREWS, SHAPES, SIDE_LABELS, SURFACE_LABELS,
                     Dividers, Fixing, Hole, Label, Lid, Mount, Project, fix_notches)
 
 FORMAT_NAME = "3dn00b-project"
-FORMAT_VERSION = 17  # 2: rectangular holes; 3: air vents; 4: dividers; 5: screw posts;
+FORMAT_VERSION = 18  # 2: rectangular holes; 3: air vents; 4: dividers; 5: screw posts;
                      # 6: screwed-down lids; 7: snap-on and sliding lids; 8: threaded lids;
                      # 9: custom boards with 1 or 2 holes; 10: rounded/angled inside corners;
                      # 11: rounded hole corners and strengthened hole edges;
                      # 12: compartments of different sizes; 13: easy-opening lid tab and notch;
                      # 14: lid sides; 15: text labels; 16: text cut through;
-                     # 17: cable notches, screw tabs, keyholes, heat-set inserts
+                     # 17: cable notches, screw tabs, keyholes, heat-set inserts;
+                     # 18: lids held by magnets
 PROJECT_SUFFIX = ".3dn00b"
 
 
@@ -59,6 +60,7 @@ def from_dict(data: dict) -> Project:
             or any(m.board not in mounts.BOARDS or m.screw not in mounts.SCREWS
                    or m.rotation not in mounts.ROTATIONS for m in mount_list)
             or lid.style not in LID_STYLE_LABELS or lid.screw not in SCREWS
+            or lid.magnet not in MAGNET_SIZES
             or lid.opening not in OPENING_LABELS
             or lid.opening_side not in SIDE_LABELS or lid.slide_from not in SIDE_LABELS
             or project.inside_corners not in INSIDE_CORNER_LABELS

@@ -13,9 +13,9 @@ from dataclasses import dataclass
 from typing import Callable
 
 from . import mounts
-from .model import (BACK, BOTTOM, BOX, CYLINDER, FRONT, INSIDE, LEFT, LID, RECT, RIGHT,
+from .model import (BACK, BOTTOM, BOX, CYLINDER, FRONT, INSIDE, LEFT, LID, MAGNETS, RECT, RIGHT,
                     SCREWED, SLIDING, SNAP, THREADED, VENT, Dividers, Hole, Mount, Project,
-                    clamp_hole, default_project)
+                    clamp_hole, default_project, magnet_lid_thickness)
 
 
 @dataclass(frozen=True)
@@ -367,6 +367,15 @@ def storage_box() -> Project:
     return p
 
 
+def magnet_box() -> Project:
+    # A flat lid that closes with a click: a 6 x 3 mm magnet in each corner of the box and
+    # of the lid, and a finger notch to lift it off.
+    p = _box("Box with magnetic lid", 90.0, 60.0, 40.0, corner=4.0)
+    p.lid.style, p.lid.magnet, p.lid.opening = MAGNETS, "6x3", "notch"
+    p.lid.thickness = round(magnet_lid_thickness(p), 2)
+    return p
+
+
 def screw_sorter() -> Project:
     p = _box("Screw sorter", 140.0, 80.0, 25.0, corner=4.0)
     p.lid.style = SNAP
@@ -607,6 +616,10 @@ TEMPLATES = {
                            "back), with holes for wires at both ends.", breadboard_box),
     "storage": Template("Storage box with lid",
                         "A plain box with a push-on lid that's easy to open.", storage_box),
+    "magnet-box": Template("Box with magnetic lid",
+                           "A flat lid held by eight 6 × 3 mm round magnets (four in the box, "
+                           "four in the lid) that closes with a click, and a finger notch to "
+                           "lift it.", magnet_box),
     "tray": Template("Shallow tray with compartments",
                      "Six equal compartments, no lid.", lambda: default_project("tray")),
     "sorter": Template("Screw sorter with snap-on lid",
@@ -655,7 +668,7 @@ GROUPS = (
     ("Cases for boards", ("pi", "pi-gpio", "pi5-fan", "pi5-hat", "pi-3a", "pi-zero",
                           "pi-zero-stack", "pico", "arduino", "mega", "nano", "esp32-s3", "esp32", "orange-pi-zero3",
                           "breadboard", "project-box")),
-    ("Storage", ("storage", "tray", "sorter", "parts", "craft", "batteries", "pills", "cards",
+    ("Storage", ("storage", "magnet-box", "tray", "sorter", "parts", "craft", "batteries", "pills", "cards",
                  "dice", "picks", "tin", "money")),
     ("Around the house", ("desk", "remotes", "charging", "tea", "plant-pot", "pencil-cup",
                           "toothbrush", "soap", "keys", "jar", "pencil-box")),

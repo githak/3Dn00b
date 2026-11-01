@@ -13,13 +13,13 @@ import numpy as np
 from manifold3d import CrossSection, Error, JoinType, Manifold, OpType
 
 from .model import (CUT_THROUGH, INSERTS, RAISED, TAB_REACH, TAB_WIDTH, ANGLED, BACK, BOTTOM, BOX, CAP_TOP_GAP, CYLINDER, FRAME_RIM, FRONT, LEFT,
-                    LID, NOTCH, RECT, RIGHT, ROUND, SCREWED, SCREWS, SIDE, SLIDING, WALL_SURFACES, SNAP_BUMP, SNAP_RIDGE, THREADED, THREAD_DEPTH,
+                    LID, MAGNETS, NOTCH, RECT, RIGHT, ROUND, SCREWED, SCREWS, SIDE, SLIDING, WALL_SURFACES, SNAP_BUMP, SNAP_RIDGE, THREADED, THREAD_DEPTH,
                     THREAD_PITCH, VENT, Hole, Project, corner_rounding, divider_fillet,
                     divider_positions, divider_top, floor_inset, frame_thickness,
-                    has_dividers, has_finger_notch, has_frame, has_lid_tab, has_lip, has_screw_lid, has_sliding_lid,
-                    has_snap_lid, has_threaded_lid, inside_fillet, lid_ceiling, lid_pilot_depth,
+                    has_dividers, has_finger_notch, has_frame, has_lid_tab, has_lip, has_magnet_lid, has_screw_lid, has_sliding_lid,
+                    has_snap_lid, has_threaded_lid, inside_fillet, lid_ceiling, lid_pilot_depth, magnet_pocket,
                     notch_size, SIDE_ANGLES, side_span,
-                    lid_column_radius, lid_screw_positions, lid_top_z, lip_outer_offset, lip_wall, notch_v,
+                    lid_column_radius, lid_column_positions, lid_top_z, lip_outer_offset, lip_wall, notch_v,
                     slide_engage,
                     slide_groove, surface_frame, thread_sizes, vent_openings,
                     keyhole_openings, tab_positions, tab_sizes)
@@ -379,16 +379,30 @@ def _opening_outline(hole: Hole) -> CrossSection | None:
     return core.offset(r, JoinType.Round, circular_segments=_circle_segments(r, 0.4, 8, 64))
 
 
+def _magnet_pockets(project: Project, z: float, upward: bool) -> Manifold:
+    """The magnet pockets at every corner column, opening at height z: downwards into
+    the columns' tops (upward=False), or upwards into the underside of the lid."""
+    d, depth = magnet_pocket(project)
+    r = d / 2
+    seg = _circle_segments(r, 0.3, 24, 96)
+    z0 = z - 0.5 if upward else z - depth
+    pockets = [Manifold.cylinder(depth + 0.5, r, -1.0, seg).translate([x, y, z0])
+               for x, y in lid_column_positions(project)]
+    return Manifold.batch_boolean(pockets, OpType.Add)
+
+
 def build_lid_columns(project: Project) -> Manifold | None:
-    """Corner columns for a screwed-down lid, with a pilot hole from the top."""
-    positions = lid_screw_positions(project)
+    """Corner columns for a screwed-down lid, with a pilot hole from the top, or for a
+    lid held by magnets, with a pocket in the top for a magnet."""
+    positions = lid_column_positions(project)
     if not positions:
         return None
+    magnets = has_magnet_lid(project)
     screw = SCREWS[project.lid.screw]
     r, pilot = lid_column_radius(project), screw.pilot / 2
     h, z0 = project.outer_height, project.bottom - 0.01
     depth = lid_pilot_depth(project)
-    insert = INSERTS.get(project.lid.screw) if project.lid.inserts else None
+    insert = INSERTS.get(project.lid.screw) if project.lid.inserts and not magnets else None
     columns = []
     for x, y in positions:
         # The column, filled out towards the corner so it is joined to the walls along
@@ -402,6 +416,9 @@ def build_lid_columns(project: Project) -> Manifold | None:
                 [-reach if x < 0 else 0.0, -reach if y < 0 else 0.0])
         section = (CrossSection.circle(r, _circle_segments(r, 0.5, 24, 96)) + fill).translate([x, y])
         column = Manifold.extrude(section, h - z0).translate([0.0, 0.0, z0])
+        if magnets:
+            columns.append(column)
+            continue
         hole = Manifold.cylinder(depth + 1.0, pilot, -1.0, _circle_segments(pilot, 0.4, 16, 48)) \
             .translate([0.0, 0.0, h - depth])
         if insert is not None:
@@ -409,8 +426,11 @@ def build_lid_columns(project: Project) -> Manifold | None:
             hole = hole + Manifold.cylinder(deep + 1.0, ir, -1.0, _circle_segments(ir, 0.4, 16, 64)) \
                 .translate([0.0, 0.0, h - deep])
         columns.append(column - hole.translate([x, y, 0.0]))
+    joined = Manifold.batch_boolean(columns, OpType.Add)
+    if magnets:
+        joined = joined - _magnet_pockets(project, h, upward=False)
     # Clip to the outside of the box so nothing pokes out through the walls.
-    return Manifold.batch_boolean(columns, OpType.Add) ^ _prism(footprint(project), h, 0.0)
+    return joined ^ _prism(footprint(project), h, 0.0)
 
 
 def _snap_selector(project: Project, z0: float, z1: float, extra: float) -> Manifold:
@@ -550,9 +570,11 @@ def build_lid(project: Project) -> Manifold | None:
     if has_screw_lid(project):
         d = SCREWS[lid_opts.screw].clearance
         holes = [Manifold.cylinder(lid_opts.thickness + 2.0, d / 2, -1.0, _circle_segments(d / 2, 0.4, 16, 48))
-                 .translate([x, y, h - 1.0]) for x, y in lid_screw_positions(project)]
+                 .translate([x, y, h - 1.0]) for x, y in lid_column_positions(project)]
         lid = lid - Manifold.batch_boolean(holes, OpType.Add)
         return _cut_lid_holes(project, lid)
+    if has_magnet_lid(project):
+        return _cut_lid_holes(project, lid - _magnet_pockets(project, h, upward=True))
     lip_out_inset = project.wall + lip_outer_offset(project)
     # The lip reaches 0.01 mm into the plate so the union is a single solid.
     lip_outer = _prism(footprint(project, lip_out_inset), lid_opts.lip_height + 0.01,
@@ -818,6 +840,8 @@ def fit_test_lid_band(project: Project) -> tuple[float, float] | None:
         z0 = slide_groove(project)[0] - FIT_MARGIN - 1.0
     elif has_screw_lid(project):
         z0 = h - max(lid_pilot_depth(project), 3.0) - FIT_MARGIN
+    elif has_magnet_lid(project):
+        z0 = h - max(magnet_pocket(project)[1], 3.0) - FIT_MARGIN
     else:
         z0 = h - lid.lip_height - FIT_MARGIN - 1.0
     return max(0.0, z0), h
@@ -886,8 +910,8 @@ def _floor_middle(project: Project) -> Manifold:
             keep += _bar_to_wall(project, x, y, 2.0)
         for shape in mounts.guide_shapes(m):
             keep.append(CrossSection([shape]).offset(2.0, JoinType.Miter))
-    for x, y in lid_screw_positions(project):
-        r = SCREWS[project.lid.screw].post / 2 + 1.0
+    for x, y in lid_column_positions(project):
+        r = lid_column_radius(project) + 1.0
         keep.append(CrossSection.circle(r, _circle_segments(r, 0.5, 16, 64)).translate([x, y]))
     dividers = _divider_outline(project, 2.0)
     if dividers is not None:
@@ -923,11 +947,12 @@ def _lid_ring(project: Project, lid: Manifold) -> Manifold:
     if style == THREADED:
         r = thread_sizes(project).root - FIT_RIM
         middle = CrossSection.circle(r, _circle_segments(r)) if r > FIT_RIM else None
-    elif style == SCREWED:
+    elif style in (SCREWED, MAGNETS):
         middle = footprint(project, wall + FIT_RIM)
         if middle is not None:
-            d = SCREWS[project.lid.screw].clearance / 2 + FIT_RIM
-            for x, y in lid_screw_positions(project):
+            d = (magnet_pocket(project)[0] if style == MAGNETS
+                 else SCREWS[project.lid.screw].clearance) / 2 + FIT_RIM
+            for x, y in lid_column_positions(project):
                 middle = middle - CrossSection.circle(d, _circle_segments(d, 0.5, 16, 64)).translate([x, y])
     elif style == SLIDING:
         middle = footprint(project, wall + slide_engage(project) + FIT_RIM)

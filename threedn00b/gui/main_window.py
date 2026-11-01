@@ -27,7 +27,8 @@ from ..model import (ALONG_U, ALONG_V, BOTTOM, BOX, CYLINDER, FIT_LABELS, FIT_PR
                      FRONT, HOLE_DIAMETER_RANGE, HOLE_KIND_LABELS, INSIDE, LID, MIN_EDGE,
                      OUTSIDE, RECT, ROUND, SIDE, SIZE_RANGE, SURFACE_LABELS, VENT,
                      DIVIDER_RANGE, INSIDE_CORNER_LABELS, OPENING_LABELS, SIDE_LABELS, LID_STYLE_LABELS, SHARP, MAX_COMPARTMENTS, PUSH_ON, SCREWED, SCREWS, SLIDING,
-                     SNAP, THREADED, TRAY_TEMPLATE, WALL_RANGE, Hole, Project,
+                     SNAP, THREADED, TRAY_TEMPLATE, WALL_RANGE, Hole, Project, MAGNETS, MAGNET_SIZES,
+                     magnet_lid_thickness,
                      clamp_hole, compartment_depths, compartment_widths, default_project,
                      has_set_sizes, hole_limits, resized_sizes,
                      CUT_THROUGH, ENGRAVED, LABEL_DEPTH_RANGE, LABEL_SIZE_RANGE, RAISED, Label,
@@ -85,6 +86,9 @@ LID_STYLE_HINTS = {
              "choose. Only for boxes.",
     SCREWED: "A flat lid held by a screw in each corner. The box gets a column in each corner "
              "for the screws to bite into.",
+    MAGNETS: "A flat lid held by small round magnets: one in each corner of the box, in a "
+             "column, and one in each corner of the lid. It closes with a click and lifts off "
+             "easily.",
     THREADED: "A screw-on lid, like a jar. The top of the container becomes a narrower neck "
               "with a thread. Only for round containers.",
 }
@@ -1090,7 +1094,7 @@ class MainWindow(QMainWindow):
             self.lid_style.addItem(text, key)
         self.lid_style.activated.connect(
             lambda _: self.edit("Change lid type",
-                                lambda p: setattr(p.lid, "style", self.lid_style.currentData())))
+                                lambda p: _set_lid(p, "style", self.lid_style.currentData())))
         form.addRow("Type", self.lid_style)
         self.lid_style_hint = hint("")
         form.addRow(self.lid_style_hint)
@@ -1108,6 +1112,15 @@ class MainWindow(QMainWindow):
         self.lid_inserts.toggled.connect(
             lambda on: self.edit("Heat-set inserts", lambda p: setattr(p.lid, "inserts", on)))
         form.addRow("", self.lid_inserts)
+        self.lid_magnet = QComboBox()
+        for key, magnet in MAGNET_SIZES.items():
+            self.lid_magnet.addItem(f"{magnet.diameter:g} × {magnet.thickness:g} mm", key)
+        self.lid_magnet.setToolTip("Round neodymium magnets: diameter × thickness. Bigger "
+                                   "magnets hold more firmly but need bigger corner columns.")
+        self.lid_magnet.activated.connect(
+            lambda _: self.edit("Change magnets",
+                                lambda p: _set_lid(p, "magnet", self.lid_magnet.currentData())))
+        form.addRow("Magnets", self.lid_magnet)
         self.fit_combo = QComboBox()
         for key in ("tight", "normal", "loose", "custom"):
             gap = f" ({FIT_PRESETS[key]:.2f} mm gap)" if key in FIT_PRESETS else ""
@@ -1526,15 +1539,17 @@ class MainWindow(QMainWindow):
         self.lid_form.setRowVisible(self.lid_screw, style == SCREWED)
         set_quietly(self.lid_inserts, p.lid.inserts)
         self.lid_form.setRowVisible(self.lid_inserts, style == SCREWED)
-        self.lid_form.setRowVisible(self.fit_combo, style != SCREWED)
-        self.lid_form.setRowVisible(self.gap_spin, style != SCREWED)
+        set_quietly(self.lid_magnet, p.lid.magnet)
+        self.lid_form.setRowVisible(self.lid_magnet, style == MAGNETS)
+        self.lid_form.setRowVisible(self.fit_combo, style not in (SCREWED, MAGNETS))
+        self.lid_form.setRowVisible(self.gap_spin, style not in (SCREWED, MAGNETS))
         self.gap_spin.setToolTip("Extra room between the threads" if style == THREADED else
                                  "Space between the lid and the walls, on each side")
         self.lid_form.setRowVisible(self.lip_height, style in (PUSH_ON, SNAP))
-        self.lid_form.setRowVisible(self.lid_opening, style in (PUSH_ON, SNAP))
+        self.lid_form.setRowVisible(self.lid_opening, style in (PUSH_ON, SNAP, MAGNETS))
         set_quietly(self.lid_opening, p.lid.opening)
         self.lid_form.setRowVisible(self.opening_side,
-                                    style in (PUSH_ON, SNAP) and p.lid.opening != "none")
+                                    style in (PUSH_ON, SNAP, MAGNETS) and p.lid.opening != "none")
         set_quietly(self.opening_side, p.lid.opening_side)
         self.lid_form.setRowVisible(self.slide_from, style == SLIDING)
         set_quietly(self.slide_from, p.lid.slide_from)
@@ -1549,6 +1564,10 @@ class MainWindow(QMainWindow):
             SLIDING: fit_tip + f"\n\nThe lid is printed flat. Slide it in from the {side}.",
             SCREWED: "Screws cut their own thread into the plastic. Tighten them gently, just "
                      "until the lid is snug." + upside_down,
+            MAGNETS: "Glue the magnets into their pockets with a drop of superglue. Put the "
+                     "box's magnets in first, all the same way up; then stick a magnet onto each "
+                     "one and mark its top, and glue it into the lid with the mark facing down "
+                     "into the pocket, so every pair pulls together." + upside_down,
             THREADED: fit_tip + " Screw it on clockwise; the thread rises 4 mm per turn."
                       + upside_down,
         }[style])
@@ -3017,6 +3036,13 @@ class MyTemplatesDialog(QDialog):
         except OSError as exc:
             QMessageBox.warning(self, APP_NAME, f"Couldn't remove it:\n{exc}")
         self.refresh()
+
+
+def _set_lid(p, attr: str, value) -> None:
+    """Change a lid setting; a lid held by magnets is made thick enough to cover them."""
+    setattr(p.lid, attr, value)
+    if p.lid.style == MAGNETS:
+        p.lid.thickness = max(p.lid.thickness, round(magnet_lid_thickness(p), 2))
 
 
 def _set_position(hole: Hole, pos) -> None:

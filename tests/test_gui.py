@@ -467,6 +467,26 @@ def test_lid_type_controls(window):
     assert window.project.lid.style == "push"
 
 
+def test_magnet_lid_controls(window):
+    window.lid_check.setChecked(True)
+    form = window.lid_form
+    window.lid_thickness.setValue(2.0)
+    window.lid_style.setCurrentIndex(window.lid_style.findData("magnets"))
+    window.lid_style.activated.emit(window.lid_style.currentIndex())
+    lid = window.project.lid
+    assert lid.style == "magnets" and lid.thickness == 4.0          # thick enough for 6 x 3
+    assert form.isRowVisible(window.lid_magnet) and not form.isRowVisible(window.fit_combo)
+    assert form.isRowVisible(window.lid_opening) and not form.isRowVisible(window.lid_screw)
+    window.lid_magnet.setCurrentIndex(window.lid_magnet.findData("6x2"))
+    window.lid_magnet.activated.emit(window.lid_magnet.currentIndex())
+    assert window.project.lid.magnet == "6x2" and window.project.lid.thickness == 4.0
+    assert not validation_errors(window)
+    assert "superglue" in window.lid_tip.text()
+    window.undo_stack.undo()
+    window.undo_stack.undo()
+    assert window.project.lid.style == "push" and window.project.lid.thickness == 2.0
+
+
 def test_snap_and_sliding_lid_controls(window):
     window.lid_check.setChecked(True)
     form = window.lid_form
