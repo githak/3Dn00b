@@ -3,7 +3,8 @@ name: debian-package
 # Builds the .deb, installs it on clean Debian and Ubuntu systems, and runs the
 # app's smoke test there. Pushing a tag like v0.10.0 also builds and tests the other
 # packages (the arm64 .deb, the .rpm and the AppImage) and publishes all of them as a
-# release; the tag's message goes at the top of the release notes. Running the
+# release; the tag's message goes at the top of the release notes. A release made by
+# hand on GitHub (with a new v... tag) gets the files added to it instead. Running the
 # workflow by hand builds and tests every package without publishing.
 on:
   push:
@@ -110,9 +111,21 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          git fetch --depth=1 origin "+refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
-          { git tag -l --format='%(contents)' "$GITHUB_REF_NAME"; echo; \
-            sed "s/{version}/${GITHUB_REF_NAME#v}/g" packaging/release-notes.md; } > notes.md
+          tag="$GITHUB_REF_NAME"
+          sed "s/{version}/${tag#v}/g" packaging/release-notes.md > table.md
           ls -l dist
-          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" \
-            --title "3Dn00b $GITHUB_REF_NAME" --notes-file notes.md
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # Made by hand on GitHub: add the files, and the table under its notes.
+            gh release upload "$tag" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+            body=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json body -q .body)
+            case "$body" in
+              *"Which file do I need"*) ;;
+              *) { printf '%s\n\n' "$body"; cat table.md; } > notes.md
+                 gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --notes-file notes.md ;;
+            esac
+          else
+            git fetch --depth=1 origin "+refs/tags/$tag:refs/tags/$tag"
+            { git tag -l --format='%(contents)' "$tag"; echo; cat table.md; } > notes.md
+            gh release create "$tag" dist/* --repo "$GITHUB_REPOSITORY" \
+              --title "3Dn00b $tag" --notes-file notes.md
+          fi
