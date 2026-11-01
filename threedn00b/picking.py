@@ -88,6 +88,14 @@ def fitting_rect(project: Project, surface: str) -> tuple[float, float] | None:
     return None
 
 
+def fitting_notch(project: Project, surface: str) -> tuple[float, float] | None:
+    """A starting size (width, depth) for a cable notch: for a cable up to 6 mm."""
+    for w, h in ((7.0, 9.0), (6.0, 8.0), (5.0, 6.5), (4.0, 5.0)):
+        if extent_limits(project, surface, w / 2, h / 2, notch=True) is not None:
+            return w, h
+    return None
+
+
 def fitting_vent(project: Project, surface: str) -> tuple[float, float] | None:
     """A friendly starting size for an air vent that fits on a surface."""
     for w, h in ((30.0, 15.0), (20.0, 10.0), (12.0, 8.0), (8.0, 6.0)):

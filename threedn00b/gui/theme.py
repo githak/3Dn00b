@@ -91,6 +91,7 @@ ICONS = {
     "vent": '<rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M8 8.5v7M12 8.5v7M16 8.5v7"/>',
     "plus": '<path d="M12 5v14M5 12h14"/>',
     "text": '<path d="M5 7V4.5h14V7"/><path d="M12 4.5v15"/><path d="M9 19.5h6"/>',
+    "notch": '<path d="M3 6h6v5.5a3 3 0 0 0 6 0V6h6v13H3z"/>',
     "ruler": '<path d="M3.5 16 16 3.5l4.5 4.5L8 20.5z"/><path d="m7.5 12 2 2M10.5 9l2 2M13.5 6l2 2"/>',
     "trash": '<path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 12.5A1.5 1.5 0 0 0 '
              '8.5 21h7a1.5 1.5 0 0 0 1.5-1.5L18 7"/><path d="M9 7V4.5A1.5 1.5 0 0 1 10.5 3h3A1.5 '

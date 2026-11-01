@@ -109,9 +109,10 @@ PAGES = (
              "in millimetres; the app shows both the outside size and the room inside.",
              0, lambda w: [w.start_card, w.size_card]),
     TourPage("Add holes, openings and vents",
-             "Round holes for cables and screws, rectangles for USB plugs and switches, and air "
-             "vents. Double-click a wall in the 3D view to put a hole right there, and drag it "
-             "to move it. Common sizes are built in.",
+             "Round holes for cables and screws, rectangles for USB plugs and switches, air "
+             "vents, and cable notches in the top of a wall so a cable can come out with the lid "
+             "on. Double-click a wall in the 3D view to put a hole right there, and drag it to "
+             "move it. Common sizes are built in.",
              1, lambda w: [w.add_holes_card, w.hole_card], _select_first_hole),
     TourPage("Screw posts for circuit boards",
              "Choose a board and all its posts appear in the right pattern, ready for the screws "

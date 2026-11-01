@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from .model import BOTTOM, BOX, LID, SIDE, Hole, Project, lid_top_z, surface_frame
+from .model import BOTTOM, BOX, LID, NOTCH, SIDE, Hole, Project, lid_top_z, surface_frame
 
 GAP = 0.6           # hole measurements float this far off the surface
 
@@ -91,12 +91,15 @@ def hole_measures(project: Project, hole: Hole, lid_offset: float = 0.0) -> list
     (for the bottom and the lid: from the left and the front)."""
     w, d, h = project.outer_width, project.outer_depth, project.outer_height
     x_axis, y_axis = np.array([1.0, 0.0, 0.0]), np.array([0.0, 1.0, 0.0])
+    notch = hole.kind == NOTCH                 # measured down from the top: its depth
     if hole.surface == SIDE:
         r = project.outer_diameter / 2 + GAP
         a = np.radians(hole.u)
         x, y = r * np.sin(a), -r * np.cos(a)
         z = h / 2 + hole.v
         tangent = np.array([np.cos(a), np.sin(a), 0.0])
+        if notch:
+            return [_measure((x, y, h - hole.height), (x, y, h), hole.height, tangent)]
         return [_measure((x, y, 0.0), (x, y, z), z, tangent)]
     if hole.surface in (BOTTOM, LID):
         z = project.bottom + GAP if hole.surface == BOTTOM else lid_top_z(project) + GAP + lid_offset
@@ -115,7 +118,11 @@ def hole_measures(project: Project, hole: Hole, lid_offset: float = 0.0) -> list
     out = []
     if hole.u + span / 2 > 0.5:
         out.append(_measure(point(-span / 2, hole.v), point(hole.u, hole.v), hole.u + span / 2, up))
-    out.append(_measure(point(hole.u, -h / 2), point(hole.u, hole.v), h / 2 + hole.v, right))
+    if notch:
+        out.append(_measure(point(hole.u, h / 2 - hole.height), point(hole.u, h / 2),
+                            hole.height, right))
+    else:
+        out.append(_measure(point(hole.u, -h / 2), point(hole.u, hole.v), h / 2 + hole.v, right))
     return out
 
 

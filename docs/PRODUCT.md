@@ -295,6 +295,28 @@ Defaults I chose myself, which are easy to change:
   CM5 IO Board is a large development board with many sockets, not a beginner's board.
   The ESP32-S3 DevKit and the Orange Pi Zero need Espressif's and Orange Pi's drawings,
   whose websites this environment can't reach yet.
+- Cable notches, fixing and heat-set inserts (0.30), the fourth group:
+  - Cable notch: a new kind of opening on a wall (its width and depth), always at the
+    top: its position is kept there after any change (and on loading), dragging only
+    slides it along the wall, and its outline is open at the top and round at the
+    bottom. A push-on or snap-on lid's lip gets the same notch (cut below the lid's
+    flat top only), so the cable fits with the lid on; with a screwed-down lid the
+    lid simply covers the notch. Sliding and screw-on lids refuse notches (they need
+    the top of the wall), and the checks warn about a notch less deep than wide (a
+    round cable would stick out) or running into the finger notch.
+  - Fix it in place: screw tabs (two flat tabs at the left and right, at least 3 mm
+    thick, 4 × the screw size wide, with the hole 6 mm out from the wall so a
+    screwdriver fits past it) and keyhole slots in the back (a hole for the screw head,
+    twice the screw size, and a slot above it, as far apart as fits or as asked; on a
+    round container within 20° of the back, measured straight across like the screws
+    in the wall). The checks say how far apart to put the screws, and warn about
+    keyholes behind a divider or in thin walls. Screws: 3, 3.5, 4 or 5 mm.
+  - Heat-set inserts: a switch per board and for screwed-down lids. Holes as the
+    insert makers recommend (M2 3.2 × 4, M2.5 3.6 × 5, M3 4.0 × 6, M4 5.6 × 8.5 mm),
+    in posts and columns made wide enough to leave 1.6 mm around the insert, with the
+    screw's own hole continuing below for its tip. None for M1 and M1.6. The checks
+    warn when posts or columns are too short, and give the screw length to use.
+  Project format 17.
 - Push-on lid that follows the box size, with fit presets.
 - Plain-language checks covering impossible sizes, thin walls, holes off the
   edge, holes behind the lid lip, overlapping or too-close holes, a lid that
@@ -316,9 +338,7 @@ Picked by the project owner, in this order (each group once the one before works
 
 1. The ESP32-S3 DevKit and Orange Pi Zero 3, checked against Espressif's and Orange
    Pi's drawings (once their websites can be reached).
-2. A cable notch in the rim; mounting options (keyhole slots, screw tabs);
-   holes for heat-set inserts.
-3. Packages for other systems (arm64 such as the Raspberry Pi, Flatpak or
+2. Packages for other systems (arm64 such as the Raspberry Pi, Flatpak or
    AppImage, Fedora).
 
 Each addition must pass the brief's test: does it make a common beginner task

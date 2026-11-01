@@ -8,7 +8,7 @@ Software for people getting into 3D printing and want to start with something ea
 sizes in millimetres, add holes and a lid, and export files your slicer can
 print. No sketches, no constraints, no feature trees.
 
-## What it can do (version 0.29)
+## What it can do (version 0.30)
 
 - **Templates** to start from, already sized to fit. Pick one under **What are you making?**
   in the Shape step, then change anything you like; Undo takes you back.
@@ -61,11 +61,21 @@ print. No sketches, no constraints, no feature trees.
   move it: it slides along its own wall, snaps to the centre lines and lines up
   with other holes, and always keeps a safe distance from the edges. Common
   sizes are built in (M3/M4 screws, cables).
+- **Cable notches**: a notch down from the top of a wall, round at the bottom, so a
+  cable can come out with the lid on. A push-on or snap-on lid gets a matching notch
+  in its lip; screwed-down lids and boxes without a lid work too. Common cable sizes
+  are built in.
+- **Fix it in place** (Shape step): **screw tabs** at the bottom to screw it down,
+  and/or **keyhole slots** in the back to hang it on two screws in a wall. Pick the
+  screw size; the keyholes go as far apart as fits, or as far apart as the screws
+  already in your wall. The checks tell you how far apart to put the screws.
 - **Screw posts for circuit boards**: pick a board (Raspberry Pi Zero / Zero 2 W,
   3 / 4 / 5, 3 A+, Pico / Pico 2, Arduino Uno R3 / R4, Mega 2560 / Giga R1, Nano,
   or your own board with 1, 2 or 4 holes) and all its posts
   appear in the right pattern. Choose the screw size (M1 to M4) and how tall the
-  posts are; the screw cuts its own thread into the post. Drag the board's green
+  posts are; the screw cuts its own thread into the post, or tick **Heat-set
+  inserts** for brass threads you melt in with a soldering iron (M2 to M4; the
+  posts get a little wider). Drag the board's green
   outline to move all its posts together, or turn it in 90° steps. The app checks
   that the board fits, doesn't touch the walls or the lid, and doesn't stick out.
   Boards can be **stacked**: one may overlap another if its posts are tall enough
@@ -81,7 +91,8 @@ print. No sketches, no constraints, no feature trees.
   container becomes a neck with a thread that prints without supports.
 - Or a **screwed-down lid**: a flat lid held by a screw in each corner (M2 to M4).
   The box gets a column in each corner for the screws to cut their own thread
-  into, and the app tells you how many screws you need and how long they can be.
+  into (or for heat-set inserts), and the app tells you how many screws you need
+  and how long they can be.
 - **Text**: names and labels on any wall, the bottom or the lid, **raised** (it
   stands out), **engraved** (cut in) or **cut through** (a hole in the shape of
   the letters, like a stencil: letters such as O and A keep their middle with thin
@@ -127,7 +138,7 @@ Download `3dn00b_<version>-1_amd64.deb` from the
 [Releases page](https://github.com/githak/3Dn00b/releases) and install it:
 
 ```bash
-sudo apt install ./3dn00b_0.29.0-1_amd64.deb
+sudo apt install ./3dn00b_0.30.0-1_amd64.deb
 ```
 
 That's all: 3Dn00b appears in your applications menu, `.3dn00b` project files open

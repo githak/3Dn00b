@@ -2322,3 +2322,202 @@ def test_board_names_say_what_they_fit():
     xs = sorted({round(x, 2) for x, _ in nano.holes})
     ys = sorted({round(y, 2) for _, y in nano.holes})
     assert xs[1] - xs[0] == pytest.approx(40.64) and ys[1] - ys[0] == pytest.approx(15.24)
+
+
+# ---- cable notches ---------------------------------------------------------
+
+from threedn00b.model import (NOTCH, fix_notches, keyhole_openings, keyhole_spacing,  # noqa: E402
+                              lid_column_radius, notch_v, post_diameter, side_frame,
+                              surface_frame, tab_sizes)
+
+
+def _cable_passes(p, parts, surface, u, z):
+    """Is there a free path for a cable straight through the wall (and the lid) here?"""
+    c, n, r, _ = side_frame(p, u) if surface == SIDE else surface_frame(p, surface)
+    point = np.array(c) + (np.array(r) * u if surface != SIDE else 0)
+    start = list(np.array([point[0], point[1], z]) + np.array(n) * 5)
+    end = list(np.array([point[0], point[1], z]) - np.array(n) * 12)
+    hits = parts.body.ray_cast(start, end)
+    if parts.lid is not None:
+        hits = hits + parts.lid.ray_cast(start, end)
+    return not hits
+
+
+@pytest.mark.parametrize("style", [None, "push", "snap", "screwed"])
+def test_cable_notch_lets_a_cable_out_with_the_lid_on(style):
+    p = default_project(BOX)
+    p.lid.enabled = style is not None
+    if style:
+        p.lid.style = style
+    p.holes = [Hole(FRONT, kind=NOTCH, width=7, height=9, u=10)]
+    fix_notches(p)
+    parts = geometry.build_parts(p)
+    assert _cable_passes(p, parts, FRONT, 10, p.outer_height - 2.0)      # through any lip too
+    assert not _cable_passes(p, parts, FRONT, 10, p.outer_height - 12.0)  # below the notch
+    assert geometry.piece_count(parts.body) == 1
+    if parts.lid is not None:
+        assert geometry.piece_count(parts.lid) == 1
+        assert geometry.overlap_volume(parts.body, parts.lid) < 0.01
+    issues = validation.check(p, parts)
+    assert not [i for i in issues if i.hole_id and i.level != "info"], messages(issues)
+
+
+def test_cable_notch_on_a_round_container():
+    p = default_project(CYLINDER)
+    p.lid.enabled = True
+    p.holes = [Hole(SIDE, kind=NOTCH, width=6, height=8, u=30)]
+    fix_notches(p)
+    parts = geometry.build_parts(p)
+    assert _cable_passes(p, parts, SIDE, 30, p.outer_height - 2.0)
+    assert not validation.has_errors(validation.check(p, parts))
+
+
+def test_cable_notch_stays_at_the_top():
+    p = box_with_lid(holes=[Hole(FRONT, kind=NOTCH, width=7, height=9)])
+    fix_notches(p)
+    assert p.holes[0].v == pytest.approx(p.outer_height / 2 - 4.5)
+    p.height = 60.0
+    data = project_io.to_dict(p)
+    assert project_io.from_dict(data).holes[0].v == pytest.approx(notch_v(p, p.holes[0]))
+    hole = p.holes[0]
+    hole.u, hole.v = 100.0, -10.0                      # dragged: it slides, but stays on top
+    u, v = clamp_hole(p, hole)
+    assert v == pytest.approx(notch_v(p, hole)) and u < p.inner_width / 2
+
+
+def test_cable_notch_checks():
+    p = box_with_lid()
+    p.lid.style = "sliding"
+    p.holes = [Hole(FRONT, kind=NOTCH, width=7, height=9)]
+    fix_notches(p)
+    assert any("sliding lid" in i.message for i in validation.check(p) if i.level == "error")
+    p.lid.style = "push"
+    p.holes[0].height = 5.0                            # shallower than wide
+    fix_notches(p)
+    assert any("less deep than it is wide" in i.message for i in validation.check(p))
+    p.holes[0].height = 9.0
+    p.lid.opening, p.lid.opening_side = "notch", FRONT
+    fix_notches(p)
+    assert any("finger notch" in i.message for i in validation.check(p))
+    p.holes[0].surface = BOTTOM
+    assert any("goes in the top of a wall" in i.message for i in validation.check(p))
+    c = default_project(CYLINDER)
+    c.lid.enabled, c.lid.style = True, "threaded"
+    c.holes = [Hole(SIDE, kind=NOTCH, width=6, height=8)]
+    fix_notches(c)
+    assert any("thread" in i.message for i in validation.check(c) if i.level == "error")
+
+
+def test_fit_test_reaches_the_cable_notch():
+    p = box_with_lid(holes=[Hole(FRONT, kind=NOTCH, width=7, height=9)])
+    fix_notches(p)
+    band = geometry.fit_test_openings_band(p)
+    assert band[1] == pytest.approx(p.outer_height)
+
+
+# ---- fixing it in place ----------------------------------------------------
+
+def test_screw_tabs():
+    p = box_with_lid()
+    plain = geometry.build_parts(p).body
+    p.fixing.tabs = True
+    body = geometry.build_parts(p).body
+    t = tab_sizes(p)
+    b = body.bounding_box()
+    assert b[0] == pytest.approx(-p.outer_width / 2 - t.reach) and b[3] == pytest.approx(
+        p.outer_width / 2 + t.reach)
+    assert geometry.is_valid_solid(body) and geometry.piece_count(body) == 1
+    assert body.volume() > plain.volume()
+    x = p.outer_width / 2 + t.hole_from_wall                 # a screw goes down through it
+    assert not body.ray_cast([x, 0.0, 10.0], [x, 0.0, -5.0])
+    assert body.ray_cast([x + t.hole, 0.0, 10.0], [x + t.hole, 0.0, -5.0])   # the tab itself
+    issues = validation.check(p)
+    assert any("screw tabs take 4 mm screws" in i.message for i in issues)
+
+
+def test_keyhole_slots():
+    p = box_with_lid()
+    p.fixing.keyholes = True
+    body = geometry.build_parts(p).body
+    holes = keyhole_openings(p)
+    assert len(holes) == 4                                  # two keyholes: hole + slot each
+    spacing = keyhole_spacing(p)
+    assert spacing > 40
+    for hole in holes[::2]:                                 # the round part
+        z = p.outer_height / 2 + hole.v
+        x = -hole.u                                          # the back wall's u runs right to left
+        assert not body.ray_cast([x, p.outer_depth / 2 + 3, z], [x, p.outer_depth / 2 - 5, z])
+        z_slot = z + hole.diameter / 2 + 3.0
+        assert not body.ray_cast([x, p.outer_depth / 2 + 3, z_slot], [x, p.outer_depth / 2 - 5, z_slot])
+    assert geometry.piece_count(body) == 1
+    issues = validation.check(p)
+    assert any(f"{spacing:.1f}".rstrip("0").rstrip(".") + " mm apart" in i.message for i in issues)
+    p.fixing.keyhole_spacing = 200.0
+    issue = next(i for i in validation.check(p) if "only has room" in i.message)
+    assert issue.fix_values == {"fixing.keyhole_spacing": round(spacing, 1)}
+
+
+def test_keyholes_on_a_round_container_stay_near_the_back():
+    p = default_project(CYLINDER)
+    p.fixing.keyholes = True
+    us = [h.u for h in keyhole_openings(p)]
+    assert all(abs(u - 180.0) <= 20.0 + 1e-6 for u in us)
+    a, b = us[0], us[2]
+    r = p.outer_diameter / 2
+    chord = 2 * r * math.sin(math.radians(abs(b - a) / 2))
+    assert chord == pytest.approx(keyhole_spacing(p))      # straight across, like the screws
+
+
+def test_too_low_for_keyholes():
+    p = Project(height=14.0)
+    p.fixing.keyholes = True
+    assert any("too low for keyhole" in i.message for i in validation.check(p))
+
+
+def test_fixing_round_trip():
+    p = box_with_lid()
+    p.fixing.tabs, p.fixing.keyholes, p.fixing.screw, p.fixing.keyhole_spacing = True, True, 5.0, 50.0
+    assert project_io.from_dict(project_io.to_dict(p)).fixing == p.fixing
+
+
+# ---- heat-set inserts --------------------------------------------------------
+
+def test_heat_set_inserts_in_posts():
+    p = templates.from_template("pi")
+    m = p.mounts[0]
+    normal = mounts.post_radius(m)
+    m.inserts = True
+    assert mounts.post_radius(m) == pytest.approx(post_diameter("M2.5", True) / 2)
+    assert mounts.post_radius(m) > normal
+    body = geometry.build_parts(p).body
+    assert geometry.piece_count(body) == 1
+    x, y = mounts.post_positions(m)[0]
+    top = p.bottom + m.length
+    # Just inside the insert's hole (3.6 mm): open near the top, not near the floor.
+    spot = x + 1.6
+    assert not body.ray_cast([spot, y, top + 1], [spot, y, top - 3])
+    hits = body.ray_cast([spot, y, top - 1], [spot, y, p.bottom - 1])      # down the hole
+    assert hits and hits[0].position[2] == pytest.approx(top - 5.0, abs=0.05)   # 5 mm deep
+    assert any("soldering iron" in i.message for i in validation.check(p))
+
+
+def test_heat_set_insert_checks():
+    p = default_project(BOX)
+    p.mounts = [mounts.new_mount(p, "nano")]
+    p.mounts[0].inserts = True                          # M1.6: no inserts that small
+    assert any("no heat-set inserts for M1.6" in i.message for i in validation.check(p))
+    q = templates.from_template("pi")
+    q.mounts[0].inserts, q.mounts[0].length = True, 4.0
+    assert any("too short for M2.5 heat-set inserts" in i.message for i in validation.check(q))
+
+
+def test_heat_set_inserts_for_lid_screws():
+    p = box_with_lid()
+    p.lid.style = "screwed"
+    plain_r = lid_column_radius(p)
+    p.lid.inserts = True
+    assert lid_column_radius(p) > plain_r
+    parts = geometry.build_parts(p)
+    assert geometry.piece_count(parts.body) == 1 and geometry.overlap_volume(parts.body, parts.lid) < 0.01
+    msg = messages(validation.check(p, parts))
+    assert "into heat-set inserts" in msg
