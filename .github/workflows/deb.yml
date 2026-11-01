@@ -1,7 +1,10 @@
 name: debian-package
 
 # Builds the .deb, installs it on clean Debian and Ubuntu systems, and runs the
-# app's smoke test there. Pushing a tag like v0.10.0 also publishes it as a release.
+# app's smoke test there. Pushing a tag like v0.10.0 also builds and tests the other
+# packages (the arm64 .deb, the .rpm and the AppImage) and publishes all of them as a
+# release; the tag's message goes at the top of the release notes. Running the
+# workflow by hand builds and tests every package without publishing.
 on:
   push:
   workflow_dispatch:
@@ -40,19 +43,76 @@ jobs:
       - name: Install and run on ${{ matrix.system }}
         run: packaging/test_deb.sh dist/*.deb ${{ matrix.system }}
 
-  release:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: test
+  packages:
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - kind: deb-arm64
+            build: python packaging/build_deb.py --arch arm64
+          - kind: rpm
+            build: sudo apt-get update && sudo apt-get install -y rpm && python packaging/build_rpm.py
+          - kind: appimage
+            build: python packaging/build_appimage.py
     steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build the ${{ matrix.kind }} package
+        run: ${{ matrix.build }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: 3dn00b-${{ matrix.kind }}
+          path: dist/*
+
+  test-packages:
+    needs: packages
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {kind: rpm, script: test_rpm.sh, system: "fedora:42"}
+          - {kind: rpm, script: test_rpm.sh, system: "fedora:43"}
+          - {kind: appimage, script: test_appimage.sh, system: "ubuntu:22.04"}
+          - {kind: appimage, script: test_appimage.sh, system: "fedora:43"}
+          - {kind: deb-arm64, script: test_deb.sh, system: "debian:13"}
+    steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: 3dn00b-deb
+          name: 3dn00b-${{ matrix.kind }}
           path: dist
+      - name: Emulate an ARM computer
+        if: matrix.kind == 'deb-arm64'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+      - name: Install and run on ${{ matrix.system }}
+        run: |
+          chmod +x dist/*
+          packaging/${{ matrix.script }} dist/* ${{ matrix.system }}
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [test, test-packages]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: 3dn00b-*
+          path: dist
+          merge-multiple: true
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/*.deb --repo "$GITHUB_REPOSITORY" \
-            --title "3Dn00b $GITHUB_REF_NAME" \
-            --notes "Install on Debian 12/13, Ubuntu 22.04 to 26.04 and later, Linux Mint 21/22: download the .deb and run: sudo apt install ./$(basename dist/*.deb)"
+          git fetch --depth=1 origin "+refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
+          { git tag -l --format='%(contents)' "$GITHUB_REF_NAME"; echo; \
+            sed "s/{version}/${GITHUB_REF_NAME#v}/g" packaging/release-notes.md; } > notes.md
+          ls -l dist
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" \
+            --title "3Dn00b $GITHUB_REF_NAME" --notes-file notes.md
