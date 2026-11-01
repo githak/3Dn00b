@@ -143,6 +143,8 @@ class Viewer(gl.GLViewWidget):
         self._label_items: list = []
         self._measure_items: list = []
         self.show_sizes = True
+        self._measured = None              # (project, hole) the measurements are for
+        self._facing = (1, -1)             # the sides they're drawn along
         self._grid = gl.GLGridItem()
         self._grid.setColor(GRID_COLOR)
         self.addItem(self._grid)
@@ -201,6 +203,7 @@ class Viewer(gl.GLViewWidget):
     def release_geometry(self):
         """Forget the solids used for click picking (see release_window)."""
         self._solids.clear()
+        self._measured = None
 
     def _add_mesh(self, solid, color, z_offset, part):
         verts, tris = geometry.mesh_arrays(solid)
@@ -238,13 +241,16 @@ class Viewer(gl.GLViewWidget):
                 self._marker_items.append(self._outline(ring, color, width))
 
     def set_measurements(self, project: Project, hole: Hole | None = None):
-        """The outside size, and where the selected hole is (when Sizes is on)."""
+        """The outside size, and where the selected hole is (when Sizes is on). The size
+        lines go along the sides you look at, and move when you turn the view."""
         for item in self._measure_items:
             self.removeItem(item)
         self._measure_items.clear()
+        self._measured = (project, hole)
+        self._facing = measure.facing_sides(self.opts["azimuth"])
         if not self.show_sizes or "body" not in self._solids:
             return
-        groups = [(measure.size_measures(project), SIZE_LINE_COLOR, SIZE_TEXT_COLOR)]
+        groups = [(measure.size_measures(project, self._facing), SIZE_LINE_COLOR, SIZE_TEXT_COLOR)]
         if hole is not None and hole.surface in project.surfaces() and (
                 hole.surface != LID or "lid" in self._solids):
             groups.append((measure.hole_measures(project, hole, self._lid_offset),
@@ -271,6 +277,20 @@ class Viewer(gl.GLViewWidget):
                 label.setDepthValue(20)              # drawn last, over everything
                 self.addItem(label)
                 self._measure_items.append(label)
+
+    def _camera_moved(self):
+        """Turned to look at other sides: move the size lines to them."""
+        measured = getattr(self, "_measured", None)      # (not yet set while starting up)
+        if measured is not None and measure.facing_sides(self.opts["azimuth"]) != self._facing:
+            self.set_measurements(*measured)
+
+    def orbit(self, azim, elev):
+        super().orbit(azim, elev)
+        self._camera_moved()
+
+    def setCameraPosition(self, *args, **kwargs):
+        super().setCameraPosition(*args, **kwargs)
+        self._camera_moved()
 
     def set_label_markers(self, project: Project, selected_id: str | None, problem_ids: set):
         """A frame around the selected text, and around text with a problem."""

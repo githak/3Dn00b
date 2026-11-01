@@ -175,3 +175,18 @@ def test_backup_whose_program_crashed_is_offered(tmp_path):
     found = autosave.leftover_backups(tmp_path)
     assert [b.path for b in found] == [backup]
     found[0].keep()
+
+
+def test_size_lines_go_along_the_sides_you_look_at():
+    assert measure.facing_sides(-62) == (1, -1)       # the usual view: front and right
+    assert measure.facing_sides(120) == (-1, 1)       # from behind on the left
+    p = default_project(BOX)
+    width, depth, height = measure.size_measures(p, (-1, 1))
+    assert width.start[1] > p.outer_depth / 2          # along the back
+    assert depth.start[0] < -p.outer_width / 2         # along the left side
+    assert height.start[0] > p.outer_width / 2 and height.start[1] == pytest.approx(p.outer_depth / 2)
+    assert all(m.length == pytest.approx(n.length)
+               for m, n in zip(measure.size_measures(p), (width, depth, height)))
+    c = default_project(CYLINDER)
+    _, h = measure.size_measures(c, (1, 1))
+    assert h.start[0] < 0 < h.start[1]                 # at the back left, beside the container

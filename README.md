@@ -8,7 +8,7 @@ Software for people getting into 3D printing and want to start with something ea
 sizes in millimetres, add holes and a lid, and export files your slicer can
 print. No sketches, no constraints, no feature trees.
 
-## What it can do (version 0.28)
+## What it can do (version 0.28.1)
 
 - **Templates** to start from, already sized to fit. Pick one under **What are you making?**
   in the Shape step, then change anything you like; Undo takes you back.
@@ -80,7 +80,9 @@ print. No sketches, no constraints, no feature trees.
   The box gets a column in each corner for the screws to cut their own thread
   into, and the app tells you how many screws you need and how long they can be.
 - **Text**: names and labels on any wall, the bottom or the lid, **raised** (it
-  stands out) or **engraved** (cut in), in the size you choose. Text on a round
+  stands out), **engraved** (cut in) or **cut through** (a hole in the shape of
+  the letters, like a stencil: letters such as O and A keep their middle with thin
+  bridges), in the size you choose. Text on a round
   container wraps around it. Letters from all European languages work (æ, ø, å,
   ä, ö, ü, é, ł, ž …). Drag text in the 3D view to move it. The app warns about
   text that's too small to print clearly, raised text on the lid or the bottom
@@ -104,6 +106,7 @@ print. No sketches, no constraints, no feature trees.
 - **Measurements in the 3D view** (the **Sizes** button, Ctrl+M): the outside
   size, the height with the lid on, and how far the selected hole is from the
   edges of its wall (or from the left and the front, on the bottom and the lid).
+  The size lines move to the sides facing you as you turn the view.
 - **Undo / redo** for every change.
 - **Save and reopen** editable projects (`.3dn00b` files, plain JSON). The arrow
   next to **Open** lists your recent designs.
@@ -121,7 +124,7 @@ Download `3dn00b_<version>-1_amd64.deb` from the
 [Releases page](https://github.com/githak/3Dn00b/releases) and install it:
 
 ```bash
-sudo apt install ./3dn00b_0.28.0-1_amd64.deb
+sudo apt install ./3dn00b_0.28.1-1_amd64.deb
 ```
 
 That's all: 3Dn00b appears in your applications menu, `.3dn00b` project files open

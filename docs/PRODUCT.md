@@ -269,6 +269,14 @@ Defaults I chose myself, which are easy to change:
     the front on the bottom and the lid), in the selection colour. The numbers are
     drawn with QPainter, which QWidget.grab() leaves out, so the welcome tour's
     screenshots put the 3D view's own picture in.
+- Follow-ups asked for after trying 0.28 (0.28.1): the size lines go along the sides
+  that face the camera (front or back, left or right, worked out from the view's
+  azimuth) and move when the view turns past a side; the height stands at the far
+  end of the width line, beside the object. And a third text style, cut through:
+  the letters go right through the surface (its thickness plus 0.1 mm, so nothing
+  behind it is touched), with stencil bridges (1.2 mm, or a tenth of the letter
+  height) up and down through every closed middle so O, A, B, 8, ø … keep it.
+  Project format 16.
 - Push-on lid that follows the box size, with fit presets.
 - Plain-language checks covering impossible sizes, thin walls, holes off the
   edge, holes behind the lid lip, overlapping or too-close holes, a lid that

@@ -123,8 +123,8 @@ PAGES = (
              "finger notch so they're easy to open.", 3, lambda w: [w.lid_card]),
     TourPage("Add text",
              "Put a name or a label on the walls, the lid or the bottom: raised so it stands "
-             "out, or engraved (cut in). Engraved text prints neatly on the lid and the bottom. "
-             "Drag text in the 3D view to move it.",
+             "out, engraved (cut in), or cut right through like a stencil. Engraved text prints "
+             "neatly on the lid and the bottom. Drag text in the 3D view to move it.",
              4, lambda w: [w.add_text_card, w.label_card], _demo_text),
     TourPage("See it in 3D",
              "The preview updates as you type. Drag to turn it, scroll to zoom and middle-drag "

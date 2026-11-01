@@ -220,9 +220,10 @@ class Mount:
     parts_height: float = -1.0
 
 
-# Text on the outside of a surface: standing out (raised) or cut in (engraved).
-RAISED, ENGRAVED = "raised", "engraved"
-LABEL_STYLE_LABELS = {RAISED: "Raised", ENGRAVED: "Engraved"}
+# Text on the outside of a surface: standing out (raised), cut in (engraved), or cut
+# right through, like a stencil.
+RAISED, ENGRAVED, CUT_THROUGH = "raised", "engraved", "cut"
+LABEL_STYLE_LABELS = {RAISED: "Raised", ENGRAVED: "Engraved", CUT_THROUGH: "Cut through"}
 LABEL_SIZE_RANGE = (2.0, 80.0)     # height of the capital letters (mm)
 LABEL_DEPTH_RANGE = (0.2, 3.0)
 LABEL_MARGIN = 1.0                 # keep this far from the edges of the surface
@@ -236,7 +237,8 @@ class Label:
     surface: str = FRONT
     style: str = RAISED
     size: float = 8.0              # height of the capital letters (mm)
-    depth: float = 0.6             # how far it stands out, or is cut in (mm)
+    depth: float = 0.6             # how far it stands out, or is cut in (mm); not used
+                                   # for text cut right through
     u: float = 0.0                 # where its middle is, measured like a hole's position
     v: float = 0.0
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])

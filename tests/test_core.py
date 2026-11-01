@@ -2248,3 +2248,46 @@ def test_text_half_extents_and_clamp():
     label.u, label.v = 100, 100
     u, v = clamp_label(p, label)
     assert u + hu <= p.inner_width / 2 and v + hv < p.outer_height / 2
+
+
+from threedn00b.model import CUT_THROUGH, label_thickness  # noqa: E402
+
+
+def test_stencil_keeps_the_middles_of_letters():
+    for word in ("O", "ABBA 08", "Æøå", "%@", "Hi"):
+        shape = text.outline(word, 10)
+        cut = text.stencil(shape, text.bridge_width(10))
+        assert not [p for p in cut.to_polygons() if text._area(p) < 0], word   # no loose middles
+        assert cut.area() <= shape.area() + 1e-6
+    assert text.stencil(text.outline("Hi", 10), 1.2).area() == pytest.approx(
+        text.outline("Hi", 10).area())                 # nothing to bridge
+    assert text.bridge_width(8) == 1.2 and text.bridge_width(30) == 3.0
+
+
+@pytest.mark.parametrize("shape, surface", [(BOX, FRONT), (BOX, LID), (BOX, BOTTOM),
+                                            (CYLINDER, SIDE)])
+def test_text_cut_right_through(shape, surface):
+    p = default_project(shape)
+    p.lid.enabled = True
+    plain = geometry.build_parts(p)
+    p.labels = [Label("BOB 80", surface, CUT_THROUGH, size=9, depth=0.2)]   # depth ignored
+    parts = geometry.build_parts(p)
+    part = "lid" if surface == LID else "body"
+    solid = getattr(parts, part)
+    assert geometry.is_valid_solid(solid) and geometry.piece_count(solid) == 1
+    removed = getattr(plain, part).volume() - solid.volume()
+    letters = text.stencil(text.outline("BOB 80", 9), text.bridge_width(9)).area()
+    expected = letters * label_thickness(p, surface)
+    assert removed == pytest.approx(expected, rel=0.06 if surface == SIDE else 0.01)
+    assert not validation.has_errors(validation.check(p, parts))
+
+
+def test_cut_through_text_round_trip_and_checks(tmp_path):
+    p = box_with_lid(labels=[Label("Hole", LID, CUT_THROUGH)])
+    path = tmp_path / "t.3dn00b"
+    project_io.save_project(p, path)
+    assert project_io.load_project(path).labels[0].style == CUT_THROUGH
+    issues = [i for i in validation.check(p) if i.label_id]
+    assert issues == []                                # no "raised" or "too deep" warnings
+    p.labels = [Label("BIG", FRONT, CUT_THROUGH, size=24)]
+    assert any("bridges" in i.message for i in validation.check(p) if i.label_id)
