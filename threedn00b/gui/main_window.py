@@ -29,7 +29,8 @@ from ..model import (ALONG_U, ALONG_V, BOTTOM, BOX, CYLINDER, FIT_LABELS, FIT_PR
                      DIVIDER_RANGE, INSIDE_CORNER_LABELS, OPENING_LABELS, SIDE_LABELS, LID_STYLE_LABELS, SHARP, MAX_COMPARTMENTS, PUSH_ON, SCREWED, SCREWS, SLIDING,
                      SNAP, THREADED, TRAY_TEMPLATE, WALL_RANGE, Hole, Project,
                      clamp_hole, compartment_depths, compartment_widths, default_project,
-                     has_set_sizes, hole_limits, resized_sizes)
+                     has_set_sizes, hole_limits, resized_sizes,
+                     ENGRAVED, LABEL_DEPTH_RANGE, LABEL_SIZE_RANGE, RAISED, Label, clamp_label)
 from . import theme
 from .viewer import Viewer
 
@@ -52,7 +53,7 @@ COMMON_RECTS = [
 ]
 NEW_HOLE_ROUNDING = 1.0     # corner radius of new rectangles and vents
 RECT_SIZE_RANGE = (1.0, 150.0)
-TAB_SHAPE, TAB_HOLES, TAB_POSTS, TAB_LID, TAB_CHECK = range(5)
+TAB_SHAPE, TAB_HOLES, TAB_POSTS, TAB_LID, TAB_TEXT, TAB_CHECK = range(6)
 # Labels and tips for the two spacing fields of each custom board.
 CUSTOM_HOLE_LABELS = {
     "custom": (("Holes apart (width)", "Holes apart (depth)"),
@@ -77,13 +78,15 @@ LID_STYLE_HINTS = {
     THREADED: "A screw-on lid, like a jar. The top of the container becomes a narrower neck "
               "with a thread. Only for round containers.",
 }
-CHECK_TAB_TITLE = "5 Check && Export"
+CHECK_TAB_TITLE = "6 Check && Export"
 LABEL_WIDTH = 120            # the field labels of every card line up
 HOLE_ICONS = {ROUND: "round-hole", RECT: "rect-hole", VENT: "vent"}
 # The steps in the rail: (icon, label, tooltip). Same order as the TAB_* pages.
 STEPS = (("shape", "Shape", "Shape and size"), ("holes", "Holes", "Holes, openings and vents"),
          ("posts", "Posts", "Screw posts for circuit boards"), ("lid", "Lid", "The lid"),
+         ("text", "Text", "Text on the outside: names and labels"),
          ("check", "Export", "Check the design and export it for printing"))
+LABEL_STYLE_TEXTS = {RAISED: "Raised (stands out)", ENGRAVED: "Engraved (cut in)"}
 
 
 class SnapshotCommand(QUndoCommand):
@@ -332,6 +335,7 @@ class MainWindow(QMainWindow):
         self.project = project or default_project()
         self.path: Path | None = None
         self.selected_id: str | None = None
+        self.selected_label_id: str | None = None
         self.selected_mount_id: str | None = None
         self._drag: dict | None = None
         self._drag_count = 0
@@ -354,7 +358,7 @@ class MainWindow(QMainWindow):
         self.tabs.tabBar().hide()
         for build, title in ((self._build_shape_tab, "1 Shape"), (self._build_holes_tab, "2 Holes"),
                              (self._build_posts_tab, "3 Posts"), (self._build_lid_tab, "4 Lid"),
-                             (self._build_check_tab, CHECK_TAB_TITLE)):
+                             (self._build_text_tab, "5 Text"), (self._build_check_tab, CHECK_TAB_TITLE)):
             self.tabs.addTab(scrolling(build()), title)
         self.tabs.currentChanged.connect(self._on_step_changed)
         for combo in self.tabs.findChildren(QComboBox):
@@ -1053,6 +1057,72 @@ class MainWindow(QMainWindow):
             lambda _: self.edit(label, lambda p: setattr(p.lid, attr, combo.currentData())))
         return combo
 
+    def _build_text_tab(self):
+        widget, layout = page("Text", "Names and labels on the outside, raised or cut in.")
+        box, lay = card("Add text")
+        self.add_text_card = box
+        self.add_label_button = icon_button("Add text", "plus", "primary")
+        self.add_label_button.setMinimumHeight(40)
+        # A lambda, because clicked() would otherwise pass its 'checked' flag as `surface`.
+        self.add_label_button.clicked.connect(lambda: self.add_label())
+        lay.addWidget(self.add_label_button)
+        lay.addWidget(hint("Tip: engraved (cut in) text prints neatly on the lid and the "
+                           "bottom; raised text looks good on the walls. Drag text in the 3D "
+                           "view to move it."))
+        self.label_list = QListWidget()
+        self.label_list.setMaximumHeight(150)
+        self.label_list.currentRowChanged.connect(self._on_label_row_changed)
+        lay.addWidget(self.label_list)
+        layout.addWidget(box)
+
+        self.label_card, lay = card("Selected text")
+        self.label_problem = error_label()
+        lay.addWidget(self.label_problem)
+        self.label_box = QWidget()
+        form = self.label_form = form_layout(self.label_box)
+        self.label_text = QLineEdit()
+        self.label_text.setPlaceholderText("Type the text")
+        self.label_text.setMaxLength(60)
+        self.label_text.textEdited.connect(lambda t: self._edit_label("Change text", "text", t))
+        form.addRow("Text", self.label_text)
+        self.label_surface = QComboBox()
+        self.label_surface.activated.connect(self._on_label_surface_changed)
+        form.addRow("Where", self.label_surface)
+        self.label_style = QComboBox()
+        for key, text in LABEL_STYLE_TEXTS.items():
+            self.label_style.addItem(text, key)
+        self.label_style.activated.connect(
+            lambda _: self._edit_label("Change text style", "style", self.label_style.currentData()))
+        form.addRow("Style", self.label_style)
+        self.label_size = spin(*LABEL_SIZE_RANGE, step=0.5)
+        self.label_size.setToolTip("Height of the capital letters")
+        self.label_size.valueChanged.connect(lambda v: self._edit_label("Change letter size", "size", v))
+        form.addRow("Letter height", self.label_size)
+        self.label_depth_name = QLabel("Stands out")
+        self.label_depth = spin(*LABEL_DEPTH_RANGE, step=0.1)
+        self.label_depth.valueChanged.connect(lambda v: self._edit_label("Change text depth", "depth", v))
+        form.addRow(self.label_depth_name, self.label_depth)
+        self.label_u_name, self.label_v_name = QLabel(), QLabel()
+        self.label_u = spin(-500, 500, step=1.0)
+        self.label_v = spin(-500, 500, step=1.0)
+        self.label_u.valueChanged.connect(lambda v: self._edit_label("Move text", "u", v))
+        self.label_v.valueChanged.connect(lambda v: self._edit_label("Move text", "v", v))
+        form.addRow(self.label_u_name, self.label_u)
+        form.addRow(self.label_v_name, self.label_v)
+        form.addRow("", hint("Measured from the middle of the surface. 0 = centred."))
+        buttons = QHBoxLayout()
+        center = icon_button("Centre it", "center")
+        center.clicked.connect(self._center_label)
+        remove = icon_button("Remove", "trash", "danger")
+        remove.clicked.connect(self.remove_selected_label)
+        buttons.addWidget(center)
+        buttons.addWidget(remove)
+        form.addRow(buttons)
+        lay.addWidget(self.label_box)
+        layout.addWidget(self.label_card)
+        layout.addStretch()
+        return widget
+
     def _build_check_tab(self):
         widget, layout = page("Check & export", "Check the design, then save files for your slicer.")
         box, lay = card()
@@ -1276,12 +1346,15 @@ class MainWindow(QMainWindow):
             self.selected_id = None
         if self.selected_mount_id and not self.project.mount(self.selected_mount_id):
             self.selected_mount_id = None
+        if self.selected_label_id and not self.project.label(self.selected_label_id):
+            self.selected_label_id = None
         self.refresh_controls()
         # Throttle (not debounce) so the preview keeps up while dragging or typing.
         if not self._rebuild_timer.isActive():
             self._rebuild_timer.start()
         self.viewer.set_hole_markers(self.project, self.selected_id, self._problem_holes())
         self.viewer.set_mount_markers(self.project, self.selected_mount_id, self._problem_mounts())
+        self.viewer.set_label_markers(self.project, self.selected_label_id, self._problem_labels())
         self._update_title()
 
     def _edit_hole(self, label, attr, value):
@@ -1367,6 +1440,7 @@ class MainWindow(QMainWindow):
         set_quietly(self.lip_height, p.lid.lip_height)
         self.refresh_holes()
         self.refresh_mounts()
+        self.refresh_labels()
 
     def _compartment_sizes(self, attr: str, word: str, where: str) -> "SimpleNamespace":
         """A switch to set each compartment's size, with one box per compartment."""
@@ -1439,7 +1513,7 @@ class MainWindow(QMainWindow):
 
     def _replace_project(self, label: str, fresh: Project):
         """Swap in a whole new design as one undo step, and show all of it."""
-        self.selected_id = self.selected_mount_id = None
+        self.selected_id = self.selected_mount_id = self.selected_label_id = None
         self.edit(label, lambda p: p.__dict__.update(fresh.__dict__))
         self.viewer._fitted_size = None
         self.rebuild()
@@ -1653,10 +1727,12 @@ class MainWindow(QMainWindow):
         self.mount_info.setText(info)
         self._show_problems(self.mount_problem, [i for i in self.issues if i.mount_id == m.id])
 
-    def _list_icon(self, name: str, hole_id: str | None = None, mount_id: str | None = None) -> QIcon:
+    def _list_icon(self, name: str, hole_id: str | None = None, mount_id: str | None = None,
+                   label_id: str | None = None) -> QIcon:
         """The item's own icon, or a red / amber sign if a check found a problem with it."""
         levels = {i.level for i in self.issues if i.level != validation.INFO and (
-            (hole_id and i.hole_id == hole_id) or (mount_id and i.mount_id == mount_id))}
+            (hole_id and i.hole_id == hole_id) or (mount_id and i.mount_id == mount_id)
+            or (label_id and i.label_id == label_id))}
         if validation.ERROR in levels:
             return theme.icon("error", theme.DANGER)
         if validation.WARNING in levels:
@@ -1675,6 +1751,9 @@ class MainWindow(QMainWindow):
 
     def _problem_holes(self) -> set:
         return {i.hole_id for i in self.issues if i.hole_id and i.level != validation.INFO}
+
+    def _problem_labels(self) -> set:
+        return {i.label_id for i in self.issues if i.label_id and i.level != validation.INFO}
 
     # ------------------------------------------------------------------
     # Rebuilding geometry and checks
@@ -1695,9 +1774,11 @@ class MainWindow(QMainWindow):
         self.viewer.set_parts(p, self.parts)
         self.viewer.set_hole_markers(p, self.selected_id, self._problem_holes())
         self.viewer.set_mount_markers(p, self.selected_mount_id, self._problem_mounts())
+        self.viewer.set_label_markers(p, self.selected_label_id, self._problem_labels())
         self._refresh_issues()
         self.refresh_holes()
         self.refresh_mounts()
+        self.refresh_labels()
 
     def _refresh_issues(self):
         icons = {validation.ERROR: ("error", theme.DANGER),
@@ -1767,6 +1848,9 @@ class MainWindow(QMainWindow):
         posts = sum(len(mounts.post_positions(m)) for m in self.project.mounts)
         if posts:
             line += f", {posts} screw post{'s' * (posts != 1)}"
+        texts = sum(bool(t.text.strip()) for t in self.project.labels)
+        if texts:
+            line += f", {texts} text{'s' * (texts != 1)}"
         rows.append(("Features", line))
         self.parts_summary.setText(summary_table(rows))
         self._refresh_fit_test()
@@ -1893,6 +1977,135 @@ class MainWindow(QMainWindow):
         holes = self.project.holes
         self.select_hole(holes[row].id if 0 <= row < len(holes) else None)
 
+    # ---- text --------------------------------------------------------------
+    def refresh_labels(self):
+        p = self.project
+        self.label_list.blockSignals(True)
+        self.label_list.clear()
+        current = -1
+        for i, label in enumerate(p.labels):
+            where = SURFACE_LABELS.get(label.surface, label.surface)
+            text = label.text.strip() or "(empty)"
+            style = "raised" if label.style == RAISED else "engraved"
+            item = QListWidgetItem(self._list_icon("text", label_id=label.id), f"{text} · {where} · {style}")
+            self.label_list.addItem(item)
+            if label.id == self.selected_label_id:
+                current = i
+        self.label_list.setCurrentRow(current)
+        self.label_list.blockSignals(False)
+        fit_list(self.label_list, 5)
+        self.label_list.setVisible(bool(p.labels))
+        label = p.label(self.selected_label_id) if self.selected_label_id else None
+        self.label_card.setVisible(label is not None)
+        self.label_surface.blockSignals(True)
+        self.label_surface.clear()
+        for surface in p.surfaces():
+            self.label_surface.addItem(SURFACE_LABELS[surface], surface)
+        if label is not None and label.surface not in p.surfaces():
+            self.label_surface.addItem(SURFACE_LABELS.get(label.surface, label.surface) + " (gone)",
+                                       label.surface)
+        self.label_surface.blockSignals(False)
+        if label is None:
+            self.label_problem.setText("")
+            self.label_problem.setVisible(False)
+            return
+        if self.label_text.text() != label.text:
+            set_quietly(self.label_text, label.text)
+        set_quietly(self.label_surface, label.surface)
+        set_quietly(self.label_style, label.style)
+        set_quietly(self.label_size, label.size)
+        set_quietly(self.label_depth, label.depth)
+        self.label_depth_name.setText("Stands out" if label.style == RAISED else "Cut in")
+        set_quietly(self.label_u, label.u)
+        set_quietly(self.label_v, label.v)
+        side, flat = label.surface == SIDE, label.surface in (BOTTOM, LID)
+        self.label_u_name.setText("Around" if side else "Left / right")
+        self.label_v_name.setText("Front / back" if flat else "Up / down")
+        self.label_u.setSuffix("°" if side else " mm")
+        self._show_problems(self.label_problem, [i for i in self.issues if i.label_id == label.id])
+
+    def select_label(self, label_id: str | None):
+        self.selected_label_id = label_id
+        self.refresh_labels()
+        self.viewer.set_label_markers(self.project, label_id, self._problem_labels())
+
+    def _on_label_row_changed(self, row):
+        labels = self.project.labels
+        self.select_label(labels[row].id if 0 <= row < len(labels) else None)
+
+    def _edit_label(self, name, attr, value):
+        label_id = self.selected_label_id
+        if label_id is None or self.project.label(label_id) is None:
+            return
+        self.edit(name, lambda p: setattr(p.label(label_id), attr, value), merge=f"{label_id}:{attr}")
+
+    def add_label(self, surface: str | None = None):
+        p = self.project
+        if surface is None:
+            current = p.label(self.selected_label_id) if self.selected_label_id else None
+            if current is not None and current.surface in p.surfaces():
+                surface = current.surface
+            elif p.lid.enabled and LID in p.surfaces():
+                surface = LID
+            else:
+                surface = FRONT if p.shape == BOX else SIDE
+        label = Label(text="Text", surface=surface,
+                      style=ENGRAVED if surface in (LID, BOTTOM) else RAISED)
+        # Smaller letters when the surface is small.
+        while clamp_label(p, label) is None and label.size > 3.0:
+            label.size = max(3.0, label.size - 1.0)
+        pos = clamp_label(p, label)
+        if pos is None:
+            self.statusBar().showMessage(f"There's no room for text on the "
+                                         f"{SURFACE_LABELS[surface].lower()}.", 5000)
+            return
+        label.u, label.v = pos
+        self.edit("Add text", lambda proj: proj.labels.append(copy.deepcopy(label)))
+        self.tabs.setCurrentIndex(TAB_TEXT)
+        self.select_label(label.id)
+        self.label_text.setFocus()
+        self.label_text.selectAll()
+
+    def remove_selected_label(self):
+        label_id = self.selected_label_id
+        if label_id is None or not self.project.label(label_id):
+            return
+        self.selected_label_id = None
+        self.edit("Remove text", lambda p: p.labels.remove(p.label(label_id)))
+
+    def _center_label(self):
+        label_id = self.selected_label_id
+        if label_id is None:
+            return
+
+        def change(p):
+            t = p.label(label_id)
+            if t.surface != SIDE:
+                t.u = 0.0
+            t.v = 0.0
+            pos = clamp_label(p, t)
+            if pos:
+                t.u, t.v = pos
+        self.edit("Centre text", change)
+
+    def _on_label_surface_changed(self, _index):
+        label_id = self.selected_label_id
+        surface = self.label_surface.currentData()
+        if label_id is None or surface is None:
+            return
+
+        def change(p):
+            t = p.label(label_id)
+            if t.surface == surface:
+                return
+            t.surface, t.u, t.v = surface, 0.0, 0.0
+            if surface in (LID, BOTTOM):
+                t.style = ENGRAVED          # raised text there would need supports
+            pos = clamp_label(p, t)
+            if pos:
+                t.u, t.v = pos
+        self.edit("Move text to another surface", change)
+
     # ---- screw posts -----------------------------------------------------
     def add_mount(self, board: str):
         m = mounts.new_mount(self.project, board)
@@ -1950,13 +2163,20 @@ class MainWindow(QMainWindow):
         return picking.hole_under_ray(self.project, origin, direction, mesh_distance,
                                       self.viewer.lid_offset, self.viewer.show_lid)
 
+    def _label_under(self, origin, direction, mesh_distance):
+        return picking.label_under_ray(self.project, origin, direction, mesh_distance,
+                                       self.viewer.lid_offset, self.viewer.show_lid)
+
     def hole_at(self, origin, direction, mesh_distance) -> bool:
         return (self._hole_under(origin, direction, mesh_distance) is not None
+                or self._label_under(origin, direction, mesh_distance) is not None
                 or picking.mount_under_ray(self.project, origin, direction, mesh_distance) is not None)
 
     def drag_begin(self, origin, direction, mesh_distance) -> bool:
         hole = self._hole_under(origin, direction, mesh_distance)
         if hole is None:
+            if self._label_drag_begin(origin, direction, mesh_distance):
+                return True
             return self._mount_drag_begin(origin, direction, mesh_distance)
         self.tabs.setCurrentIndex(TAB_HOLES)
         self.select_hole(hole.id)
@@ -1970,6 +2190,46 @@ class MainWindow(QMainWindow):
         self._drag = {"id": hole.id, "du": hole.u - hit[1], "dv": hole.v - hit[2],
                       "key": f"drag:{self._drag_count}", "type": "hole"}
         return True
+
+    def _label_drag_begin(self, origin, direction, mesh_distance) -> bool:
+        label = self._label_under(origin, direction, mesh_distance)
+        if label is None:
+            return False
+        self.tabs.setCurrentIndex(TAB_TEXT)
+        self.select_label(label.id)
+        hit = picking.surface_hit(self.project, label.surface, origin, direction,
+                                  self.viewer.lid_offset)
+        if hit is None:
+            return True
+        self._drag_count += 1
+        self._drag = {"id": label.id, "du": label.u - hit[1], "dv": label.v - hit[2],
+                      "key": f"drag:{self._drag_count}", "type": "label"}
+        return True
+
+    def _label_drag_move(self, origin, direction):
+        drag = self._drag
+        label = self.project.label(drag["id"])
+        if label is None:
+            return
+        hit = picking.surface_hit(self.project, label.surface, origin, direction,
+                                  self.viewer.lid_offset)
+        if hit is None:
+            return
+        moved = copy.deepcopy(label)
+        moved.u, moved.v = hit[1] + drag["du"], hit[2] + drag["dv"]
+        notes = []
+        if label.surface != SIDE and abs(moved.u) <= picking.SNAP_MM:
+            moved.u = 0.0
+            notes.append("centred")
+        pos = clamp_label(self.project, moved)
+        if pos is None:
+            return
+        if abs(pos[0] - moved.u) > 0.05 or abs(pos[1] - moved.v) > 0.05:
+            notes = ["kept on the surface"]
+        label_id = label.id
+        self.edit("Move text", lambda p: _set_position(p.label(label_id), pos), merge=drag["key"])
+        name = validation.label_name(self.project, self.project.label(label_id))
+        self.statusBar().showMessage(f"{name}: {', '.join(notes)}" if notes else name, 1500)
 
     def _mount_drag_begin(self, origin, direction, mesh_distance) -> bool:
         m = picking.mount_under_ray(self.project, origin, direction, mesh_distance)
@@ -2014,6 +2274,9 @@ class MainWindow(QMainWindow):
         drag = self._drag
         if drag and drag["type"] == "mount":
             self._mount_drag_move(origin, direction)
+            return
+        if drag and drag["type"] == "label":
+            self._label_drag_move(origin, direction)
             return
         hole = self.project.hole(drag["id"]) if drag else None
         if hole is None:
@@ -2068,9 +2331,23 @@ class MainWindow(QMainWindow):
             self.select_hole(issue.hole_id)
         elif issue and issue.mount_id:
             self.select_mount(issue.mount_id)
+        elif issue and issue.label_id:
+            self.select_label(issue.label_id)
 
     def _apply_fix(self):
         issue = self._issue_at(self.issue_list.currentRow())
+        if issue and issue.label_id and (issue.fix or issue.fix_values):
+            label_id, pos, values = issue.label_id, issue.fix, dict(issue.fix_values or {})
+
+            def change_label(p):
+                t = p.label(label_id)
+                if pos:
+                    t.u, t.v = pos
+                for attr, value in values.items():
+                    setattr(t, attr, value)
+            self.edit(issue.fix_label or "Fix text", change_label)
+            self.statusBar().showMessage("Changed. Press Ctrl+Z to undo.", 5000)
+            return
         if issue and issue.fix_values:
             values = dict(issue.fix_values)
 
@@ -2125,6 +2402,7 @@ class MainWindow(QMainWindow):
         self.path = path
         self.selected_id = None
         self.selected_mount_id = None
+        self.selected_label_id = None
         self.undo_stack.clear()
         self.viewer._fitted_size = None
         self.refresh_controls()

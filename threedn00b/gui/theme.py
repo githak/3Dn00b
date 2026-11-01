@@ -90,6 +90,7 @@ ICONS = {
                  'width="9" height="4" rx="1"/>',
     "vent": '<rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M8 8.5v7M12 8.5v7M16 8.5v7"/>',
     "plus": '<path d="M12 5v14M5 12h14"/>',
+    "text": '<path d="M5 7V4.5h14V7"/><path d="M12 4.5v15"/><path d="M9 19.5h6"/>',
     "trash": '<path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 12.5A1.5 1.5 0 0 0 '
              '8.5 21h7a1.5 1.5 0 0 0 1.5-1.5L18 7"/><path d="M9 7V4.5A1.5 1.5 0 0 1 10.5 3h3A1.5 '
              '1.5 0 0 1 15 4.5V7"/>',

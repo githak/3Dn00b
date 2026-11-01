@@ -8,7 +8,7 @@ Software for people getting into 3D printing and want to start with something ea
 sizes in millimetres, add holes and a lid, and export files your slicer can
 print. No sketches, no constraints, no feature trees.
 
-## What it can do (version 0.26)
+## What it can do (version 0.27)
 
 - **Templates** to start from, already sized to fit. Pick one under **What are you making?**
   in the Shape step, then change anything you like; Undo takes you back.
@@ -76,10 +76,28 @@ print. No sketches, no constraints, no feature trees.
 - Or a **screwed-down lid**: a flat lid held by a screw in each corner (M2 to M4).
   The box gets a column in each corner for the screws to cut their own thread
   into, and the app tells you how many screws you need and how long they can be.
+- **Text**: names and labels on any wall, the bottom or the lid, **raised** (it
+  stands out) or **engraved** (cut in), in the size you choose. Text on a round
+  container wraps around it. Letters from all European languages work (æ, ø, å,
+  ä, ö, ü, é, ł, ž …). Drag text in the 3D view to move it. The app warns about
+  text that's too small to print clearly, raised text on the lid or the bottom
+  (it would need supports; one click engraves it instead) and engraving so deep
+  it weakens the wall.
 - **Checks in plain language**, for example a hole running off the edge of a
   wall, a hole hidden behind the lid's lip, holes that overlap, walls that are
   too thin, or a lid that won't fit. Many come with a one-click **Fix** that
   you can undo.
+- **Your printer and filament** (in the Export step, remembered for all your
+  designs): pick your printer (Prusa, Bambu Lab, Creality, Anycubic, Elegoo,
+  Sovol …) or type its build size, plus the nozzle, the filament and what a spool
+  costs. The app then checks that every part fits on the plate (and whether box
+  and lid fit at the same time), and that walls and dividers are a whole number
+  of lines for your nozzle, with a one-click fix.
+- **Plastic estimate**: about how many grams each part takes and what it costs.
+- **Fit test print**: before printing the whole thing, print just the parts that
+  have to fit: the top of the box with the edge of the lid, and the walls with
+  the openings (with the screw posts on an open floor, so you can screw the
+  board on and try the plugs). It takes a fraction of the plastic and time.
 - **Undo / redo** for every change.
 - **Save and reopen** editable projects (`.3dn00b` files, plain JSON).
 - **Export for printing** as **STL** (one file per part) or **3MF** (all parts in
@@ -93,7 +111,7 @@ Download `3dn00b_<version>-1_amd64.deb` from the
 [Releases page](https://github.com/githak/3Dn00b/releases) and install it:
 
 ```bash
-sudo apt install ./3dn00b_0.26.0-1_amd64.deb
+sudo apt install ./3dn00b_0.27.0-1_amd64.deb
 ```
 
 That's all: 3Dn00b appears in your applications menu, `.3dn00b` project files open
@@ -158,7 +176,7 @@ press F1; tick *Show this welcome when 3Dn00b starts* if you'd like it every tim
 
 The window has three parts: the **steps** down the left side, the settings for
 the step you're on, and the 3D preview. Work through the steps from top to
-bottom (or jump with Ctrl+1 to Ctrl+5):
+bottom (or jump with Ctrl+1 to Ctrl+6):
 
 1. **Shape**: choose Box or Round container, or start from a template, then type
    the sizes and, for a box, choose how many compartments you want.
@@ -169,14 +187,18 @@ bottom (or jump with Ctrl+1 to Ctrl+5):
 3. **Posts** (optional): add screw posts for a circuit board.
 4. **Lid**: switch on **Add a lid** and choose its type: push-on, snap-on,
    sliding, screwed down or threaded.
-5. **Export**: read the checks, fix anything marked in red, pick the file type
-   and click **Export for printing**.
+5. **Text** (optional): click **Add text**, type it and choose where it goes,
+   raised or engraved, and how big.
+6. **Export**: read the checks, fix anything marked in red, pick the file type
+   and click **Export for printing**. To try the fit first, export a **fit test**.
+   Set **your printer and filament** once to check the size and see how much
+   plastic it takes.
 
 The coloured status in the bottom right corner always says whether the design is
 ready to print; click it to see the checks. The Export step's icon turns amber
 for warnings and red for problems.
 
-In the 3D view: drag a hole to move it, drag anywhere else to turn the view,
+In the 3D view: drag a hole, a board or text to move it, drag anywhere else to turn the view,
 scroll or right-drag to zoom, middle-drag to pan, and double-click a wall to
 add a hole. Each drag is one step for Undo. The buttons in its top right corner
 show it from the front, the top or the side (Ctrl+0 for the normal view), hide or
@@ -210,7 +232,9 @@ The code is split so each part can be tested on its own:
 | `threedn00b/model.py` | The editable design: shape, sizes, holes, lid, and the rules for where holes can go |
 | `threedn00b/geometry.py` | Turns the design into solid parts (via [Manifold](https://github.com/elalish/manifold)) |
 | `threedn00b/validation.py` | Plain-language checks and suggested fixes |
-| `threedn00b/project_io.py` | Project files (versioned JSON) and STL export |
+| `threedn00b/project_io.py` | Project files (versioned JSON), STL and 3MF export |
+| `threedn00b/printers.py` | Printer build sizes, nozzles, filament densities |
+| `threedn00b/text.py` | Reads letter shapes from the bundled font (DejaVu Sans Bold) for text |
 | `threedn00b/picking.py` | Works out which wall or hole is under the mouse, and where a dragged hole goes |
 | `threedn00b/gui/` | The Qt (PySide6) window and the 3D preview (pyqtgraph) |
 
@@ -220,3 +244,6 @@ behind it and what is planned next.
 ## License
 
 GPL-3.0. See [LICENSE](LICENSE).
+
+The text uses a cut-down copy of DejaVu Sans Bold, under its own free licence:
+see [threedn00b/fonts/LICENSE](threedn00b/fonts/LICENSE).

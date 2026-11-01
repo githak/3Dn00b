@@ -172,6 +172,36 @@ def hole_under_ray(project: Project, origin, direction, mesh_distance: float | N
     return best
 
 
+def label_area(label) -> Hole:
+    """The rectangle the text covers, as an opening (for picking and outlines)."""
+    from .model import RECT, label_half_extents
+    hu, hv = label_half_extents(label)
+    return Hole(surface=label.surface, kind=RECT, width=2 * hu, height=2 * hv,
+                u=label.u, v=label.v)
+
+
+def label_under_ray(project: Project, origin, direction, mesh_distance: float | None,
+                    lid_offset: float = 0.0, lid_visible: bool = True):
+    """The text the mouse is pointing at, if any (like hole_under_ray)."""
+    best, best_t = None, None
+    for label in project.labels:
+        if label.surface not in project.surfaces() or (label.surface == LID and not lid_visible):
+            continue
+        if not label.text.strip():
+            continue
+        hit = surface_hit(project, label.surface, origin, direction, lid_offset)
+        if hit is None or not hit[3]:
+            continue
+        t, u, v, _ = hit
+        if mesh_distance is not None and t > mesh_distance + label.depth + 1.5:
+            continue
+        if not point_near_opening(project, label_area(label), u, v, 1.0):
+            continue
+        if best_t is None or t < best_t:
+            best, best_t = label, t
+    return best
+
+
 def snap_drag(project: Project, hole: Hole, u: float, v: float):
     """Snap a dragged position to centre lines and other holes on the same surface.
 

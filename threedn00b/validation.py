@@ -10,7 +10,7 @@ import itertools
 import math
 from dataclasses import dataclass
 
-from . import geometry, mounts, printers
+from . import geometry, mounts, printers, text
 from .model import (SIDE_LABELS, ALONG_V, BACK, BOTTOM, BOX, CYLINDER, FRONT, LEFT, LID, MIN_EDGE, RIGHT,
                     SCREWS, SIDE, SNAP_BUMP, SURFACE_LABELS, VENT, Hole, Project, has_lip,
                     THREADED, has_screw_lid, has_sliding_lid, has_snap_lid, has_threaded_lid,
@@ -20,7 +20,8 @@ from .model import (SIDE_LABELS, ALONG_V, BACK, BOTTOM, BOX, CYLINDER, FRONT, LE
                     has_set_sizes, divider_positions, divider_top,
                     has_dividers, has_frame,
                     hole_edge_clearance, hole_limits, inside_fillet, lip_outer_offset, lip_wall, opening_gap,
-                    point_near_opening)
+                    point_near_opening, ENGRAVED, LABEL_DEPTH_RANGE, LABEL_MIN_SIZE, RAISED, RECT,
+                    Label, clamp_label, label_half_extents, label_limits, label_thickness)
 
 ERROR, WARNING, INFO = "error", "warning", "info"
 _ORDER = {ERROR: 0, WARNING: 1, INFO: 2}
@@ -39,6 +40,7 @@ class Issue:
     # Or a fix that sets settings of the design, e.g. {"wall": 2.0} or
     # {"dividers.thickness": 1.6}.
     fix_values: dict | None = None
+    label_id: str | None = None    # a text label the issue is about (fixes then change it)
 
 
 def _mm(value: float) -> str:
@@ -48,6 +50,95 @@ def _mm(value: float) -> str:
 def hole_name(project: Project, hole: Hole) -> str:
     index = next((i for i, h in enumerate(project.holes) if h.id == hole.id), 0) + 1
     return f"Hole {index}"
+
+
+def label_name(project: Project, label: Label, start: bool = True) -> str:
+    """"The text “Screws”" (or "the text …" in the middle of a sentence)."""
+    text = label.text.strip()
+    if not text:
+        index = next((i for i, t in enumerate(project.labels) if t.id == label.id), 0) + 1
+        return f"Text {index}"
+    return f"{'The' if start else 'the'} text “{text if len(text) <= 18 else text[:16] + '…'}”"
+
+
+def _check_labels(p: Project) -> list[Issue]:
+    out = []
+    placed: list[tuple[Label, Hole]] = []
+    for label in p.labels:
+        name = label_name(p, label)
+        where = SURFACE_LABELS.get(label.surface, label.surface).lower()
+        here = label.id
+        if not label.text.strip():
+            out.append(Issue(WARNING, f"{name} is empty.", "Type some text, or remove it.",
+                             label_id=here))
+            continue
+        if label.surface not in p.surfaces():
+            if label.surface == LID:
+                out.append(Issue(ERROR, f"{name} is on the lid, but the lid is turned off.",
+                                 "Turn the lid back on, or put the text somewhere else.",
+                                 label_id=here))
+            else:
+                out.append(Issue(ERROR, f"{name} is on a surface this shape doesn't have.",
+                                 "Put it somewhere else, or remove it.", label_id=here))
+            continue
+        missing = text.missing_characters(label.text)
+        if missing:
+            out.append(Issue(WARNING, f"{name} has letters that can't be made: {missing}",
+                             "They are left out. Use other letters or signs.", label_id=here))
+        if label_limits(p, label) is None:
+            out.append(Issue(ERROR, f"{name} doesn't fit on the {where}.",
+                             "Make the letters smaller or the text shorter.", label_id=here))
+            continue
+        fix = clamp_label(p, label)
+        if fix is not None and (abs(fix[0] - label.u) > 0.01 or abs(fix[1] - label.v) > 0.01):
+            out.append(Issue(ERROR, f"{name} goes over the edge of the {where}.",
+                             "Move it further in.", fix=fix, fix_label="Move it onto the surface",
+                             label_id=here))
+        elif fix is None:
+            out.append(Issue(ERROR, f"{name} doesn't fit on the {where}.",
+                             "Make the letters smaller or the text shorter.", label_id=here))
+            continue
+        if label.size < LABEL_MIN_SIZE - 1e-6:
+            out.append(Issue(WARNING, f"{name} has letters only {_mm(label.size)} tall. "
+                             "They may not print clearly.",
+                             f"{_mm(LABEL_MIN_SIZE)} or taller prints well.",
+                             fix_values={"size": LABEL_MIN_SIZE},
+                             fix_label=f"Make them {_mm(LABEL_MIN_SIZE)}", label_id=here))
+        if label.style == RAISED and label.surface in (LID, BOTTOM):
+            if label.surface == LID:
+                why = ("The lid is printed upside down, so raised text would be underneath "
+                       "it and need supports.")
+            else:
+                why = "Raised text on the bottom makes the box wobble, and it needs supports."
+            out.append(Issue(WARNING, f"{name} stands out from the {where}. {why}",
+                             "Engraved text prints neatly here.", fix_values={"style": ENGRAVED},
+                             fix_label="Engrave it instead", label_id=here))
+        if label.style == ENGRAVED:
+            thickness = label_thickness(p, label.surface)
+            left = thickness - label.depth
+            if left < 0.8 - 1e-6:
+                deepest = round(max(LABEL_DEPTH_RANGE[0], min(0.6, thickness - 0.8)), 1)
+                out.append(Issue(ERROR if left < 0.4 - 1e-6 else WARNING,
+                                 f"{name} is cut in {_mm(label.depth)} deep: only "
+                                 f"{_mm(max(left, 0.0))} of the {where} is left behind it.",
+                                 "Make it shallower, or the " + where + " thicker.",
+                                 fix_values={"depth": deepest},
+                                 fix_label=f"Make it {_mm(deepest)} deep", label_id=here))
+        hu, hv = label_half_extents(label)
+        area = Hole(surface=label.surface, kind=RECT, width=2 * hu, height=2 * hv,
+                    u=label.u, v=label.v)
+        hit = next((h for h in p.holes if h.surface == label.surface
+                    and opening_gap(p, area, h) < 0), None)
+        if hit is not None:
+            out.append(Issue(WARNING, f"{name} runs into {hole_name(p, hit)}.",
+                             "Move the text or the hole.", label_id=here))
+        other = next((t for t, a in placed
+                      if t.surface == label.surface and opening_gap(p, area, a) < 0), None)
+        if other is not None:
+            out.append(Issue(WARNING, f"{name} runs into {label_name(p, other, start=False)}.",
+                             "Move one of them.", label_id=here))
+        placed.append((label, area))
+    return out
 
 
 def _check_inside_corners(p: Project) -> list[Issue]:
@@ -111,9 +202,12 @@ def check(project: Project, parts: geometry.Parts | None = None,
         issues += _check_holes(project)
         issues += _check_dividers(project)
         issues += _check_mounts(project)
+        label_issues = _check_labels(project)
+        issues += label_issues
         if parts is None:
             parts = geometry.build_parts(project)
-        issues += _check_geometry(project, parts)
+        # Text hanging over the edge makes loose pieces; that is already explained.
+        issues += _check_geometry(project, parts, count_pieces=not has_errors(label_issues))
         if printer is not None:
             issues += _check_printer(project, parts, printer)
     issues.sort(key=lambda i: _ORDER[i.level])
@@ -659,7 +753,7 @@ def _mm3(size) -> str:
     return " × ".join(f"{v:.0f}" for v in size) + " mm"
 
 
-def _check_geometry(p: Project, parts: geometry.Parts) -> list[Issue]:
+def _check_geometry(p: Project, parts: geometry.Parts, count_pieces: bool = True) -> list[Issue]:
     out = []
     for label, solid in (("box", parts.body), ("lid", parts.lid)):
         if solid is None:
@@ -668,7 +762,7 @@ def _check_geometry(p: Project, parts: geometry.Parts) -> list[Issue]:
             out.append(Issue(ERROR, f"The {label} could not be built correctly.",
                              "Try different measurements. If this keeps happening, please report it."))
             continue
-        pieces = geometry.piece_count(solid)
+        pieces = geometry.piece_count(solid) if count_pieces else 1
         if pieces > 1:
             out.append(Issue(ERROR, f"The {label} would fall apart into {pieces} separate pieces.",
                              "Holes are probably cutting it apart. Make them smaller or move them."))

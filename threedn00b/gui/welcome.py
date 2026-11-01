@@ -55,6 +55,19 @@ def _select_first_board(window) -> None:
 def _select_nothing(window) -> None:
     window.select_hole(None)
     window.select_mount(None)
+    window.select_label(None)
+
+
+def _demo_text(window) -> None:
+    """Engrave a name on the example's lid (once), and select it."""
+    from ..model import LID
+    _select_nothing(window)
+    if not window.project.labels:
+        window.add_label(LID)
+        window._edit_label("Change text", "text", "My Pi")
+        window.rebuild()
+    window.select_label(window.project.labels[0].id)
+    window.label_text.deselect()
 
 
 def _see_through(window) -> None:
@@ -80,8 +93,8 @@ def _plain_view(window) -> None:
 PAGES = (
     TourPage("Work through the steps",
              "The steps down the left side take you from an idea to a file you can print: "
-             "Shape, Holes, Posts, Lid and Export. Click a step to open it, or press Ctrl+1 "
-             "to Ctrl+5.", 0, lambda w: [w.rail], show_step=False),
+             "Shape, Holes, Posts, Lid, Text and Export. Click a step to open it, or press "
+             "Ctrl+1 to Ctrl+6.", 0, lambda w: [w.rail], show_step=False),
     TourPage("Start with a shape or a template",
              "Pick a box or a round container, or start from a ready-made template: cases for "
              "Raspberry Pi and Arduino boards, storage boxes, trays and more. Then type the sizes "
@@ -100,6 +113,11 @@ PAGES = (
     TourPage("Choose a lid",
              "Push-on, snap-on, sliding, screwed down or threaded. For tight lids, add a tab or a "
              "finger notch so they're easy to open.", 3, lambda w: [w.lid_card]),
+    TourPage("Add text",
+             "Put a name or a label on the walls, the lid or the bottom: raised so it stands "
+             "out, or engraved (cut in). Engraved text prints neatly on the lid and the bottom. "
+             "Drag text in the 3D view to move it.",
+             4, lambda w: [w.add_text_card, w.label_card], _demo_text),
     TourPage("See it in 3D",
              "The preview updates as you type. Drag to turn it, scroll to zoom and middle-drag "
              "to move it. The buttons in the corner show it from the front, the top or the side.",
@@ -113,16 +131,18 @@ PAGES = (
     TourPage("Check and export",
              "The app checks your design while you work and explains any problem in plain words. "
              "The status in the corner says when it's ready to print, and Export saves STL or 3MF "
-             "files for your slicer.\n\nYou can take this tour again from the ? button at the top "
-             "right, or by pressing F1.",
-             4, lambda w: [w.check_card, w.status_badge, w.export_tool_button]),
+             "files for your slicer. Print a quick fit test first to try the lid and the plugs, "
+             "and choose your printer to check the size and see how much plastic it takes."
+             "\n\nYou can take this tour again from the ? button at the top right, or by "
+             "pressing F1.",
+             5, lambda w: [w.check_card, w.status_badge, w.export_tool_button]),
 )
 
 HOW = (("shape", "Choose", "A box, a round container or a ready-made template."),
-       ("holes", "Customise", "Sizes, holes, compartments, screw posts and a lid."),
+       ("holes", "Customise", "Sizes, holes, compartments, screw posts, a lid and text."),
        ("export", "Print", "Export a file and open it in your slicer."))
 IS = ("A simple designer for things to 3D print: boxes, cases and round containers.",
-      "Type sizes in millimetres, add holes, compartments, screw posts and a lid.",
+      "Type sizes in millimetres, add holes, compartments, screw posts, a lid and text.",
       "Ready-made templates for Raspberry Pi and Arduino cases and everyday storage.",
       "It checks your design and explains problems in plain words.",
       "It saves STL or 3MF files that any slicer can print.")

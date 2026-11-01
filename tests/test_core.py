@@ -2113,3 +2113,138 @@ def test_export_fit_test(tmp_path, fmt):
                                            "test-box-fit-test-box-top.stl",
                                            "test-box-fit-test-lid.stl"]
         assert all(len(project_io.read_stl(f)) > 0 for f in files)
+
+
+# ---- text labels ---------------------------------------------------------
+
+from threedn00b import text  # noqa: E402
+from threedn00b.model import (ENGRAVED, RAISED, Label, clamp_label,  # noqa: E402
+                              label_half_extents)
+
+
+def test_font_draws_european_letters():
+    shape = text.outline("HEH", 10)
+    x0, y0, x1, y1 = shape.bounds()
+    assert y1 == pytest.approx(5, abs=0.05)              # capitals: 10 mm tall, centred
+    assert y0 == pytest.approx(-5, abs=0.05)
+    assert x0 == pytest.approx(-x1, abs=2.0)              # centred left to right
+    assert len(text.outline("o", 10).decompose()) == 1    # a ring: one piece with a hole
+    assert text.outline("o", 10).area() < text.outline("•", 10).area() * 3
+    for word in ("Æøå", "Größe", "Žluťoučký", "€ 2,50", "⌀ 5 mm", "Ü"):
+        assert text.missing_characters(word) == "", word
+        assert text.outline(word, 8).area() > 0
+    assert text.missing_characters("Hi 日本 ✓") == "日本"
+    assert text.outline("   ", 8) is None
+    # Accents sit above the capital height, tails below the baseline.
+    assert text.text_size("Å", 10)[3] > 5.5 and text.text_size("g", 10)[1] < -5.5
+
+
+def test_text_size_scales():
+    w8 = text.text_size("Screws", 8)
+    w16 = text.text_size("Screws", 16)
+    assert (w16[2] - w16[0]) == pytest.approx(2 * (w8[2] - w8[0]), rel=1e-3)
+
+
+@pytest.mark.parametrize("surface", [FRONT, BACK, LEFT, RIGHT, BOTTOM, LID])
+@pytest.mark.parametrize("style", [RAISED, ENGRAVED])
+def test_text_on_every_box_surface(surface, style):
+    p = box_with_lid()
+    plain = geometry.build_parts(p)
+    p.labels = [Label("AB 12", surface, style, size=8, depth=0.6)]
+    parts = geometry.build_parts(p)
+    part = "lid" if surface == LID else "body"
+    before, after = getattr(plain, part).volume(), getattr(parts, part).volume()
+    letters = text.outline("AB 12", 8).area() * 0.6
+    change = after - before if style == RAISED else before - after
+    assert change == pytest.approx(letters, rel=0.03)
+    assert geometry.is_valid_solid(getattr(parts, part))
+    assert geometry.piece_count(getattr(parts, part)) == 1
+    assert geometry.overlap_volume(parts.body, parts.lid) < 0.01
+
+
+@pytest.mark.parametrize("style", [RAISED, ENGRAVED])
+def test_text_wraps_round_the_container(style):
+    p = default_project(CYLINDER)
+    plain = geometry.build_parts(p).body
+    p.labels = [Label("Coffee", SIDE, style, size=10, u=90)]
+    body = geometry.build_parts(p).body
+    assert geometry.is_valid_solid(body) and geometry.piece_count(body) == 1
+    change = abs(body.volume() - plain.volume())
+    assert change == pytest.approx(text.outline("Coffee", 10).area() * 0.6, rel=0.06)
+    # It sits on the right-hand side (90°): raised text makes the container wider there.
+    if style == RAISED:
+        assert body.bounding_box()[3] == pytest.approx(p.outer_diameter / 2 + 0.6, abs=0.05)
+
+
+def test_text_reads_the_right_way():
+    """Not mirrored: the first letter is on the left as you look at the surface."""
+    for surface, left in ((FRONT, (-1, 0)), (RIGHT, (0, -1)), (LID, (-1, 0)), (BOTTOM, (-1, 0))):
+        p = box_with_lid()
+        p.labels = [Label("L.", surface, RAISED, size=10)]        # tall on the left only
+        piece = geometry.label_solid(p, p.labels[0])
+        lo, hi = piece.bounding_box()[:3], piece.bounding_box()[3:]
+        middle = [(lo[i] + hi[i]) / 2 for i in range(3)]
+        tall = piece ^ Manifold.cube([400, 400, 400], True).translate(
+            [middle[0] + 200 * left[0], middle[1] + 200 * left[1], 0] if left[0] or left[1] else [0, 0, 0])
+        assert tall.volume() > 0.7 * piece.volume(), surface
+
+
+def test_text_moves_with_the_shape():
+    p = box_with_lid(labels=[Label("Hi", FRONT, u=5)])
+    p.set_shape(CYLINDER)
+    assert p.labels[0].surface == SIDE
+    p.set_shape(BOX)
+    assert p.labels[0].surface == FRONT
+
+
+def test_text_round_trip(tmp_path):
+    p = box_with_lid(labels=[Label("Tea & co", LID, ENGRAVED, size=9, depth=0.8, u=3, v=-2)])
+    path = tmp_path / "t.3dn00b"
+    project_io.save_project(p, path)
+    assert project_io.load_project(path).labels == p.labels
+    data = project_io.to_dict(p)
+    data["project"]["labels"][0]["style"] = "bubbly"
+    with pytest.raises(project_io.ProjectFileError):
+        project_io.from_dict(data)
+
+
+def test_text_checks():
+    p = box_with_lid()
+    p.labels = [Label("Screws", FRONT)]
+    assert not [i for i in validation.check(p) if i.label_id], messages(validation.check(p))
+    p.labels = [Label("Much too long for this wall", FRONT)]
+    issue = next(i for i in validation.check(p) if i.label_id)
+    assert issue.level == validation.ERROR and "doesn't fit" in issue.message
+    p.labels = [Label("Edge", FRONT, u=35)]
+    issue = next(i for i in validation.check(p) if i.label_id)
+    assert "over the edge" in issue.message and issue.fix == clamp_label(p, p.labels[0])
+    p.labels = [Label("Tiny", FRONT, size=3)]
+    issue = next(i for i in validation.check(p) if i.label_id)
+    assert issue.level == validation.WARNING and issue.fix_values == {"size": 5.0}
+    p.labels = [Label("Up", LID, RAISED)]
+    issue = next(i for i in validation.check(p) if i.label_id)
+    assert "upside down" in issue.message and issue.fix_values == {"style": ENGRAVED}
+    p.labels = [Label("Deep", FRONT, ENGRAVED, depth=1.8)]
+    issue = next(i for i in validation.check(p) if i.label_id)
+    assert issue.level == validation.ERROR and issue.fix_values == {"depth": 0.6}
+    p.labels = [Label("Lid", LID, ENGRAVED)]
+    p.lid.enabled = False
+    issue = next(i for i in validation.check(p) if i.label_id)
+    assert issue.level == validation.ERROR and "lid is turned off" in issue.message
+
+
+def test_text_running_into_holes_and_other_text():
+    p = box_with_lid(holes=[Hole(FRONT, 8, 0, 0)])
+    p.labels = [Label("Over", FRONT), Label("Hi", BACK), Label("Hi", BACK, u=2)]
+    msgs = messages([i for i in validation.check(p) if i.label_id])
+    assert "runs into Hole 1" in msgs and "runs into the text “Hi”" in msgs
+
+
+def test_text_half_extents_and_clamp():
+    label = Label("Wide text", FRONT, size=8)
+    hu, hv = label_half_extents(label)
+    assert hv == pytest.approx(4.3, abs=0.3) and hu > 20
+    p = box_with_lid()
+    label.u, label.v = 100, 100
+    u, v = clamp_label(p, label)
+    assert u + hu <= p.inner_width / 2 and v + hv < p.outer_height / 2

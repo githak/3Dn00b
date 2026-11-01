@@ -114,6 +114,7 @@ class Viewer(gl.GLViewWidget):
         self._mesh_items: list = []
         self._marker_items: list = []
         self._mount_items: list = []
+        self._label_items: list = []
         self._grid = gl.GLGridItem()
         self._grid.setColor(GRID_COLOR)
         self.addItem(self._grid)
@@ -124,7 +125,7 @@ class Viewer(gl.GLViewWidget):
 
         self.hint = QLabel(
             "Drag to turn  ·  Scroll or right-drag to zoom  ·  Middle-drag to move\n"
-            "Drag a hole or board to move it  ·  Double-click a wall to add a hole", self)
+            "Drag a hole, board or text to move it  ·  Double-click a wall to add a hole", self)
         self.hint.setObjectName("viewHint")
 
     def set_overlay(self, widget):
@@ -206,6 +207,32 @@ class Viewer(gl.GLViewWidget):
                 if hole.surface == LID:
                     ring = ring + np.array([0, 0, self._lid_offset])
                 self._marker_items.append(self._outline(ring, color, width))
+
+    def set_label_markers(self, project: Project, selected_id: str | None, problem_ids: set):
+        """A frame around the selected text, and around text with a problem."""
+        from ..picking import label_area
+        for item in self._label_items:
+            self.removeItem(item)
+        self._label_items.clear()
+        for label in project.labels:
+            if label.surface not in project.surfaces() or not label.text.strip():
+                continue
+            if label.surface == LID and "lid" not in self._solids:
+                continue
+            if label.id == selected_id:
+                color, width = SELECTED_COLOR, 3
+            elif label.id in problem_ids:
+                color, width = PROBLEM_COLOR, 2.5
+            else:
+                continue
+            area = label_area(label)
+            area.width += 1.0                 # a little room around the letters
+            area.height += 1.0
+            out = label.depth + 0.2 if label.style == "raised" else 0.0
+            for ring in _hole_rings(project, area, out):
+                if label.surface == LID:
+                    ring = ring + np.array([0, 0, self._lid_offset])
+                self._label_items.append(self._outline(ring, color, width))
 
     def set_mount_markers(self, project: Project, selected_id: str | None, problem_ids: set):
         """Board outlines (where the board will sit, not printed) and post rings."""
@@ -393,8 +420,9 @@ def _outline(hole, steps: int = 48):
     return r * np.cos(t), r * np.sin(t)
 
 
-def _hole_rings(project: Project, hole) -> list[np.ndarray]:
-    """Outline(s) of a hole, drawn just outside the surface it is on."""
+def _hole_rings(project: Project, hole, out: float = 0.0) -> list[np.ndarray]:
+    """Outline(s) of a hole, drawn just outside the surface it is on (`out` mm further,
+    for raised text)."""
     if hole.kind == VENT:
         # The vent's whole area (what you grab and move) plus each slot.
         area = Hole(surface=hole.surface, kind=RECT, width=hole.width, height=hole.height,
@@ -408,7 +436,7 @@ def _hole_rings(project: Project, hole) -> list[np.ndarray]:
     du, dv = _outline(hole)
     rings = []
     if hole.surface == SIDE:
-        big_r = project.outer_diameter / 2 + 0.3
+        big_r = project.outer_diameter / 2 + 0.3 + out
         if hole.kind == RECT:
             # Add points along the long edges so they follow the curve.
             du = np.concatenate([np.linspace(a, b, 12, endpoint=False) for a, b in zip(du[:-1], du[1:])] + [du[-1:]])
@@ -419,13 +447,13 @@ def _hole_rings(project: Project, hole) -> list[np.ndarray]:
         return rings
     center, _ = hole_center_3d(project, hole)
     _, n, right, up = surface_frame(project, hole.surface)
-    c = np.array(center) + np.array(n) * 0.3
+    c = np.array(center) + np.array(n) * (0.3 + out)
     ring = c + np.outer(du, right) + np.outer(dv, up)
     rings.append(ring)
     if hole.surface == BOTTOM:
         # Also show it on the inside floor, which is what you usually see.
-        rings.append(ring + np.array([0, 0, project.bottom + 0.6]))
+        rings.append(ring + np.array([0, 0, project.bottom + 0.6 + out]))
     elif hole.surface != LID:
         # Wall holes: also outline on the inside face.
-        rings.append(ring - np.array(n) * (project.wall + 0.6))
+        rings.append(ring - np.array(n) * (project.wall + 0.6 + out))
     return rings

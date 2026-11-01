@@ -220,6 +220,28 @@ class Mount:
     parts_height: float = -1.0
 
 
+# Text on the outside of a surface: standing out (raised) or cut in (engraved).
+RAISED, ENGRAVED = "raised", "engraved"
+LABEL_STYLE_LABELS = {RAISED: "Raised", ENGRAVED: "Engraved"}
+LABEL_SIZE_RANGE = (2.0, 80.0)     # height of the capital letters (mm)
+LABEL_DEPTH_RANGE = (0.2, 3.0)
+LABEL_MARGIN = 1.0                 # keep this far from the edges of the surface
+LABEL_MIN_SIZE = 5.0               # smaller letters are hard to print clearly
+
+
+@dataclass
+class Label:
+    """A line of text on the outside of a wall, the bottom or the lid."""
+    text: str = "Text"
+    surface: str = FRONT
+    style: str = RAISED
+    size: float = 8.0              # height of the capital letters (mm)
+    depth: float = 0.6             # how far it stands out, or is cut in (mm)
+    u: float = 0.0                 # where its middle is, measured like a hole's position
+    v: float = 0.0
+    id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
+
+
 @dataclass
 class Project:
     shape: str = BOX
@@ -244,6 +266,7 @@ class Project:
     # container then starts over with a plain one rather than reshaping the template.
     # Older versions ignore it, so files stay readable there.
     template: str = ""
+    labels: list[Label] = field(default_factory=list)
 
     def mount(self, mount_id: str) -> Mount | None:
         return next((m for m in self.mounts if m.id == mount_id), None)
@@ -314,8 +337,11 @@ class Project:
     def hole(self, hole_id: str) -> Hole | None:
         return next((h for h in self.holes if h.id == hole_id), None)
 
+    def label(self, label_id: str) -> Label | None:
+        return next((t for t in self.labels if t.id == label_id), None)
+
     def set_shape(self, shape: str) -> None:
-        """Change the base shape, moving wall holes to the matching wall."""
+        """Change the base shape, moving wall holes and text to the matching wall."""
         if shape == self.shape:
             return
         angles = {FRONT: 0.0, RIGHT: 90.0, BACK: 180.0, LEFT: -90.0}
@@ -324,7 +350,7 @@ class Project:
             self.diameter = round(min(self.width, self.depth), 2)
             self.shape = shape
             radius = self.outer_diameter / 2
-            for hole in self.holes:
+            for hole in self.holes + self.labels:
                 if hole.surface in angles:
                     # Turn a sideways offset (mm) into the matching angle.
                     a = angles[hole.surface] + math.degrees(hole.u / radius)
@@ -333,7 +359,7 @@ class Project:
             radius = self.outer_diameter / 2
             self.width = self.depth = self.diameter
             self.shape = shape
-            for hole in self.holes:
+            for hole in self.holes + self.labels:
                 if hole.surface == SIDE:
                     a = (hole.u + 180.0) % 360.0 - 180.0
                     hole.surface = (FRONT if -45 <= a < 45 else RIGHT if 45 <= a < 135
@@ -895,3 +921,57 @@ def default_project(shape: str = BOX) -> Project:
         p.name = "My container"
         p.height = 80.0
     return p
+
+
+# ---- text labels ---------------------------------------------------------
+
+def label_half_extents(label: Label) -> tuple[float, float]:
+    """Half the size of the text (mm) to each side of its middle: across, and up/down."""
+    from .text import text_size
+    x0, y0, x1, y1 = text_size(label.text, label.size)
+    return max(-x0, x1), max(-y0, y1)
+
+
+def label_thickness(project: Project, surface: str) -> float:
+    """How thick the plastic under text on this surface is (for engraving)."""
+    if surface == BOTTOM:
+        return project.bottom
+    if surface == LID:
+        return project.lid.thickness
+    return project.wall
+
+
+def label_limits(project: Project, label: Label, margin: float = LABEL_MARGIN):
+    """Allowed (u_min, u_max, v_min, v_max) for the middle of the text, or None."""
+    hu, hv = label_half_extents(label)
+    if label.surface == SIDE:
+        radius = project.outer_diameter / 2
+        if hu <= 0 or 2 * hu / radius > math.pi:       # more than halfway round
+            return None
+    return extent_limits(project, label.surface, hu, hv, margin)
+
+
+def label_clear_of_corners(project: Project, label: Label, u: float, v: float,
+                           margin: float = LABEL_MARGIN) -> bool:
+    """On the bottom or the lid: do the text's corners stay off the rounded edge?"""
+    if label.surface not in (BOTTOM, LID):
+        return True
+    hu, hv = label_half_extents(label)
+    return all(flat_clearance(project, label.surface, u + su * hu, v + sv * hv) >= margin - 1e-6
+               for su in (-1, 1) for sv in (-1, 1))
+
+
+def clamp_label(project: Project, label: Label, margin: float = LABEL_MARGIN) -> tuple[float, float] | None:
+    """Nearest position that keeps the whole text on its surface, or None if it can't fit."""
+    limits = label_limits(project, label, margin)
+    if limits is None:
+        return None
+    u_lo, u_hi, v_lo, v_hi = limits
+    u = ((label.u + 180.0) % 360.0) - 180.0 if label.surface == SIDE else min(max(label.u, u_lo), u_hi)
+    v = min(max(label.v, v_lo), v_hi)
+    for _ in range(80):
+        if label_clear_of_corners(project, label, u, v, margin):
+            return round(u, 2), round(v, 2)
+        u *= 0.97
+        v *= 0.97
+    return None

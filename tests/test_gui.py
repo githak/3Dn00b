@@ -12,6 +12,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from threedn00b import project_io  # noqa: E402
 from threedn00b.model import BOX, CYLINDER, FRONT, INSIDE  # noqa: E402
+from threedn00b.gui.main_window import TAB_CHECK, TAB_TEXT  # noqa: E402
 
 
 @pytest.fixture
@@ -396,7 +397,7 @@ def test_fix_button_moves_board_inside(window):
     window.add_mount("rpi-ab")
     window._edit_mount("Move posts", "u", 15.0)
     window.rebuild()
-    window.tabs.setCurrentIndex(4)
+    window.tabs.setCurrentIndex(TAB_CHECK)
     row = next(i for i, issue in enumerate(window.issues) if issue.mount_id)
     window.issue_list.setCurrentRow(row)
     assert window.fix_button.isVisibleTo(window)
@@ -754,7 +755,7 @@ def test_printer_card_checks_and_remembers(window):
     from threedn00b.gui.main_window import MainWindow, release_window
     assert window.printer() is None
     assert not window.bed_row.isVisibleTo(window)
-    window.tabs.setCurrentIndex(4)
+    window.tabs.setCurrentIndex(TAB_CHECK)
     choose(window.printer_combo, "prusa-mini")
     assert window.printer().name == "Prusa MINI+" and window.printer().width == 180
     window.width_spin.setValue(200)
@@ -788,7 +789,7 @@ def test_plastic_estimate_and_wall_fix(window):
     assert "Cost" not in window.parts_summary.text()
     window.wall_spin.setValue(1.8)
     choose(window.printer_combo, "prusa-mk4")
-    window.tabs.setCurrentIndex(4)
+    window.tabs.setCurrentIndex(TAB_CHECK)
     row = next(i for i, issue in enumerate(window.issues) if issue.fix_values)
     offset = 0 if any(i.level != "info" for i in window.issues) else 1
     window.issue_list.setCurrentRow(row + offset)
@@ -805,7 +806,7 @@ def test_fit_test_card(window, tmp_path, monkeypatch):
     monkeypatch.setattr(QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: str(tmp_path)))
     shown = []
     monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda *a, **k: shown.append(a[2])))
-    window.tabs.setCurrentIndex(4)
+    window.tabs.setCurrentIndex(TAB_CHECK)
     assert not window.fit_button.isEnabled()
     assert "Nothing to test yet" in window.fit_summary.text()
     assert window.fit_lid_check.isHidden() and window.fit_openings_check.isHidden()
@@ -826,3 +827,68 @@ def test_fit_test_card(window, tmp_path, monkeypatch):
     assert window.fit_openings_check.text().startswith("Screw posts")
     window.format_combo.setCurrentIndex(window.format_combo.findData("3mf"))
     assert window.fit_button.text() == "Export fit test (3MF)…"
+
+
+def test_text_step(window):
+    from PySide6.QtTest import QTest
+    from threedn00b.model import ENGRAVED, LID, RAISED
+    window.add_label()
+    assert window.tabs.currentIndex() == TAB_TEXT
+    label = window.project.labels[0]
+    assert (label.surface, label.style) == (FRONT, RAISED)     # no lid: on the front wall
+    assert window.label_card.isVisible() and window.label_text.hasSelectedText()
+    QTest.keyClicks(window.label_text, "Screws")                # types over "Text"
+    assert window.project.labels[0].text == "Screws"
+    window.undo_stack.undo()                                    # typing is one undo step
+    assert window.project.labels[0].text == "Text"
+    window.undo_stack.redo()
+    window.label_size.setValue(10)
+    window.label_style.setCurrentIndex(window.label_style.findData(ENGRAVED))
+    window.label_style.activated.emit(window.label_style.currentIndex())
+    assert window.project.labels[0].style == ENGRAVED and window.label_depth_name.text() == "Cut in"
+    window.rebuild()
+    assert "Screws · Front wall · engraved" in window.label_list.item(0).text()
+    assert "1 text" in window.parts_summary.text()
+    window.lid_check.setChecked(True)
+    window.rebuild()
+    window.label_surface.setCurrentIndex(window.label_surface.findData(LID))
+    window.label_surface.activated.emit(window.label_surface.currentIndex())
+    assert window.project.labels[0].surface == LID
+    window._center_label()
+    assert (window.project.labels[0].u, window.project.labels[0].v) == (0, 0)
+    window.remove_selected_label()
+    assert window.project.labels == [] and not window.label_card.isVisible()
+
+
+def test_text_problem_fix(window):
+    from threedn00b.model import LID, RAISED, ENGRAVED
+    window.lid_check.setChecked(True)
+    window.rebuild()
+    window.add_label(LID)
+    window._edit_label("Style", "style", RAISED)
+    window.rebuild()
+    assert "upside down" in window.label_problem.text() and window.label_problem.isVisible()
+    window.tabs.setCurrentIndex(TAB_CHECK)
+    row = next(i for i, issue in enumerate(window.issues) if issue.label_id)
+    offset = 0 if any(i.level != "info" for i in window.issues) else 1
+    window.issue_list.setCurrentRow(row + offset)
+    assert window.fix_button.text() == "Engrave it instead"
+    window.fix_button.click()
+    assert window.project.labels[0].style == ENGRAVED
+
+
+def test_drag_text(window):
+    from PySide6.QtCore import QPoint
+    window.add_label()
+    window.rebuild()
+    label = window.project.labels[0]
+    window.select_label(None)
+    window.tabs.setCurrentIndex(0)
+    p = window.project
+    x, y = window.viewer.project_point((label.u, -p.outer_depth / 2, p.outer_height / 2 + label.v))
+    start = QPoint(round(x), round(y))
+    _drag(window.viewer, start, start + QPoint(-40, 0))
+    assert window.tabs.currentIndex() == TAB_TEXT and window.selected_label_id == label.id
+    assert window.project.labels[0].u < label.u - 5
+    window.undo_stack.undo()
+    assert window.project.labels[0].u == label.u

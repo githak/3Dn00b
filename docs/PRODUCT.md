@@ -213,6 +213,39 @@ Defaults I chose myself, which are easy to change:
   to the GPIO header as the lid's lip allows), a half-size breadboard box, a 4 × 4
   parts box, 3 × 3 craft box, guitar pick box, small screw-top tin, soap dish,
   key tray, toothbrush cup, tea bag box and remote control holder (35 templates).
+- Printer, plastic, fit test and text (0.27), the first group of additions the
+  project owner picked from a list of suggestions:
+  - Your printer and filament: a card in the Export step (saved for all designs,
+    not in the project file) with printer presets from the makers' build volumes,
+    or a typed build size; nozzle 0.2 to 0.8 mm; PLA, PETG, ABS, ASA or TPU; and
+    the spool price in the system's currency. With a printer set, the checks say
+    when a part doesn't fit on the plate (turned either way, 2 mm from the edges),
+    when box and lid only fit one after the other, and when walls or dividers
+    aren't a whole number of nozzle lines (fewer than two lines is a warning;
+    between two whole numbers is a tip), with a one-click fix. The generic
+    "larger than most printers" warning is then replaced by the real check.
+  - Plastic estimate: grams per part (solid volume × density, close for thin
+    walls) and the cost, in the summary at the top of the Export step. No print
+    time: that depends on the slicer settings, which the app can't know.
+  - Fit test print: the top of the box with the lid ring (the lid without its
+    middle: what has to fit stays), and the walls with the openings. With screw
+    posts that piece starts at the floor, which is opened up but keeps a rim, the
+    floor under the posts and dividers, and a bar from each post to the nearest
+    wall, so the board can be screwed on and the plugs tried. Pieces close
+    together become one. The card shows the grams compared with the whole thing.
+    To keep the pieces whole, the lid's screw columns were filled out towards
+    their corner; before, they touched the walls only along a line.
+  - Text: raised or engraved, on a wall, the bottom or the lid, with letter height
+    (capital letters) and depth, positioned like holes and dragged in the 3D view.
+    On a round container the text wraps around the wall. The font is DejaVu Sans
+    Bold, cut down to the letters of European languages (22 KB), read by a small
+    TrueType reader in `text.py` so no extra library is needed. Raised text on the
+    lid or the bottom gets a warning (the lid prints upside down, the box stands on
+    its bottom: it would need supports) with a fix that engraves it; the bottom's
+    text reads correctly when the box is tipped towards you. Checks: text off the
+    surface (with a fix), letters under 5 mm, engraving that leaves under 0.8 mm,
+    text running into holes or other text. Text is its own step, between Lid and
+    Export, and the welcome tour has a page about it. Project format 15.
 - Push-on lid that follows the box size, with fit presets.
 - Plain-language checks covering impossible sizes, thin walls, holes off the
   edge, holes behind the lid lip, overlapping or too-close holes, a lid that
@@ -230,8 +263,16 @@ STL import and editing.
 
 ## Postponed (candidates for later, in rough priority order)
 
-1. Packages for other systems (Flatpak or AppImage, Fedora, arm64 such as the
-   Raspberry Pi) if people ask for them.
+Picked by the project owner, in this order (each group once the one before works):
+
+1. Recent files, autosave and recovery; saving a design as your own template;
+   measurements in the 3D view.
+2. More boards, checked against the makers' drawings (Pico 2 W, Arduino Nano,
+   Orange Pi Zero, ESP32-S3 DevKit, Raspberry Pi 500 …).
+3. A cable notch in the rim; mounting options (keyhole slots, screw tabs);
+   holes for heat-set inserts.
+4. Packages for other systems (arm64 such as the Raspberry Pi, Flatpak or
+   AppImage, Fedora).
 
 Each addition must pass the brief's test: does it make a common beginner task
 much easier, without CAD vocabulary, and without making the interface busier?

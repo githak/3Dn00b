@@ -12,7 +12,7 @@ from dataclasses import dataclass
 import numpy as np
 from manifold3d import CrossSection, Error, JoinType, Manifold, OpType
 
-from .model import (TAB_REACH, TAB_WIDTH, ANGLED, BACK, BOTTOM, BOX, CAP_TOP_GAP, CYLINDER, FRAME_RIM, FRONT, LEFT,
+from .model import (RAISED, TAB_REACH, TAB_WIDTH, ANGLED, BACK, BOTTOM, BOX, CAP_TOP_GAP, CYLINDER, FRAME_RIM, FRONT, LEFT,
                     LID, RIGHT, ROUND, SCREWED, SCREWS, SIDE, SLIDING, SNAP_BUMP, SNAP_RIDGE, THREADED, THREAD_DEPTH,
                     THREAD_PITCH, VENT, Hole, Project, corner_rounding, divider_fillet,
                     divider_positions, divider_top, floor_inset, frame_thickness,
@@ -20,7 +20,7 @@ from .model import (TAB_REACH, TAB_WIDTH, ANGLED, BACK, BOTTOM, BOX, CAP_TOP_GAP
                     has_snap_lid, has_threaded_lid, inside_fillet, lid_ceiling, lid_pilot_depth,
                     notch_size, SIDE_ANGLES, side_span,
                     lid_screw_positions, lid_top_z, lip_outer_offset, lip_wall, slide_engage,
-                    slide_groove, thread_sizes, vent_openings)
+                    slide_groove, surface_frame, thread_sizes, vent_openings)
 
 
 @dataclass
@@ -201,6 +201,7 @@ def build_body(project: Project) -> Manifold:
     notch = _finger_notch(project)
     if notch is not None:
         body = body - notch
+    body = _apply_labels(project, body, lid=False)
     cutters = [_hole_cutter(project, hole) for hole in project.holes if hole.surface != LID]
     cutters = [c for c in cutters if c is not None]
     if cutters:
@@ -553,11 +554,66 @@ def _finger_notch(project: Project) -> Manifold | None:
 
 
 def _cut_lid_holes(project: Project, lid: Manifold) -> Manifold:
+    lid = _apply_labels(project, lid, lid=True)
     cutters = [_hole_cutter(project, hole) for hole in project.holes if hole.surface == LID]
     cutters = [c for c in cutters if c is not None]
     if cutters:
         lid = lid - Manifold.batch_boolean(cutters, OpType.Add)
     return lid
+
+
+LABEL_EMBED = 0.3       # raised text reaches this far into the surface, so they join
+
+
+def label_solid(project: Project, label) -> Manifold | None:
+    """The text as a solid on the outside of its surface: what is added (raised
+    text) or cut away (engraved text)."""
+    from .text import outline
+    if label.surface not in project.surfaces():
+        return None
+    shape = outline(label.text, label.size)
+    if shape is None:
+        return None
+    if label.style == RAISED:
+        z0, z1 = -LABEL_EMBED, label.depth
+    else:
+        z0, z1 = -label.depth, 1.0
+    slab = Manifold.extrude(shape, z1 - z0).translate([0.0, 0.0, z0])
+    if label.surface == SIDE:
+        # Wrap it around the round wall: across becomes the angle, out becomes the radius.
+        radius = project.outer_diameter / 2
+        start = math.radians(label.u)
+        z_mid = project.outer_height / 2 + label.v
+        slab = slab.refine_to_length(1.0)
+
+        def wrap(points):
+            angle = start + points[:, 0] / radius
+            r = radius + points[:, 2]
+            return np.column_stack([r * np.sin(angle), -r * np.cos(angle), z_mid + points[:, 1]])
+        return slab.warp_batch(wrap)
+    center, normal, right, up = surface_frame(project, label.surface)
+    origin = np.array(center) + np.array(right) * label.u + np.array(up) * label.v
+    text_up = np.array(up)
+    if label.surface == BOTTOM:
+        text_up = -text_up          # reads the right way when the box is tipped towards you
+    matrix = np.column_stack([np.array(right, float), text_up.astype(float),
+                              np.array(normal, float), origin])
+    return slab.transform(matrix)
+
+
+def _apply_labels(project: Project, solid: Manifold, lid: bool) -> Manifold:
+    raised, engraved = [], []
+    for label in project.labels:
+        if (label.surface == LID) != lid:
+            continue
+        piece = label_solid(project, label)
+        if piece is not None:
+            (raised if label.style == RAISED else engraved).append(piece)
+    if raised:
+        solid = solid + Manifold.batch_boolean(raised, OpType.Add)
+    if engraved:
+        solid = solid - Manifold.batch_boolean(engraved, OpType.Add)
+    return solid
 
 
 def build_parts(project: Project) -> Parts:
