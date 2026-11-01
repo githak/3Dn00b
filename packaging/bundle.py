@@ -121,12 +121,21 @@ def share_identical(vendor: Path, pythons: tuple[str, ...]) -> None:
     if len(pythons) < 2:
         return
     first = vendor / f"py{pythons[0]}"
-    for entry in sorted(first.iterdir()):
-        copies = [vendor / f"py{py}" / entry.name for py in pythons]
-        if all(c.exists() for c in copies) and len({_tree_hash(c) for c in copies}) == 1:
-            shutil.move(str(entry), common / entry.name)
-            for c in copies[1:]:
-                shutil.rmtree(c) if c.is_dir() else c.unlink()
+
+    def same_everywhere(name: str) -> bool:
+        copies = [vendor / f"py{py}" / name for py in pythons]
+        return all(c.exists() for c in copies) and len({_tree_hash(c) for c in copies}) == 1
+
+    shared = {e.name for e in first.iterdir() if same_everywhere(e.name)}
+    # A package's compiled libraries (numpy.libs, ...) are found next to the package
+    # ($ORIGIN/../numpy.libs), so they only move along with the package itself.
+    shared = {name for name in shared
+              if not name.endswith(".libs") or name[:-len(".libs")] in shared}
+    for name in sorted(shared):
+        shutil.move(str(first / name), common / name)
+        for py in pythons[1:]:
+            copy = vendor / f"py{py}" / name
+            shutil.rmtree(copy) if copy.is_dir() else copy.unlink()
 
 
 def slim_down(vendor: Path) -> None:
@@ -189,6 +198,52 @@ def trim_qt(pyside: Path) -> None:
     for name, path in libs.items():
         if name not in needed and not path.is_dir():
             path.unlink()
+
+
+# The system libraries the bundled Qt needs: everything its kept parts link to,
+# except what the GTK theme plugin needs (it only loads on GTK desktops, which have it).
+SYSTEM_LIBRARIES = (
+    "libEGL.so.1", "libGL.so.1", "libfontconfig.so.1", "libfreetype.so.6", "libzstd.so.1",
+    "libdbus-1.so.3", "libglib-2.0.so.0", "libgthread-2.0.so.0", "libX11.so.6", "libX11-xcb.so.1",
+    "libxkbcommon.so.0", "libxkbcommon-x11.so.0", "libxcb.so.1", "libxcb-util.so.1",
+    "libxcb-cursor.so.0", "libxcb-glx.so.0", "libxcb-icccm.so.4", "libxcb-image.so.0",
+    "libxcb-keysyms.so.1", "libxcb-randr.so.0", "libxcb-render.so.0", "libxcb-render-util.so.0",
+    "libxcb-shape.so.0", "libxcb-shm.so.0", "libxcb-sync.so.1", "libxcb-xfixes.so.0",
+    "libxcb-xkb.so.1", "libwayland-client.so.0", "libwayland-cursor.so.0", "libwayland-egl.so.1",
+    "libSM.so.6", "libICE.so.6",                 # Qt's X11 support on ARM links these too
+)
+# Part of every Linux system.
+BASE_LIBRARIES = ("libc.so.6", "libm.so.6", "libdl.so.2", "libpthread.so.0", "librt.so.1",
+                  "libutil.so.1", "libstdc++.so.6", "libgcc_s.so.1", "libz.so.1",
+                  "ld-linux-x86-64.so.2", "ld-linux-aarch64.so.1")
+GTK_PLUGIN_LIBRARIES = ("libgtk-3.so.0", "libgdk-3.so.0", "libpango-1.0.so.0",
+                        "libpangocairo-1.0.so.0", "libcairo.so.2", "libcairo-gobject.so.2",
+                        "libatk-1.0.so.0", "libharfbuzz.so.0", "libgio-2.0.so.0",
+                        "libgobject-2.0.so.0", "libgdk_pixbuf-2.0.so.0")
+
+
+def check_libraries(tree: Path, extra_dirs: tuple[Path, ...] = ()) -> None:
+    """Make sure every bundled library finds the libraries it needs: inside the
+    package where its search path (RUNPATH) points, or on the system. Stops the
+    build with a list of what's missing."""
+    known = set(SYSTEM_LIBRARIES) | set(BASE_LIBRARIES) | set(GTK_PLUGIN_LIBRARIES)
+    problems = []
+    for path in sorted(tree.rglob("*.so*")):
+        if not path.is_file() or path.is_symlink() or path.read_bytes()[:4] != b"\x7fELF":
+            continue
+        out = subprocess.run(["readelf", "-d", str(path)], capture_output=True, text=True).stdout
+        dirs = [Path(d.replace("$ORIGIN", str(path.parent))) for found in
+                re.findall(r"\((?:RUNPATH|RPATH)\)\s+Library r(?:un)?path: \[([^\]]+)\]", out)
+                for d in found.split(":")] + list(extra_dirs)
+        for name in re.findall(r"\(NEEDED\)\s+Shared library: \[([^\]]+)\]", out):
+            if "/" in name:                          # a path, e.g. $ORIGIN/../lib/libx.so
+                if not Path(name.replace("$ORIGIN", str(path.parent))).exists():
+                    problems.append(f"{path.relative_to(tree)} needs {name}")
+            elif name not in known and not any((d / name).exists() for d in dirs):
+                problems.append(f"{path.relative_to(tree)} needs {name}")
+    if problems:
+        sys.exit("Bundled libraries that can't be found:\n  " + "\n  ".join(problems))
+    print("All bundled libraries find what they need.")
 
 
 def write_app_tree(pkg: Path, vendor: Path, prefix: str = "usr") -> Path:

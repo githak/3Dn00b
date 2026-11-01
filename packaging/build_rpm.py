@@ -20,25 +20,12 @@ import shutil
 import sys
 from pathlib import Path
 
-from bundle import (ROOT, TARGET_ALIASES, TARGETS, app_version, fix_permissions,
-                    prepare_libraries, run, write_app_tree)
+from bundle import (ROOT, SYSTEM_LIBRARIES, TARGET_ALIASES, TARGETS, app_version,
+                    check_libraries, fix_permissions, prepare_libraries, run, write_app_tree)
 
 PYTHONS = ("3.12", "3.13", "3.14")
-# The system libraries the bundled Qt needs: everything its kept parts link to
-# (found with readelf), except the GTK theme plugin's, which only loads on GTK desktops.
-LIBRARIES = (
-    "libEGL.so.1", "libGL.so.1", "libfontconfig.so.1", "libfreetype.so.6", "libzstd.so.1",
-    "libdbus-1.so.3", "libglib-2.0.so.0", "libgthread-2.0.so.0", "libX11.so.6", "libX11-xcb.so.1",
-    "libxkbcommon.so.0", "libxkbcommon-x11.so.0", "libxcb.so.1", "libxcb-util.so.1", "libxcb-cursor.so.0",
-    "libxcb-glx.so.0", "libxcb-icccm.so.4", "libxcb-image.so.0", "libxcb-keysyms.so.1",
-    "libxcb-randr.so.0", "libxcb-render.so.0", "libxcb-render-util.so.0", "libxcb-shape.so.0",
-    "libxcb-shm.so.0", "libxcb-sync.so.1", "libxcb-xfixes.so.0", "libxcb-xkb.so.1",
-    "libwayland-client.so.0", "libwayland-cursor.so.0", "libwayland-egl.so.1",
-)
-
-
 def spec(version: str, machine: str) -> str:
-    requires = "\n".join(f"Requires: {lib}()(64bit)" for lib in LIBRARIES)
+    requires = "\n".join(f"Requires: {lib}()(64bit)" for lib in SYSTEM_LIBRARIES)
     return f"""\
 Name:           3dn00b
 Version:        {version}
@@ -101,6 +88,7 @@ def main() -> int:
     tree, vendor = work / "SOURCES/tree", work / "vendor"
     prepare_libraries(vendor, target, PYTHONS)
     write_app_tree(tree, vendor)
+    check_libraries(tree)
     fix_permissions(tree)
     spec_file = work / "SPECS/3dn00b.spec"
     spec_file.parent.mkdir(parents=True)

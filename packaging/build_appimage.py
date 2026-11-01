@@ -25,8 +25,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-from bundle import (HERE, ROOT, TARGET_ALIASES, TARGETS, app_version, fix_permissions,
-                    prepare_libraries, run, write_app_tree)
+from bundle import (ROOT, TARGET_ALIASES, TARGETS, app_version, check_libraries,
+                    fix_permissions, prepare_libraries, run, write_app_tree)
 
 PYTHON = "3.12"
 # Libraries Qt's X11 support needs that a desktop may not have (with what they need).
@@ -85,7 +85,7 @@ def copy_python(source: Path, dest: Path) -> None:
             shutil.rmtree(path)
     for path in [*dest.glob("lib/libtcl*"), *dest.glob("lib/libtk*"), *dest.glob("lib/tcl*"),
                  *dest.glob("lib/tk*"), *dest.glob("lib/itcl*"), *dest.glob("lib/thread*"),
-                 *lib.glob("lib-dynload/_tkinter*")]:
+                 *lib.glob("lib-dynload/_tkinter*"), *lib.glob("lib-dynload/_crypt*")]:
         shutil.rmtree(path) if path.is_dir() else path.unlink()
     for cache in list(dest.rglob("__pycache__")):
         shutil.rmtree(cache)
@@ -147,6 +147,7 @@ def main() -> int:
     (appdir / "AppRun").write_text(APPRUN)
     (appdir / "AppRun").chmod(0o755)
     desktop_entry(appdir, version)
+    check_libraries(appdir, extra_dirs=(appdir / "usr/lib",))   # AppRun adds usr/lib
     fix_permissions(appdir)
     # Compile the Python files once: an AppImage can't store them when it runs.
     run(appdir / "usr/python/bin/python3", "-m", "compileall", "-q", "-j", "0",

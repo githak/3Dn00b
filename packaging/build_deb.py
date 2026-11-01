@@ -22,7 +22,7 @@ import sys
 from pathlib import Path
 
 from bundle import (HERE, ROOT, TARGET_ALIASES, TARGETS, app_version, changelog,
-                    fix_permissions, prepare_libraries, run, write_app_tree)
+                    check_libraries, fix_permissions, prepare_libraries, run, write_app_tree)
 
 # System libraries Qt needs; apt installs them together with 3Dn00b.
 DEPENDS = [
@@ -32,6 +32,7 @@ DEPENDS = [
     "libxcb-image0", "libxcb-keysyms1", "libxcb-randr0", "libxcb-render0",
     "libxcb-render-util0", "libxcb-shape0", "libxcb-shm0", "libxcb-sync1", "libxcb-xfixes0",
     "libxcb-xkb1", "libwayland-client0", "libwayland-cursor0", "libwayland-egl1",
+    "libsm6", "libice6",
 ]
 
 
@@ -79,6 +80,7 @@ def main() -> int:
     pkg, vendor = work / "pkg", work / "vendor"
     prepare_libraries(vendor, target)
     write_app_tree(pkg, vendor)
+    check_libraries(pkg)
     (pkg / "usr/share/doc/3dn00b/changelog.Debian.gz").write_bytes(changelog(version))
     write_control(pkg, version, target)
     fix_permissions(pkg)
