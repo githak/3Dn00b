@@ -22,9 +22,11 @@ print. No sketches, no constraints, no feature trees.
     Pi 5 with an M.2 HAT+ or AI HAT+, Pi 3 A+, Pi Zero / Zero 2 W, two Pi Zero 2 W
     stacked crosswise, Pi Pico / Pico 2 (also W), Arduino Uno R3 / R4, Mega 2560
     and Nano (Nano, Nano Every, Nano ESP32), ESP32-S3-DevKitC-1, 30-pin ESP32
-    DevKit, a half-size
+    DevKit, Orange Pi Zero 3, a half-size
     breadboard box, and a project box for your own board. Every board's holes and
-    sockets are checked against the maker's official drawings.
+    sockets are checked against the maker's official drawings, except the 30-pin
+    ESP32 and the Orange Pi Zero 3, whose makers publish none: measure your board
+    and set its hole spacing in the Posts step.
   - *Storage*: storage box, parts tray, screw sorter, 4 × 4 parts box, 3 × 3
     craft box, AA battery box, weekly pill box, business card box, dice box,
     guitar pick box, small screw-top tin, money box.

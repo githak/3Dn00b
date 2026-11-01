@@ -202,6 +202,29 @@ def esp32_s3_case() -> Project:
     return p
 
 
+# Orange Pi Zero 3: Orange Pi's user manual (v1.1 and v1.3) gives the board's size, 55 x 50 mm,
+# and four 3.0 mm holes, but not where the holes or sockets are. Its photos show the holes
+# near the corners and all the sockets (micro HDMI, USB-C, USB-A, Ethernet) along one 55 mm
+# edge. So this uses the custom 4-hole board with a spacing estimated from the photo, for
+# the user to measure, and one opening along the socket edge that fits the sockets wherever
+# they are on it, as tall as an Ethernet socket (the tallest, about 13.5 mm).
+ORANGE_PI_ZERO3 = (55.0, 50.0, 50.0, 45.0)      # board, and the hole spacing to measure
+
+
+def orange_pi_zero3_case() -> Project:
+    w, d, sx, sy = ORANGE_PI_ZERO3
+    side, front, back = 2.5, 4.0, 2.0         # the sockets stick out at the front
+    p = _box("Orange Pi Zero 3 case", w + 2 * side, d + front + back, 28.0)
+    m = Mount(board="custom", screw="M2.5", length=5.0, u=0.0, v=(front - back) / 2,
+              board_width=w, board_depth=d, spacing_x=sx, spacing_y=sy, parts_height=14.0)
+    p.mounts.append(m)
+    top = _top(p, m)
+    wall, along = _facing(p, m, w / 2, 0)
+    _opening(p, wall, along, top - 2.0, top + 15.0, w - 6.0, rounding=2.0)
+    p.holes.append(Hole(surface=LID, kind=VENT, width=30.0, height=14.0, rounding=1.0))
+    return p
+
+
 ESP32_SIZE = (51.5, 28.5, 47.0, 23.5)    # common 30-pin ESP32 DevKit: board and hole spacing
 
 
@@ -565,6 +588,14 @@ TEMPLATES = {
                          "guides keep it in place. Openings for both USB plugs and a hole for "
                          "wires. Jumper wires on the pins need about 20 mm under the board: make "
                          "the supports and the box taller.", esp32_s3_case),
+    "orange-pi-zero3": Template("Orange Pi Zero 3 case (measure your board)",
+                                "Orange Pi's manual gives the board's size (55 × 50 mm) and its "
+                                "four 3 mm holes, but not where they are: measure the distance "
+                                "between the holes on your board and set it in the Posts step "
+                                "(it starts at 50 × 45 mm). One wide opening at the front fits "
+                                "the micro HDMI, USB-C, USB and network sockets along that edge; "
+                                "make it smaller to suit what you plug in. Air vent in the lid.",
+                                orange_pi_zero3_case),
     "esp32": Template("ESP32 DevKit case",
                       "For the common 30-pin ESP32 boards. Boards differ: measure yours and "
                       "change the board size and hole spacing in the Posts tab.", esp32_case),
@@ -622,7 +653,7 @@ TEMPLATES = {
 # How the list is grouped in the app: (heading, template keys).
 GROUPS = (
     ("Cases for boards", ("pi", "pi-gpio", "pi5-fan", "pi5-hat", "pi-3a", "pi-zero",
-                          "pi-zero-stack", "pico", "arduino", "mega", "nano", "esp32-s3", "esp32",
+                          "pi-zero-stack", "pico", "arduino", "mega", "nano", "esp32-s3", "esp32", "orange-pi-zero3",
                           "breadboard", "project-box")),
     ("Storage", ("storage", "tray", "sorter", "parts", "craft", "batteries", "pills", "cards",
                  "dice", "picks", "tin", "money")),
