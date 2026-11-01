@@ -90,6 +90,8 @@ ICONS = {
                  'width="9" height="4" rx="1"/>',
     "vent": '<rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M8 8.5v7M12 8.5v7M16 8.5v7"/>',
     "plus": '<path d="M12 5v14M5 12h14"/>',
+    "text": '<path d="M5 7V4.5h14V7"/><path d="M12 4.5v15"/><path d="M9 19.5h6"/>',
+    "ruler": '<path d="M3.5 16 16 3.5l4.5 4.5L8 20.5z"/><path d="m7.5 12 2 2M10.5 9l2 2M13.5 6l2 2"/>',
     "trash": '<path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 12.5A1.5 1.5 0 0 0 '
              '8.5 21h7a1.5 1.5 0 0 0 1.5-1.5L18 7"/><path d="M9 7V4.5A1.5 1.5 0 0 1 10.5 3h3A1.5 '
              '1.5 0 0 1 15 4.5V7"/>',
@@ -98,6 +100,8 @@ ICONS = {
     "rotate": '<path d="M20.5 12a8.5 8.5 0 1 1-2.6-6.1L20.5 8.5"/><path d="M20.5 3.5v5h-5"/>',
     "fit": '<path d="M3 8V5a2 2 0 0 1 2-2h3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 '
            '21H5a2 2 0 0 1-2-2v-3"/>',
+    "xray": '<path d="M12 2.8 20.5 7.4v9.2L12 21.2l-8.5-4.6V7.4z"/>'
+            '<path d="M3.5 7.4 12 12l8.5-4.6M12 12v9.2" stroke-dasharray="1.6 2"/>',
     "eye": '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
     "template": '<rect x="3" y="3" width="7.5" height="7.5" rx="1.5"/><rect x="13.5" y="3" '
                 'width="7.5" height="7.5" rx="1.5"/><rect x="3" y="13.5" width="7.5" height="7.5" '

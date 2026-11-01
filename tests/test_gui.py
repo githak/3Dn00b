@@ -12,16 +12,20 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from threedn00b import project_io  # noqa: E402
 from threedn00b.model import BOX, CYLINDER, FRONT, INSIDE  # noqa: E402
+from threedn00b.gui.main_window import TAB_CHECK, TAB_TEXT  # noqa: E402
 
 
 @pytest.fixture
 def window(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))      # templates, backups
     from threedn00b.gui.viewer import prepare_opengl
     if QApplication.instance() is None:
         prepare_opengl()
     app = QApplication.instance() or QApplication([])
-    from threedn00b.gui.main_window import MainWindow
+    from PySide6.QtCore import QSettings
+    from threedn00b.gui.main_window import APP_NAME, MainWindow
+    QSettings(APP_NAME, APP_NAME).clear()     # Qt keeps the settings file of the first test
     w = MainWindow()
     w.show()
     app.processEvents()
@@ -394,7 +398,7 @@ def test_fix_button_moves_board_inside(window):
     window.add_mount("rpi-ab")
     window._edit_mount("Move posts", "u", 15.0)
     window.rebuild()
-    window.tabs.setCurrentIndex(4)
+    window.tabs.setCurrentIndex(TAB_CHECK)
     row = next(i for i, issue in enumerate(window.issues) if issue.mount_id)
     window.issue_list.setCurrentRow(row)
     assert window.fix_button.isVisibleTo(window)
@@ -696,16 +700,326 @@ def test_tour_highlights_the_right_parts(window):
     from PySide6.QtCore import QRect
     from PySide6.QtGui import QColor, QPixmap
     from threedn00b import templates
-    from threedn00b.gui.welcome import PAGES, highlight, visible_rect
+    from threedn00b.gui.welcome import PAGES, highlight
     window._load(templates.from_template("pi"), None)
     for page in PAGES:
         window.tabs.setCurrentIndex(page.step)
         page.prepare(window)
         QApplication.processEvents()
-        rects = [visible_rect(w, window) for w in page.targets(window)]
-        assert rects and all(not r.isEmpty() and window.rect().contains(r.center()) for r in rects)
+        widgets = page.highlights(window)
+        rects = page.rects(window)
+        assert len(rects) == len(widgets)                  # everything named is on screen
+        assert all(not r.isEmpty() and window.rect().contains(r.center()) for r in rects)
+        # The step being explained is highlighted in the rail too, and it's the selected one.
+        step = window.rail_buttons[page.step]
+        assert (step in widgets) == page.show_step
+        assert step.isChecked()
     plain = QPixmap(200, 100)
     plain.fill(QColor("#808080"))
     marked = highlight(plain, [QRect(20, 20, 60, 60)]).toImage()
     assert marked.pixelColor(50, 50).name() == "#808080"   # the highlighted part stays bright
     assert marked.pixelColor(150, 50).value() < 80         # the rest is darkened
+
+
+def test_see_through_view(window):
+    from threedn00b.gui.viewer import BACKGROUND, GhostMesh, ON_TOP_OPTIONS
+    window.lid_check.setChecked(True)
+    window.add_hole()
+    window.rebuild()
+    viewer = window.viewer
+    assert not window.see_through_action.isChecked() and not viewer.see_through
+    assert window.see_through_action.shortcut().toString() == "Ctrl+T"
+    window.see_through_action.setChecked(True)
+    assert viewer.see_through
+    assert viewer._mesh_items and all(isinstance(m, GhostMesh) for m in viewer._mesh_items)
+    assert all(m.opts["color"][3] < 0.5 for m in viewer._mesh_items)        # faint
+    # The hole outlines are drawn on top (pyqtgraph keeps the options in a private field).
+    assert all(m._GLGraphicsItem__glOpts == ON_TOP_OPTIONS for m in viewer._marker_items)
+    shot = viewer.grabFramebuffer()
+    assert not shot.isNull()
+    window.see_through_action.setChecked(False)                 # back to solid
+    assert not any(isinstance(m, GhostMesh) for m in viewer._mesh_items)
+    image = viewer.grabFramebuffer()
+    # Still draws normally afterwards: the box covers the middle of the view.
+    c = image.pixelColor(image.width() // 2, image.height() // 2)
+    assert (c.red(), c.green(), c.blue()) != BACKGROUND
+    window.show_lid_action.trigger()                           # Lid (Ctrl+L) hides the lid
+    assert "lid" not in viewer._solids
+
+
+def choose(combo, data):
+    combo.setCurrentIndex(combo.findData(data))
+    combo.activated.emit(combo.currentIndex())
+
+
+def test_printer_card_checks_and_remembers(window):
+    from threedn00b.gui.main_window import MainWindow, release_window
+    assert window.printer() is None
+    assert not window.bed_row.isVisibleTo(window)
+    window.tabs.setCurrentIndex(TAB_CHECK)
+    choose(window.printer_combo, "prusa-mini")
+    assert window.printer().name == "Prusa MINI+" and window.printer().width == 180
+    window.width_spin.setValue(200)
+    window.rebuild()
+    assert any("doesn't fit" in i.message for i in window.issues)
+    choose(window.printer_combo, "custom")
+    assert window.bed_row.isVisibleTo(window)
+    window.bed_w.setValue(300)
+    assert window.printer().width == 300
+    assert not any("doesn't fit" in i.message for i in window.issues)
+    choose(window.nozzle_combo, 0.6)
+    choose(window.material_combo, "PETG")
+    window.price_spin.setValue(300)
+    # The choice is kept for the next time 3Dn00b starts.
+    again = MainWindow()
+    try:
+        p = again.printer()
+        assert (p.width, p.nozzle) == (300, 0.6)
+        assert again.material_combo.currentData() == "PETG"
+        assert again.price_spin.value() == 300
+    finally:
+        release_window(again)
+
+
+def test_plastic_estimate_and_wall_fix(window):
+    window.lid_check.setChecked(True)
+    window.rebuild()
+    text = window.parts_summary.text()
+    assert "g of PLA (" in text and "Cost" in text      # box + lid, and a price
+    window.price_spin.setValue(0)
+    assert "Cost" not in window.parts_summary.text()
+    window.wall_spin.setValue(1.8)
+    choose(window.printer_combo, "prusa-mk4")
+    window.tabs.setCurrentIndex(TAB_CHECK)
+    row = next(i for i, issue in enumerate(window.issues) if issue.fix_values)
+    offset = 0 if any(i.level != "info" for i in window.issues) else 1
+    window.issue_list.setCurrentRow(row + offset)
+    assert window.fix_button.isVisibleTo(window)
+    assert window.fix_button.text() == "Make them 2 mm"
+    window.fix_button.click()
+    assert window.project.wall == 2.0
+    window.undo_stack.undo()
+    assert window.project.wall == 1.8
+
+
+def test_fit_test_card(window, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog, QMessageBox
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: str(tmp_path)))
+    shown = []
+    monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda *a, **k: shown.append(a[2])))
+    window.tabs.setCurrentIndex(TAB_CHECK)
+    assert not window.fit_button.isEnabled()
+    assert "Nothing to test yet" in window.fit_summary.text()
+    assert window.fit_lid_check.isHidden() and window.fit_openings_check.isHidden()
+    window.lid_check.setChecked(True)
+    window.rebuild()
+    assert window.fit_button.isEnabled() and not window.fit_lid_check.isHidden()
+    assert "instead of" in window.fit_summary.text()
+    assert window.fit_test_choice() == (True, False)
+    window.fit_lid_check.setChecked(False)
+    assert not window.fit_button.isEnabled()
+    window.fit_lid_check.setChecked(True)
+    window.fit_button.click()
+    assert (tmp_path / "my-box-fit-test-box-top.stl").exists()
+    assert (tmp_path / "my-box-fit-test-lid.stl").exists()
+    assert "Print these first" in shown[-1]
+    window.add_mount("rpi-ab")
+    window.rebuild()
+    assert window.fit_openings_check.text().startswith("Screw posts")
+    window.format_combo.setCurrentIndex(window.format_combo.findData("3mf"))
+    assert window.fit_button.text() == "Export fit test (3MF)…"
+
+
+def test_text_step(window):
+    from PySide6.QtTest import QTest
+    from threedn00b.model import ENGRAVED, LID, RAISED
+    window.add_label()
+    assert window.tabs.currentIndex() == TAB_TEXT
+    label = window.project.labels[0]
+    assert (label.surface, label.style) == (FRONT, RAISED)     # no lid: on the front wall
+    assert window.label_card.isVisible() and window.label_text.hasSelectedText()
+    QTest.keyClicks(window.label_text, "Screws")                # types over "Text"
+    assert window.project.labels[0].text == "Screws"
+    window.undo_stack.undo()                                    # typing is one undo step
+    assert window.project.labels[0].text == "Text"
+    window.undo_stack.redo()
+    window.label_size.setValue(10)
+    window.label_style.setCurrentIndex(window.label_style.findData(ENGRAVED))
+    window.label_style.activated.emit(window.label_style.currentIndex())
+    assert window.project.labels[0].style == ENGRAVED and window.label_depth_name.text() == "Cut in"
+    window.rebuild()
+    assert "Screws · Front wall · engraved" in window.label_list.item(0).text()
+    assert "1 text" in window.parts_summary.text()
+    window.lid_check.setChecked(True)
+    window.rebuild()
+    window.label_surface.setCurrentIndex(window.label_surface.findData(LID))
+    window.label_surface.activated.emit(window.label_surface.currentIndex())
+    assert window.project.labels[0].surface == LID
+    window._center_label()
+    assert (window.project.labels[0].u, window.project.labels[0].v) == (0, 0)
+    window.remove_selected_label()
+    assert window.project.labels == [] and not window.label_card.isVisible()
+
+
+def test_text_problem_fix(window):
+    from threedn00b.model import LID, RAISED, ENGRAVED
+    window.lid_check.setChecked(True)
+    window.rebuild()
+    window.add_label(LID)
+    window._edit_label("Style", "style", RAISED)
+    window.rebuild()
+    assert "upside down" in window.label_problem.text() and window.label_problem.isVisible()
+    window.tabs.setCurrentIndex(TAB_CHECK)
+    row = next(i for i, issue in enumerate(window.issues) if issue.label_id)
+    offset = 0 if any(i.level != "info" for i in window.issues) else 1
+    window.issue_list.setCurrentRow(row + offset)
+    assert window.fix_button.text() == "Engrave it instead"
+    window.fix_button.click()
+    assert window.project.labels[0].style == ENGRAVED
+
+
+def test_drag_text(window):
+    from PySide6.QtCore import QPoint
+    window.add_label()
+    window.rebuild()
+    label = window.project.labels[0]
+    window.select_label(None)
+    window.tabs.setCurrentIndex(0)
+    p = window.project
+    x, y = window.viewer.project_point((label.u, -p.outer_depth / 2, p.outer_height / 2 + label.v))
+    start = QPoint(round(x), round(y))
+    _drag(window.viewer, start, start + QPoint(-40, 0))
+    assert window.tabs.currentIndex() == TAB_TEXT and window.selected_label_id == label.id
+    assert window.project.labels[0].u < label.u - 5
+    window.undo_stack.undo()
+    assert window.project.labels[0].u == label.u
+
+
+
+def test_recent_designs(window, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog
+    first, second = tmp_path / "first.3dn00b", tmp_path / "second.3dn00b"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (str(first), "")))
+    window.width_spin.setValue(90)
+    assert window.save_project()
+    project_io.save_project(project_io.load_project(first), second)
+    window.open_path(second)
+    assert window.recent_files() == [second, first]           # newest first
+    window._fill_recent_menu()
+    texts = [a.text() for a in window.recent_menu.actions() if a.text()]
+    assert texts[0].startswith("second") and texts[1].startswith("first")
+    assert texts[-1] == "Clear the list"
+    first.unlink()
+    window._fill_recent_menu()                                # gone files are forgotten
+    assert window.recent_files() == [second]
+    window.width_spin.setValue(95)
+    window.save_project()                                     # saving makes it the newest
+    assert window.recent_files() == [second]
+    window.recent_menu.actions()[-1].trigger()                # Clear the list
+    window._fill_recent_menu()
+    assert window.recent_files() == []
+    assert not window.recent_menu.actions()[0].isEnabled()    # "No recent designs"
+
+
+def test_save_and_start_from_my_template(window, monkeypatch):
+    from PySide6.QtWidgets import QInputDialog, QMessageBox
+    from threedn00b import userdata
+    from threedn00b.gui.main_window import MANAGE_TEMPLATES, MyTemplatesDialog
+    monkeypatch.setattr(QInputDialog, "getText", staticmethod(lambda *a, **k: ("Screw box", True)))
+    window.width_spin.setValue(111)
+    assert window.save_as_my_template()
+    combo = window.template_combo
+    keys = [combo.itemData(i) for i in range(combo.count())]
+    assert combo.itemText(1) == "My templates" and keys[2] == "my:Screw box"
+    assert MANAGE_TEMPLATES in keys
+    window.width_spin.setValue(70)
+    combo.activated.emit(2)                                   # start from it
+    assert window.project.width == 111 and window.project.template == "my:Screw box"
+    assert "your “Screw box” template" in window.template_note.text()
+    window._on_shape_clicked(CYLINDER)                        # starts over, like a template
+    assert window.project.shape == CYLINDER and window.project.holes == []
+    window.undo_stack.undo()
+    assert window.project.width == 111
+    # Saving again under the same name asks first.
+    monkeypatch.setattr(QMessageBox, "question",
+                        staticmethod(lambda *a, **k: QMessageBox.StandardButton.No))
+    assert not window.save_as_my_template()
+    monkeypatch.setattr(QMessageBox, "question",
+                        staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes))
+    dialog = MyTemplatesDialog(window)
+    assert dialog.list.count() == 1 and dialog.remove_button.isEnabled()
+    dialog.remove()
+    assert dialog.list.count() == 0 and userdata.my_templates() == []
+    dialog.accept()
+    window._fill_template_combo()
+    assert "My templates" not in [combo.itemText(i) for i in range(combo.count())]
+
+
+def test_backup_and_recovery(window, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    from threedn00b.gui.autosave import leftover_backups
+    from threedn00b.userdata import autosave_dir
+    window.width_spin.setValue(101)
+    assert window._autosave_timer.isActive()                  # a backup is on its way
+    window._write_autosave()
+    assert window.autosave.path.exists()
+    assert leftover_backups() == []                           # this window's own: not offered
+    # A backup left by a 3Dn00b that crashed (no lock), from a saved file.
+    lost = default_design(width=133.0)
+    file = tmp_path / "lost.3dn00b"
+    project_io.save_project(lost, file)
+    import json
+    left = autosave_dir() / "crashed.autosave"
+    left.write_text(json.dumps({"saved_at": 1.0, "file": str(file),
+                                "project": project_io.to_dict(lost)}))
+    window.undo_stack.setClean()
+    assert not window.autosave.path.exists()                  # saved: no backup needed
+    monkeypatch.setattr(QMessageBox, "exec", lambda box: box.defaultButton().click())
+    assert window.offer_recovery(leftover_backups())          # Recover
+    assert window.project.width == 133.0 and window.path == file
+    assert not window.undo_stack.isClean()                    # still has to be saved
+    assert not left.exists() and window.autosave.path.exists()
+    # Throwing a backup away deletes it.
+    left.write_text(json.dumps({"saved_at": 1.0, "file": None,
+                                "project": project_io.to_dict(lost)}))
+    monkeypatch.setattr(QMessageBox, "exec", lambda box: 0)
+    assert not window.offer_recovery(leftover_backups())
+    assert not left.exists()
+    window.close_autosave()                                   # closing normally
+    assert not window.autosave.path.exists()
+
+
+def default_design(**kw):
+    from threedn00b.model import default_project
+    p = default_project(BOX)
+    for k, v in kw.items():
+        setattr(p, k, v)
+    return p
+
+
+def test_sizes_in_the_3d_view(window):
+    from threedn00b.gui.viewer import MeasureLabel
+    viewer = window.viewer
+    window.rebuild()
+
+    def labels():
+        return [i.text for i in viewer._measure_items if isinstance(i, MeasureLabel)]
+    assert labels() == ["80 mm", "60 mm", "40 mm"]            # on by default
+    window.add_hole()
+    window.rebuild()
+    assert labels() == ["80 mm", "60 mm", "40 mm", "40 mm", "20 mm"]   # and the hole's place
+    window.sizes_action.trigger()                             # Ctrl+M
+    assert labels() == [] and window.settings.value("view/sizes", type=bool) is False
+    window.sizes_action.trigger()
+    assert len(labels()) == 5
+    image = viewer.grabFramebuffer()
+    assert not image.isNull()
+
+
+def test_delete_key_removes_text_on_the_text_step(window):
+    window.add_hole()
+    window.add_label()
+    assert window.tabs.currentIndex() == TAB_TEXT
+    window._delete_selected()
+    assert window.project.labels == [] and len(window.project.holes) == 1

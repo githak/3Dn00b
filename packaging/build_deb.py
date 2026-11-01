@@ -232,6 +232,12 @@ Files: *
 License: GPL-3.0-or-later
  On Debian systems the full text is in /usr/share/common-licenses/GPL-3.
 
+Files: usr/lib/3dn00b/app/threedn00b/fonts/*
+Copyright: 2003 Bitstream, Inc. (Bitstream Vera); DejaVu changes are in the public domain
+License: Bitstream-Vera
+ DejaVu Sans Bold, cut down to the letters of European languages. The full
+ license text is in usr/lib/3dn00b/app/threedn00b/fonts/LICENSE.
+
 Files: usr/lib/3dn00b/vendor/*
 Comment: Libraries bundled because Debian does not package them (or not in the
  versions needed). Each keeps its own license file in its *.dist-info folder:

@@ -156,7 +156,14 @@ Defaults I chose myself, which are easy to change:
   templates, holes, posts, lids, the 3D view and checking/export. Their
   screenshots are taken live from a hidden example window (a Raspberry Pi case),
   so they always match the app; everything but the part being explained is
-  darkened, and that part is outlined in the accent colour.
+  darkened, and that part is outlined in the accent colour, together with the
+  step's button in the rail (0.24.1) so it's clear which step is open.
+- See-through view (0.26), requested by the project owner: a toggle next to Lid in
+  the 3D view (Ctrl+T; Lid got Ctrl+L). The box and lid are drawn faint (blended,
+  without hiding what's behind them) and the outlines of holes, boards and posts
+  are drawn on top of everything, in a light colour, so their places against the
+  walls are easy to check, also from straight above with Top. The welcome tour
+  has a page about it.
 - Templates (0.17), requested by the project owner so beginners don't size a
   case by trial and error: a template list in the Shape tab, right under the Box
   and Round container buttons, so a template is the third way to start.
@@ -174,6 +181,22 @@ Defaults I chose myself, which are easy to change:
   lid rarely fit another shape); for the user's own designs those buttons keep
   reshaping the design. A note under the template list says so, and Undo brings
   the template back. The field is optional, so older versions still open the file.
+  Checked in 0.25 against NopSCADlib and @jwc/jscad-raspberrypi, and in 0.25.1
+  against the official drawings themselves (Raspberry Pi 3 B+, 3 A+, 4, 5 and Zero 2 W
+  mechanical drawings, the Pico datasheet, the Arduino Uno and Mega datasheets),
+  which confirmed every socket position and the Mega's six holes, and showed a few
+  sockets sticking out further than modelled (the Pi audio jack 2.6 mm, the Pi 3 A+'s
+  USB 2.5 mm, the Zero's micro USB 1.35 mm). Every board case leaves room for the
+  sockets that stick out past the board (up to 3 mm for the Pi 4/5's USB and
+  network, 2.6 mm for the audio jack, 2.5 mm for the SD card, 6.4 mm for the
+  Arduino's USB B) so the board drops in, and every opening sits in front of its socket and is big enough for
+  the moulded part of a normal plug. The Pi case got an opening for the Pi 5's
+  power button and its fan sits over the Pi 5's processor; the Zero cases' two
+  micro USB sockets share one opening (12.6 mm apart is too close for two). The
+  stacked Zero template now puts the upper board's sockets right behind the right
+  wall and the lower board's about 10 mm from the front wall (the closest the
+  upper board's posts allow); before, the lower board's sockets were 20 mm in.
+  A test checks every socket of every board template and example this way.
   Added in 0.18: a Pi 5 case with a 30 mm fan in the lid (26 mm opening and four
   M3 holes 24 mm apart, over the processor and clear of the tall sockets), a Pi
   Pico case (8 mm posts leave room for pin headers underneath), and an ESP32
@@ -190,6 +213,62 @@ Defaults I chose myself, which are easy to change:
   to the GPIO header as the lid's lip allows), a half-size breadboard box, a 4 × 4
   parts box, 3 × 3 craft box, guitar pick box, small screw-top tin, soap dish,
   key tray, toothbrush cup, tea bag box and remote control holder (35 templates).
+- Printer, plastic, fit test and text (0.27), the first group of additions the
+  project owner picked from a list of suggestions:
+  - Your printer and filament: a card in the Export step (saved for all designs,
+    not in the project file) with printer presets from the makers' build volumes,
+    or a typed build size; nozzle 0.2 to 0.8 mm; PLA, PETG, ABS, ASA or TPU; and
+    the spool price in the system's currency. With a printer set, the checks say
+    when a part doesn't fit on the plate (turned either way, 2 mm from the edges),
+    when box and lid only fit one after the other, and when walls or dividers
+    aren't a whole number of nozzle lines (fewer than two lines is a warning;
+    between two whole numbers is a tip), with a one-click fix. The generic
+    "larger than most printers" warning is then replaced by the real check.
+  - Plastic estimate: grams per part (solid volume × density, close for thin
+    walls) and the cost, in the summary at the top of the Export step. No print
+    time: that depends on the slicer settings, which the app can't know.
+  - Fit test print: the top of the box with the lid ring (the lid without its
+    middle: what has to fit stays), and the walls with the openings. With screw
+    posts that piece starts at the floor, which is opened up but keeps a rim, the
+    floor under the posts and dividers, and a bar from each post to the nearest
+    wall, so the board can be screwed on and the plugs tried. Pieces close
+    together become one. The card shows the grams compared with the whole thing.
+    To keep the pieces whole, the lid's screw columns were filled out towards
+    their corner; before, they touched the walls only along a line.
+  - Text: raised or engraved, on a wall, the bottom or the lid, with letter height
+    (capital letters) and depth, positioned like holes and dragged in the 3D view.
+    On a round container the text wraps around the wall. The font is DejaVu Sans
+    Bold, cut down to the letters of European languages (22 KB), read by a small
+    TrueType reader in `text.py` so no extra library is needed. Raised text on the
+    lid or the bottom gets a warning (the lid prints upside down, the box stands on
+    its bottom: it would need supports) with a fix that engraves it; the bottom's
+    text reads correctly when the box is tipped towards you. Checks: text off the
+    surface (with a fix), letters under 5 mm, engraving that leaves under 0.8 mm,
+    text running into holes or other text. Text is its own step, between Lid and
+    Export, and the welcome tour has a page about it. Project format 15.
+- Files, own templates and measurements (0.28), the second group the project owner
+  picked:
+  - Recent designs: the arrow next to Open lists the last 8 opened or saved
+    designs (files that are gone are dropped), with "Clear the list".
+  - Automatic backup and recovery: 3 seconds after a change, unsaved designs are
+    written to ~/.local/share/3dn00b/autosave; saving or closing normally removes
+    the copy. Each window holds a lock on its backup (Qt's QLockFile; a lock whose
+    program has died counts as gone), so only backups of a 3Dn00b that crashed are
+    offered at the next start, newest first: Recover (it stays unsaved, with its
+    file name if the file still exists) or Throw away. Older ones wait for the next
+    start; damaged ones are never deleted unasked.
+  - Own templates: "Save as my template…" under the template list saves the design
+    as a project file in ~/.local/share/3dn00b/templates; they appear first in the
+    list under "My templates", with "Rename or remove my templates…". A design
+    started from one remembers it, so Box and Round container start over as with
+    the built-in templates.
+  - Measurements: a Sizes toggle in the 3D view (Ctrl+M, on by default, remembered):
+    the outside width, depth (or diameter) and height, with the height with the lid
+    on, as lines with labels on small dark tags; and for the selected hole, how far
+    its middle is from the left edge and the bottom of its wall (from the left and
+    the front on the bottom and the lid), in the selection colour. The numbers are
+    drawn with QPainter, which QWidget.grab() leaves out, so the welcome tour's
+    screenshots put the 3D view's own picture in.
 - Push-on lid that follows the box size, with fit presets.
 - Plain-language checks covering impossible sizes, thin walls, holes off the
   edge, holes behind the lid lip, overlapping or too-close holes, a lid that
@@ -207,8 +286,14 @@ STL import and editing.
 
 ## Postponed (candidates for later, in rough priority order)
 
-1. Packages for other systems (Flatpak or AppImage, Fedora, arm64 such as the
-   Raspberry Pi) if people ask for them.
+Picked by the project owner, in this order (each group once the one before works):
+
+1. More boards, checked against the makers' drawings (Pico 2 W, Arduino Nano,
+   Orange Pi Zero, ESP32-S3 DevKit, Raspberry Pi 500 …).
+2. A cable notch in the rim; mounting options (keyhole slots, screw tabs);
+   holes for heat-set inserts.
+3. Packages for other systems (arm64 such as the Raspberry Pi, Flatpak or
+   AppImage, Fedora).
 
 Each addition must pass the brief's test: does it make a common beginner task
 much easier, without CAD vocabulary, and without making the interface busier?

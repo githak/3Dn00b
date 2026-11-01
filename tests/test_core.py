@@ -1,4 +1,5 @@
 import math
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -1697,7 +1698,7 @@ def test_board_openings_face_the_sockets(key):
 
 def test_stacked_template_is_approved():
     p = templates.from_template("pi-zero-stack")
-    lower, upper = p.mounts
+    lower, upper = sorted(p.mounts, key=lambda m: m.length)
     assert upper.rotation == 90 and upper.length > lower.length
     assert not any(i.mount_id for i in validation.check(p) if i.level != "info")
 
@@ -1717,6 +1718,9 @@ def test_fan_fits_under_the_lid():
     assert fan.u + 15 < usb_x or h - 10 > top + 16
     screws = [x for x in p.holes if x.surface == LID and x.diameter == 3.4]
     assert sorted({round(abs(s.u - fan.u), 6) for s in screws}) == [12.0]
+    # Right over the Pi 5's processor (33.2 x 22.9 mm from the board's corner).
+    x, y = templates._floor_point(m, 33.2, 22.9)
+    assert (fan.u, fan.v) == pytest.approx((x, y))
 
 
 def test_template_groups_list_every_template_once():
@@ -1811,3 +1815,436 @@ def test_templates_remember_where_they_came_from(tmp_path):
     data = project_io.to_dict(p)
     del data["project"]["template"]                       # older files: not from a template
     assert project_io.from_dict(data).template == ""
+
+
+# ---- connector positions in the board templates ------------------------------------
+#
+# Where the sockets really are, measured from each board's lower-left corner (the edge
+# with power/HDMI at the bottom, USB/network on the right), from the official mechanical
+# drawings (datasheets.raspberrypi.com, the Pico datasheet and the Arduino Uno and Mega
+# datasheets); how far each socket sticks out was measured on those drawings. Each
+# socket: (edge, position along the edge, height of its centre above the board's top,
+# plug width, plug height, how far it sticks out past the board edge). Plug sizes are the
+# moulded part of common cables, which has to fit through the opening when the socket
+# sits back from the wall.
+
+PI3 = [("front", 10.6, 1.3, 10.5, 6.5, 1.3), ("front", 32.0, 3.25, 15.0, 8.0, 1.5),
+       ("front", 53.5, 3.0, 7.0, 7.0, 2.6),
+       ("right", 10.25, 6.75, 16.0, 13.5, 2.0), ("right", 29.0, 8.0, 15.0, 16.0, 2.0),
+       ("right", 47.0, 8.0, 15.0, 16.0, 2.0)]
+PI4 = [("front", 11.2, 1.6, 12.5, 6.5, 1.2), ("front", 26.0, 1.5, 11.0, 6.5, 1.4),
+       ("front", 39.5, 1.5, 11.0, 6.5, 1.4), ("front", 54.0, 3.0, 7.0, 7.0, 2.5),
+       ("right", 9.0, 8.0, 15.0, 16.0, 3.0), ("right", 27.0, 8.0, 15.0, 16.0, 3.0),
+       ("right", 45.75, 6.75, 16.0, 13.5, 3.0)]
+PI5 = [("front", 11.2, 1.6, 12.5, 6.5, 1.3), ("front", 25.8, 1.7, 11.0, 6.5, 1.6),
+       ("front", 39.2, 1.7, 11.0, 6.5, 1.6),
+       ("right", 10.2, 6.75, 16.5, 13.5, 3.0), ("right", 29.1, 8.0, 15.0, 16.5, 3.0),
+       ("right", 47.0, 8.0, 15.0, 16.5, 3.0), ("left", 18.4, 1.85, 3.0, 3.0, 0.5)]
+PI_SD = [("left", 28.0, -2.4, 12.0, 2.0, 2.5)]                   # under the board
+PI3A = [("front", 10.6, 1.3, 10.5, 6.5, 1.3), ("front", 32.0, 3.25, 15.0, 8.0, 1.5),
+        ("front", 53.5, 3.0, 7.0, 7.0, 2.5), ("right", 31.5, 3.5, 15.0, 8.0, 2.5)] + PI_SD
+ZERO = [("front", 12.4, 1.6, 11.5, 6.5, 0.6), ("front", 41.4, 1.3, 10.5, 6.5, 1.35),
+        ("front", 54.0, 1.3, 10.5, 6.5, 1.35), ("left", 16.7, 0.7, 12.0, 2.0, 1.0)]
+ZERO_CAMERA = [("right", 15.0, 1.0, 12.0, 2.0, 0.0)]
+PICO = [("left", 10.5, 1.3, 10.5, 6.5, 1.3)]
+UNO = [("left", 37.78, 5.5, 12.0, 11.0, 6.4), ("left", 7.62, 6.5, 10.0, 10.0, 1.5)]
+MEGA = [("left", 38.6, 5.5, 12.0, 11.0, 6.4), ("left", 7.62, 6.5, 10.0, 10.0, 1.5)]
+
+BOARD_SOCKETS = {
+    "pi": [PI3 + PI_SD, PI4 + PI_SD, PI5 + PI_SD], "pi-gpio": [PI3 + PI_SD, PI4 + PI_SD, PI5 + PI_SD],
+    "pi5-fan": [PI5 + PI_SD], "pi-3a": [PI3A], "pi-zero": [ZERO + ZERO_CAMERA],
+    "pi-zero-stack": [ZERO], "pico": [PICO], "arduino": [UNO], "mega": [MEGA],
+}
+
+
+def _socket_on_wall(p, m, edge, along, height, width, tall):
+    """The socket's plug as (wall, u, v, half width, half height) in hole coordinates."""
+    from threedn00b.templates import _facing
+    w, d = mounts.board_size(m)
+    x, y = {"front": (along, 0), "back": (along, d), "left": (0, along), "right": (w, along)}[edge]
+    wall, pos = _facing(p, m, x, y)
+    u = {FRONT: pos, BACK: -pos, LEFT: -pos, RIGHT: pos}[wall]
+    z = mounts.board_bottom(p, m) + mounts.BOARD_THICKNESS + height
+    return wall, u, z - p.outer_height / 2, width / 2, tall / 2
+
+
+def _edge_gap(p, m, edge):
+    """Room between a board edge and the wall it faces."""
+    from threedn00b.templates import _facing
+    w, d = mounts.board_size(m)
+    x, y = {"front": (w / 2, 0), "back": (w / 2, d), "left": (0, d / 2), "right": (w, d / 2)}[edge]
+    wall, _ = _facing(p, m, x, y)
+    fx, fy = mounts._to_floor(m, x - w / 2, y - d / 2)
+    return {FRONT: fy + p.inner_depth / 2, BACK: p.inner_depth / 2 - fy,
+            LEFT: fx + p.inner_width / 2, RIGHT: p.inner_width / 2 - fx}[wall]
+
+
+@pytest.mark.parametrize("key", list(BOARD_SOCKETS))
+def test_every_socket_has_an_opening_in_front_of_it(key):
+    _check_sockets(templates.from_template(key), BOARD_SOCKETS[key], key)
+
+
+EXAMPLE_SOCKETS = {"raspberry-pi-box": [PI3 + PI_SD, PI4 + PI_SD, PI5 + PI_SD],
+                   "pi-zero-screwed-lid": [ZERO]}
+
+
+@pytest.mark.parametrize("name", list(EXAMPLE_SOCKETS))
+def test_example_boxes_have_openings_in_front_of_the_sockets(name):
+    path = Path(__file__).parent.parent / "examples" / f"{name}.3dn00b"
+    _check_sockets(project_io.load_project(path), EXAMPLE_SOCKETS[name], name)
+
+
+def _check_sockets(p, variants, key):
+    for m in p.mounts:
+        for sockets in variants:
+            for edge, along, height, width, tall, sticks_out in sockets:
+                wall, u, v, hu, hv = _socket_on_wall(p, m, edge, along, height, width, tall)
+                fits = any(h.surface == wall and h.kind == RECT
+                           and abs(h.u - u) + hu <= h.width / 2 + 0.01
+                           and abs(h.v - v) + hv <= h.height / 2 + 0.01 for h in p.holes)
+                assert fits, f"{key}: {edge} socket at {along} mm ({wall} wall) has no opening"
+                # The board must drop into the box without the socket catching on the wall,
+                # and the socket mustn't sit so far in that a plug can't reach it.
+                gap = _edge_gap(p, m, edge)
+                assert gap >= sticks_out + 0.3, f"{key}: {edge} edge too close to the wall"
+                assert gap - sticks_out <= 10, f"{key}: {edge} sockets too far from the wall"
+
+
+# ---- printer and plastic -------------------------------------------------
+
+from threedn00b import printers  # noqa: E402
+
+MINI = printers.PRINTERS["prusa-mini"]
+
+
+def test_parts_fit_turned_either_way():
+    mk4 = printers.PRINTERS["prusa-mk4"]            # 250 × 210 × 220
+    assert printers.fits((240, 200, 100), mk4)
+    assert printers.fits((200, 240, 100), mk4)      # turned on the plate
+    assert not printers.fits((240, 240, 100), mk4)
+    assert not printers.fits((100, 100, 230), mk4)  # too tall
+    assert not printers.fits((249, 100, 10), mk4)   # needs a little room at the edges
+
+
+def test_two_parts_side_by_side():
+    assert printers.fit_together([(80, 60, 40), (80, 60, 4)], MINI)
+    assert printers.fit_together([(100, 170, 40), (60, 170, 4)], MINI)
+    assert not printers.fit_together([(120, 170, 40), (120, 170, 4)], MINI)
+
+
+def test_whole_lines_of_the_nozzle():
+    assert printers.solid_lines(1.8, 0.4) == 2.0      # 4.5 lines: halfway goes up
+    assert printers.solid_lines(1.7, 0.4) == 1.6
+    assert printers.solid_lines(0.5, 0.4) == 0.8      # at least two lines
+    assert printers.solid_lines(1.5, 0.6) == 1.8
+    assert printers.lines(1.2, 0.4) == pytest.approx(3)
+
+
+def test_grams_from_volume():
+    assert printers.grams(10_000, "PLA") == pytest.approx(12.4)
+    assert printers.grams(10_000, "ABS") < printers.grams(10_000, "PETG")
+
+
+def test_part_too_big_for_the_printer():
+    p = box_with_lid(width=200.0, depth=120.0)
+    issues = validation.check(p, printer=MINI)
+    big = [i for i in issues if "doesn't fit" in i.message]
+    assert len(big) == 2 and all(i.level == validation.WARNING for i in big), messages(issues)
+    assert "Prusa MINI+" in big[0].message
+    assert not [i for i in validation.check(p) if "doesn't fit" in i.message]
+
+
+def test_huge_box_warning_uses_the_printer():
+    p = Project(width=320.0, depth=100.0, height=40.0)
+    assert any("larger than most printers" in i.message for i in validation.check(p))
+    xl = printers.PRINTERS["prusa-xl"]
+    issues = validation.check(p, printer=xl)
+    assert not any("printers" in i.message or "doesn't fit" in i.message for i in issues)
+
+
+def test_box_and_lid_one_after_the_other():
+    p = box_with_lid(width=170.0, depth=100.0)
+    issues = validation.check(p, printer=MINI)
+    together = [i for i in issues if "at the same time" in i.message]
+    assert together and together[0].level == validation.INFO
+    assert not any("doesn't fit" in i.message for i in issues)
+    p.width = 80.0
+    assert not any("at the same time" in i.message for i in validation.check(p, printer=MINI))
+
+
+def test_walls_in_whole_lines_with_a_fix():
+    p = box_with_lid(wall=1.8)
+    issue = next(i for i in validation.check(p, printer=MINI) if "lines" in i.message)
+    assert issue.level == validation.INFO and "4.5 lines" in issue.message
+    assert issue.fix_values == {"wall": 2.0} and issue.fix_label == "Make them 2 mm"
+    p.wall = 2.0
+    assert not any("lines" in i.message for i in validation.check(p, printer=MINI))
+    nozzle_06 = printers.Printer("printer", 220, 220, 250, 0.6)
+    issue = next(i for i in validation.check(p, printer=nozzle_06) if "lines" in i.message)
+    assert issue.fix_values == {"wall": 1.8}
+
+
+def test_dividers_too_thin_for_a_big_nozzle():
+    p = default_project(BOX)
+    p.dividers.across = 2
+    p.dividers.thickness = 1.2
+    big = printers.Printer("printer", 220, 220, 250, 0.8)
+    issue = next(i for i in validation.check(p, printer=big) if i.message.startswith("Dividers"))
+    assert issue.level == validation.WARNING and "too thin" in issue.message
+    assert issue.fix_values == {"dividers.thickness": 1.6}
+
+
+# ---- fit test print ------------------------------------------------------
+
+from manifold3d import CrossSection, Manifold  # noqa: E402
+from threedn00b.model import VENT  # noqa: E402
+
+
+def _height(m):
+    b = m.bounding_box()
+    return b[5] - b[2]
+
+
+def _assert_printable(pieces):
+    for name, m in pieces.items():
+        assert geometry.is_valid_solid(m), name
+        assert geometry.piece_count(m) == 1, name
+        assert abs(m.bounding_box()[2]) < 1e-6, name        # on the plate
+
+
+def test_fit_test_lid_and_low_openings():
+    p = box_with_lid(holes=[Hole(FRONT, 8, 0, -8)])
+    parts = geometry.build_parts(p)
+    pieces = geometry.fit_test_parts(p, parts=parts)
+    assert list(pieces) == ["box-openings", "box-top", "lid"]
+    _assert_printable(pieces)
+    assert _height(pieces["box-top"]) == pytest.approx(p.lid.lip_height + 3.0)
+    assert _height(pieces["box-openings"]) == pytest.approx(8 + 2 * 2.0)
+    # The lid keeps its edge and lip, not its middle.
+    lid = parts.printable()["lid"]
+    assert pieces["lid"].volume() < 0.6 * lid.volume()
+    assert _height(pieces["lid"]) == pytest.approx(_height(lid))
+    total = sum(m.volume() for m in pieces.values())
+    assert total < 0.5 * sum(m.volume() for m in parts.printable().values())
+
+
+def test_fit_test_pieces_close_together_are_one():
+    p = box_with_lid(holes=[Hole(FRONT, 8, 0, 8)])      # just under the lid's lip
+    pieces = geometry.fit_test_parts(p)
+    assert list(pieces) == ["box", "lid"]
+    _assert_printable(pieces)
+
+
+def test_fit_test_choices():
+    p = box_with_lid(holes=[Hole(FRONT, 8, 0, -8)])
+    assert list(geometry.fit_test_parts(p, lid=False)) == ["box-openings"]
+    assert list(geometry.fit_test_parts(p, openings=False)) == ["box-top", "lid"]
+    p.holes = [Hole(FRONT, kind=VENT, u=0, v=0)]          # vents need no test
+    assert geometry.fit_test_openings_band(p) is None
+    p.lid.enabled = False
+    assert geometry.fit_test_parts(p) == {}
+
+
+@pytest.mark.parametrize("style", ["push", "snap", "screwed", "sliding"])
+def test_fit_test_every_box_lid(style):
+    p = box_with_lid()
+    p.lid.style = style
+    pieces = geometry.fit_test_parts(p)
+    assert list(pieces) == ["box-top", "lid"]
+    _assert_printable(pieces)
+
+
+def test_fit_test_threaded_container():
+    p = default_project(CYLINDER)
+    p.lid.enabled, p.lid.style = True, "threaded"
+    pieces = geometry.fit_test_parts(p)
+    _assert_printable(pieces)
+    assert _height(pieces["box-top"]) < 15
+
+
+def test_fit_test_with_screw_posts_keeps_them_on_an_open_floor():
+    p = templates.from_template("pi")
+    parts = geometry.build_parts(p)
+    pieces = geometry.fit_test_parts(p, lid=False, parts=parts)
+    assert list(pieces) == ["box-openings"]
+    piece = pieces["box-openings"]
+    _assert_printable(pieces)
+    floor = piece.slice(p.bottom / 2)
+    whole_floor = parts.body.slice(p.bottom / 2)
+    assert floor.area() < 0.6 * whole_floor.area()
+    assert len(floor.decompose()) == 1
+    # Every post still stands where it was, with floor under it.
+    from threedn00b import mounts
+    dx, dy = _shift(parts.body, piece)
+    posts = piece.slice(p.bottom + 1.0)
+    for m in p.mounts:
+        screw = mounts.SCREWS[m.screw]
+        middle = (screw.pilot + screw.post) / 4        # between the pilot hole and the outside
+        for x, y in mounts.post_positions(m):
+            spot = CrossSection.circle(0.3).translate([x + dx + middle, y + dy])
+            full = spot.area()
+            assert (posts ^ spot).area() > 0.99 * full and (floor ^ spot).area() > 0.99 * full
+
+
+def _shift(body, piece):
+    """How far a piece was moved sideways to centre it on the plate (compared to the body)."""
+    b, q = body.bounding_box(), piece.bounding_box()
+    return (q[0] + q[3]) / 2 - (b[0] + b[3]) / 2, (q[1] + q[4]) / 2 - (b[1] + b[4]) / 2
+
+
+def test_screw_columns_are_joined_to_the_walls():
+    p = box_with_lid()
+    p.lid.style = "screwed"
+    body = geometry.build_parts(p).body
+    top = body ^ Manifold.cube([200, 200, 10]).translate([-100, -100, p.outer_height - 10])
+    assert geometry.piece_count(top) == 1
+
+
+@pytest.mark.parametrize("fmt", ["stl", "3mf"])
+def test_export_fit_test(tmp_path, fmt):
+    p = box_with_lid(name="Test box", holes=[Hole(FRONT, 8, 0, -8)])
+    files = project_io.export_fit_test(p, tmp_path, fmt)
+    if fmt == "3mf":
+        assert [f.name for f in files] == ["test-box-fit-test.3mf"]
+        assert [q["name"] for q in project_io.read_3mf(files[0])] == [
+            "Test box fit test box-openings", "Test box fit test box-top", "Test box fit test lid"]
+    else:
+        assert [f.name for f in files] == ["test-box-fit-test-box-openings.stl",
+                                           "test-box-fit-test-box-top.stl",
+                                           "test-box-fit-test-lid.stl"]
+        assert all(len(project_io.read_stl(f)) > 0 for f in files)
+
+
+# ---- text labels ---------------------------------------------------------
+
+from threedn00b import text  # noqa: E402
+from threedn00b.model import (ENGRAVED, RAISED, Label, clamp_label,  # noqa: E402
+                              label_half_extents)
+
+
+def test_font_draws_european_letters():
+    shape = text.outline("HEH", 10)
+    x0, y0, x1, y1 = shape.bounds()
+    assert y1 == pytest.approx(5, abs=0.05)              # capitals: 10 mm tall, centred
+    assert y0 == pytest.approx(-5, abs=0.05)
+    assert x0 == pytest.approx(-x1, abs=2.0)              # centred left to right
+    assert len(text.outline("o", 10).decompose()) == 1    # a ring: one piece with a hole
+    assert text.outline("o", 10).area() < text.outline("•", 10).area() * 3
+    for word in ("Æøå", "Größe", "Žluťoučký", "€ 2,50", "⌀ 5 mm", "Ü"):
+        assert text.missing_characters(word) == "", word
+        assert text.outline(word, 8).area() > 0
+    assert text.missing_characters("Hi 日本 ✓") == "日本"
+    assert text.outline("   ", 8) is None
+    # Accents sit above the capital height, tails below the baseline.
+    assert text.text_size("Å", 10)[3] > 5.5 and text.text_size("g", 10)[1] < -5.5
+
+
+def test_text_size_scales():
+    w8 = text.text_size("Screws", 8)
+    w16 = text.text_size("Screws", 16)
+    assert (w16[2] - w16[0]) == pytest.approx(2 * (w8[2] - w8[0]), rel=1e-3)
+
+
+@pytest.mark.parametrize("surface", [FRONT, BACK, LEFT, RIGHT, BOTTOM, LID])
+@pytest.mark.parametrize("style", [RAISED, ENGRAVED])
+def test_text_on_every_box_surface(surface, style):
+    p = box_with_lid()
+    plain = geometry.build_parts(p)
+    p.labels = [Label("AB 12", surface, style, size=8, depth=0.6)]
+    parts = geometry.build_parts(p)
+    part = "lid" if surface == LID else "body"
+    before, after = getattr(plain, part).volume(), getattr(parts, part).volume()
+    letters = text.outline("AB 12", 8).area() * 0.6
+    change = after - before if style == RAISED else before - after
+    assert change == pytest.approx(letters, rel=0.03)
+    assert geometry.is_valid_solid(getattr(parts, part))
+    assert geometry.piece_count(getattr(parts, part)) == 1
+    assert geometry.overlap_volume(parts.body, parts.lid) < 0.01
+
+
+@pytest.mark.parametrize("style", [RAISED, ENGRAVED])
+def test_text_wraps_round_the_container(style):
+    p = default_project(CYLINDER)
+    plain = geometry.build_parts(p).body
+    p.labels = [Label("Coffee", SIDE, style, size=10, u=90)]
+    body = geometry.build_parts(p).body
+    assert geometry.is_valid_solid(body) and geometry.piece_count(body) == 1
+    change = abs(body.volume() - plain.volume())
+    assert change == pytest.approx(text.outline("Coffee", 10).area() * 0.6, rel=0.06)
+    # It sits on the right-hand side (90°): raised text makes the container wider there.
+    if style == RAISED:
+        assert body.bounding_box()[3] == pytest.approx(p.outer_diameter / 2 + 0.6, abs=0.05)
+
+
+def test_text_reads_the_right_way():
+    """Not mirrored: the first letter is on the left as you look at the surface."""
+    for surface, left in ((FRONT, (-1, 0)), (RIGHT, (0, -1)), (LID, (-1, 0)), (BOTTOM, (-1, 0))):
+        p = box_with_lid()
+        p.labels = [Label("L.", surface, RAISED, size=10)]        # tall on the left only
+        piece = geometry.label_solid(p, p.labels[0])
+        lo, hi = piece.bounding_box()[:3], piece.bounding_box()[3:]
+        middle = [(lo[i] + hi[i]) / 2 for i in range(3)]
+        tall = piece ^ Manifold.cube([400, 400, 400], True).translate(
+            [middle[0] + 200 * left[0], middle[1] + 200 * left[1], 0] if left[0] or left[1] else [0, 0, 0])
+        assert tall.volume() > 0.7 * piece.volume(), surface
+
+
+def test_text_moves_with_the_shape():
+    p = box_with_lid(labels=[Label("Hi", FRONT, u=5)])
+    p.set_shape(CYLINDER)
+    assert p.labels[0].surface == SIDE
+    p.set_shape(BOX)
+    assert p.labels[0].surface == FRONT
+
+
+def test_text_round_trip(tmp_path):
+    p = box_with_lid(labels=[Label("Tea & co", LID, ENGRAVED, size=9, depth=0.8, u=3, v=-2)])
+    path = tmp_path / "t.3dn00b"
+    project_io.save_project(p, path)
+    assert project_io.load_project(path).labels == p.labels
+    data = project_io.to_dict(p)
+    data["project"]["labels"][0]["style"] = "bubbly"
+    with pytest.raises(project_io.ProjectFileError):
+        project_io.from_dict(data)
+
+
+def test_text_checks():
+    p = box_with_lid()
+    p.labels = [Label("Screws", FRONT)]
+    assert not [i for i in validation.check(p) if i.label_id], messages(validation.check(p))
+    p.labels = [Label("Much too long for this wall", FRONT)]
+    issue = next(i for i in validation.check(p) if i.label_id)
+    assert issue.level == validation.ERROR and "doesn't fit" in issue.message
+    p.labels = [Label("Edge", FRONT, u=35)]
+    issue = next(i for i in validation.check(p) if i.label_id)
+    assert "over the edge" in issue.message and issue.fix == clamp_label(p, p.labels[0])
+    p.labels = [Label("Tiny", FRONT, size=3)]
+    issue = next(i for i in validation.check(p) if i.label_id)
+    assert issue.level == validation.WARNING and issue.fix_values == {"size": 5.0}
+    p.labels = [Label("Up", LID, RAISED)]
+    issue = next(i for i in validation.check(p) if i.label_id)
+    assert "upside down" in issue.message and issue.fix_values == {"style": ENGRAVED}
+    p.labels = [Label("Deep", FRONT, ENGRAVED, depth=1.8)]
+    issue = next(i for i in validation.check(p) if i.label_id)
+    assert issue.level == validation.ERROR and issue.fix_values == {"depth": 0.6}
+    p.labels = [Label("Lid", LID, ENGRAVED)]
+    p.lid.enabled = False
+    issue = next(i for i in validation.check(p) if i.label_id)
+    assert issue.level == validation.ERROR and "lid is turned off" in issue.message
+
+
+def test_text_running_into_holes_and_other_text():
+    p = box_with_lid(holes=[Hole(FRONT, 8, 0, 0)])
+    p.labels = [Label("Over", FRONT), Label("Hi", BACK), Label("Hi", BACK, u=2)]
+    msgs = messages([i for i in validation.check(p) if i.label_id])
+    assert "runs into Hole 1" in msgs and "runs into the text “Hi”" in msgs
+
+
+def test_text_half_extents_and_clamp():
+    label = Label("Wide text", FRONT, size=8)
+    hu, hv = label_half_extents(label)
+    assert hv == pytest.approx(4.3, abs=0.3) and hu > 20
+    p = box_with_lid()
+    label.u, label.v = 100, 100
+    u, v = clamp_label(p, label)
+    assert u + hu <= p.inner_width / 2 and v + hv < p.outer_height / 2

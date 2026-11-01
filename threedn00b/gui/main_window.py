@@ -4,31 +4,35 @@ from __future__ import annotations
 
 import copy
 import gc
+import json
+from dataclasses import replace
 from html import escape
 from pathlib import Path
 from types import SimpleNamespace
 
-from PySide6.QtCore import QRect, QSettings, QSize, Qt, QTimer
+from PySide6.QtCore import QDateTime, QLocale, QRect, QSettings, QSize, Qt, QTimer
 from PySide6.QtGui import (QAction, QColor, QIcon, QKeySequence, QPainter, QShortcut,
                            QTextDocument, QUndoCommand, QUndoStack)
-from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox,
+from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog,
                                QDoubleSpinBox, QFileDialog, QFormLayout, QFrame,
-                               QHBoxLayout, QLabel, QLineEdit, QListWidget,
+                               QHBoxLayout, QInputDialog, QLabel, QLineEdit, QListWidget,
                                QListView, QListWidgetItem, QMainWindow, QMessageBox,
                                QMenu, QPushButton, QRadioButton, QScrollArea, QSizePolicy, QSpinBox,
                                QSplitter, QStyle, QStyledItemDelegate, QTabWidget, QToolBar,
                                QToolButton, QVBoxLayout, QWidget)
 
-from .. import (APP_NAME, __version__, geometry, mounts, picking, project_io, templates,
-                validation)
+from .. import (APP_NAME, __version__, geometry, mounts, picking, printers, project_io, userdata,
+                templates, validation)
 from ..model import (ALONG_U, ALONG_V, BOTTOM, BOX, CYLINDER, FIT_LABELS, FIT_PRESETS,
                      FRONT, HOLE_DIAMETER_RANGE, HOLE_KIND_LABELS, INSIDE, LID, MIN_EDGE,
                      OUTSIDE, RECT, ROUND, SIDE, SIZE_RANGE, SURFACE_LABELS, VENT,
                      DIVIDER_RANGE, INSIDE_CORNER_LABELS, OPENING_LABELS, SIDE_LABELS, LID_STYLE_LABELS, SHARP, MAX_COMPARTMENTS, PUSH_ON, SCREWED, SCREWS, SLIDING,
                      SNAP, THREADED, TRAY_TEMPLATE, WALL_RANGE, Hole, Project,
                      clamp_hole, compartment_depths, compartment_widths, default_project,
-                     has_set_sizes, hole_limits, resized_sizes)
+                     has_set_sizes, hole_limits, resized_sizes,
+                     ENGRAVED, LABEL_DEPTH_RANGE, LABEL_SIZE_RANGE, RAISED, Label, clamp_label)
 from . import theme
+from .autosave import Autosave, Backup
 from .viewer import Viewer
 
 COMMON_HOLES = [
@@ -50,7 +54,7 @@ COMMON_RECTS = [
 ]
 NEW_HOLE_ROUNDING = 1.0     # corner radius of new rectangles and vents
 RECT_SIZE_RANGE = (1.0, 150.0)
-TAB_SHAPE, TAB_HOLES, TAB_POSTS, TAB_LID, TAB_CHECK = range(5)
+TAB_SHAPE, TAB_HOLES, TAB_POSTS, TAB_LID, TAB_TEXT, TAB_CHECK = range(6)
 # Labels and tips for the two spacing fields of each custom board.
 CUSTOM_HOLE_LABELS = {
     "custom": (("Holes apart (width)", "Holes apart (depth)"),
@@ -75,13 +79,15 @@ LID_STYLE_HINTS = {
     THREADED: "A screw-on lid, like a jar. The top of the container becomes a narrower neck "
               "with a thread. Only for round containers.",
 }
-CHECK_TAB_TITLE = "5 Check && Export"
+CHECK_TAB_TITLE = "6 Check && Export"
 LABEL_WIDTH = 120            # the field labels of every card line up
 HOLE_ICONS = {ROUND: "round-hole", RECT: "rect-hole", VENT: "vent"}
 # The steps in the rail: (icon, label, tooltip). Same order as the TAB_* pages.
 STEPS = (("shape", "Shape", "Shape and size"), ("holes", "Holes", "Holes, openings and vents"),
          ("posts", "Posts", "Screw posts for circuit boards"), ("lid", "Lid", "The lid"),
+         ("text", "Text", "Text on the outside: names and labels"),
          ("check", "Export", "Check the design and export it for printing"))
+LABEL_STYLE_TEXTS = {RAISED: "Raised (stands out)", ENGRAVED: "Engraved (cut in)"}
 
 
 class SnapshotCommand(QUndoCommand):
@@ -257,6 +263,24 @@ class IssueDelegate(QStyledItemDelegate):
         painter.restore()
 
 
+def default_filament_price() -> float:
+    """A typical price for 1 kg of PLA in the user's currency."""
+    code = QLocale().currencySymbol(QLocale.CurrencySymbolFormat.CurrencyIsoCode)
+    return {"NOK": 250.0, "SEK": 250.0, "DKK": 180.0, "JPY": 3000.0, "INR": 1500.0}.get(code, 25.0)
+
+
+def price_suffix() -> str:
+    """" kr per kg", " € per kg" … or just " per kg" when the system has no currency set."""
+    symbol = QLocale().currencySymbol().strip()
+    return f" {symbol} per kg" if symbol else " per kg"
+
+
+def money(value: float) -> str:
+    """An amount in the user's currency (plain number when the system has no currency set)."""
+    return QLocale().toCurrencyString(value).strip() if QLocale().currencySymbol().strip() \
+        else f"{value:.2f}"
+
+
 def summary_table(rows: list[tuple[str, str]]) -> str:
     """Rich text for a small two-column summary: grey names, bright values."""
     cells = "".join(f"<tr><td style='color:{theme.MUTED}; padding:1px 14px 1px 0'>{escape(name)}</td>"
@@ -305,13 +329,19 @@ def set_quietly(widget, value):
     widget.blockSignals(False)
 
 
+AUTOSAVE_DELAY = 3000      # ms after the last change before the backup is written
+MANAGE_TEMPLATES = "manage-my-templates"     # the last entry of "My templates"
+RECENT_MAX = 8
+
+
 class MainWindow(QMainWindow):
-    def __init__(self, project: Project | None = None):
+    def __init__(self, project: Project | None = None, autosave: bool = True):
         super().__init__()
         theme.apply(QApplication.instance())
         self.project = project or default_project()
         self.path: Path | None = None
         self.selected_id: str | None = None
+        self.selected_label_id: str | None = None
         self.selected_mount_id: str | None = None
         self._drag: dict | None = None
         self._drag_count = 0
@@ -319,6 +349,12 @@ class MainWindow(QMainWindow):
         self.issues: list[validation.Issue] = []
         self.undo_stack = QUndoStack(self)
         self.undo_stack.cleanChanged.connect(self._update_title)
+        # A backup of unsaved changes, for getting them back after a crash.
+        self.autosave = Autosave() if autosave else None
+        self._autosave_timer = QTimer(self, singleShot=True, interval=AUTOSAVE_DELAY)
+        self._autosave_timer.timeout.connect(self._write_autosave)
+        self.undo_stack.indexChanged.connect(self._schedule_autosave)
+        self.undo_stack.cleanChanged.connect(self._schedule_autosave)
         self.settings = QSettings(APP_NAME, APP_NAME)
 
         self._rebuild_timer = QTimer(self, singleShot=True, interval=60)
@@ -334,7 +370,7 @@ class MainWindow(QMainWindow):
         self.tabs.tabBar().hide()
         for build, title in ((self._build_shape_tab, "1 Shape"), (self._build_holes_tab, "2 Holes"),
                              (self._build_posts_tab, "3 Posts"), (self._build_lid_tab, "4 Lid"),
-                             (self._build_check_tab, CHECK_TAB_TITLE)):
+                             (self._build_text_tab, "5 Text"), (self._build_check_tab, CHECK_TAB_TITLE)):
             self.tabs.addTab(scrolling(build()), title)
         self.tabs.currentChanged.connect(self._on_step_changed)
         for combo in self.tabs.findChildren(QComboBox):
@@ -434,8 +470,12 @@ class MainWindow(QMainWindow):
             menu.addAction(label, lambda t=template: self.new_project(t))
         new.setMenu(menu)
         bar.widgetForAction(new).setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
-        action("Open", "open", self.open_project, QKeySequence.StandardKey.Open,
-               "Open a project file")
+        open_action = action("Open", "open", self.open_project, QKeySequence.StandardKey.Open,
+                             "Open a project file (the arrow lists recent designs)")
+        self.recent_menu = QMenu(self)
+        self.recent_menu.aboutToShow.connect(self._fill_recent_menu)
+        open_action.setMenu(self.recent_menu)
+        bar.widgetForAction(open_action).setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
         action("Save", "save", self.save_project, QKeySequence.StandardKey.Save,
                "Save an editable project file")
         save_as = QAction("Save As…", self)
@@ -494,7 +534,7 @@ class MainWindow(QMainWindow):
         help_button.setCursor(Qt.CursorShape.PointingHandCursor)
         bar.addWidget(help_button)
         delete = QAction(self, shortcut=QKeySequence.StandardKey.Delete)
-        delete.triggered.connect(self.remove_selected_hole)
+        delete.triggered.connect(self._delete_selected)
         self.addAction(delete)
 
     def _build_rail(self) -> QWidget:
@@ -531,6 +571,8 @@ class MainWindow(QMainWindow):
 
     def _on_step_changed(self, index: int):
         self.rail_buttons[index].setChecked(True)
+        if index == TAB_CHECK:
+            self._refresh_fit_test()
 
     def _build_view_overlay(self):
         """Floating buttons over the 3D view: camera presets and the lid toggle."""
@@ -556,14 +598,33 @@ class MainWindow(QMainWindow):
         row.addWidget(divider)
         self.show_lid_action = QAction(theme.icon("eye", theme.MUTED, checked=theme.ACCENT_TEXT),
                                        "Lid", self, checkable=True, checked=True)
-        self.show_lid_action.setToolTip("Show or hide the lid in the preview")
+        self.show_lid_action.setToolTip("Show or hide the lid in the preview (Ctrl+L)")
+        self.show_lid_action.setShortcut(QKeySequence("Ctrl+L"))
         self.show_lid_action.toggled.connect(self._on_show_lid)
-        lid_button = QToolButton()
-        lid_button.setDefaultAction(self.show_lid_action)
-        lid_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        lid_button.setIconSize(QSize(16, 16))
-        lid_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        row.addWidget(lid_button)
+        self.see_through_action = QAction(theme.icon("xray", theme.MUTED, checked=theme.ACCENT_TEXT),
+                                          "See-through", self, checkable=True)
+        self.see_through_action.setToolTip(
+            "See through the walls and the lid, to check where holes, posts and boards sit "
+            "(Ctrl+T)")
+        self.see_through_action.setShortcut(QKeySequence("Ctrl+T"))
+        self.see_through_action.toggled.connect(self._on_see_through)
+        self.sizes_action = QAction(theme.icon("ruler", theme.MUTED, checked=theme.ACCENT_TEXT),
+                                    "Sizes", self, checkable=True)
+        self.sizes_action.setToolTip("Show the measurements: the outside size, and where the "
+                                     "selected hole is (Ctrl+M)")
+        self.sizes_action.setShortcut(QKeySequence("Ctrl+M"))
+        self.sizes_action.setChecked(self.settings.value("view/sizes", True, type=bool))
+        self.viewer.show_sizes = self.sizes_action.isChecked()
+        self.sizes_action.toggled.connect(self._on_sizes)
+        for act in (self.show_lid_action, self.see_through_action, self.sizes_action):
+            self.addAction(act)                 # so the shortcuts work anywhere in the window
+            button = QToolButton()
+            button.setDefaultAction(act)
+            button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+            button.setIconSize(QSize(16, 16))
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            row.addWidget(button)
+        self.view_overlay = frame
         self.viewer.set_overlay(frame)
 
     def _build_shape_tab(self):
@@ -588,21 +649,7 @@ class MainWindow(QMainWindow):
             row.addWidget(btn)
         lay.addLayout(row)
         self.template_combo = QComboBox()
-        self.template_combo.addItem(theme.icon("template", theme.MUTED),
-                                    "…or start from a template", None)
-        for heading, keys in templates.GROUPS:
-            # A heading that can't be picked, then the group's templates.
-            self.template_combo.addItem(heading, None)
-            item = self.template_combo.model().item(self.template_combo.count() - 1)
-            item.setEnabled(False)
-            font = item.font()
-            font.setBold(True)
-            item.setFont(font)
-            for key in keys:
-                t = templates.TEMPLATES[key]
-                self.template_combo.addItem("    " + t.label, key)
-                self.template_combo.setItemData(self.template_combo.count() - 1, t.description,
-                                                Qt.ItemDataRole.ToolTipRole)
+        self._fill_template_combo()
         self.template_combo.setToolTip("Ready-made boxes, sized to fit: you can change "
                                        "everything afterwards.")
         self.template_combo.activated.connect(self._on_template)
@@ -611,6 +658,13 @@ class MainWindow(QMainWindow):
         lay.addWidget(self.template_combo)
         self.template_note = hint("")
         lay.addWidget(self.template_note)
+        self.save_template_button = icon_button("Save as my template…", "template",
+                                                tip="Keep this design in the template list, to "
+                                                    "start new designs from it")
+        self.save_template_button.setObjectName("flat")
+        self.save_template_button.setIcon(theme.icon("template", theme.MUTED))
+        self.save_template_button.clicked.connect(self.save_as_my_template)
+        lay.addWidget(self.save_template_button, 0, Qt.AlignmentFlag.AlignLeft)
         form = form_layout()
         self.name_edit = QLineEdit()
         self.name_edit.setPlaceholderText("Give it a name")
@@ -831,7 +885,8 @@ class MainWindow(QMainWindow):
         self.hole_v.valueChanged.connect(lambda v: self._edit_hole("Move hole", "v", v))
         form.addRow(self.u_label, self.hole_u)
         form.addRow(self.v_label, self.hole_v)
-        form.addRow("", hint("Measured from the middle of the surface. 0 = centred."))
+        form.addRow("", hint("Measured from the middle of the surface. 0 = centred. With "
+                             "Sizes on, the 3D view shows how far it is from the edges."))
         buttons = QHBoxLayout()
         center = icon_button("Centre it", "center")
         center.clicked.connect(self._center_hole)
@@ -1020,6 +1075,72 @@ class MainWindow(QMainWindow):
             lambda _: self.edit(label, lambda p: setattr(p.lid, attr, combo.currentData())))
         return combo
 
+    def _build_text_tab(self):
+        widget, layout = page("Text", "Names and labels on the outside, raised or cut in.")
+        box, lay = card("Add text")
+        self.add_text_card = box
+        self.add_label_button = icon_button("Add text", "plus", "primary")
+        self.add_label_button.setMinimumHeight(40)
+        # A lambda, because clicked() would otherwise pass its 'checked' flag as `surface`.
+        self.add_label_button.clicked.connect(lambda: self.add_label())
+        lay.addWidget(self.add_label_button)
+        lay.addWidget(hint("Tip: engraved (cut in) text prints neatly on the lid and the "
+                           "bottom; raised text looks good on the walls. Drag text in the 3D "
+                           "view to move it."))
+        self.label_list = QListWidget()
+        self.label_list.setMaximumHeight(150)
+        self.label_list.currentRowChanged.connect(self._on_label_row_changed)
+        lay.addWidget(self.label_list)
+        layout.addWidget(box)
+
+        self.label_card, lay = card("Selected text")
+        self.label_problem = error_label()
+        lay.addWidget(self.label_problem)
+        self.label_box = QWidget()
+        form = self.label_form = form_layout(self.label_box)
+        self.label_text = QLineEdit()
+        self.label_text.setPlaceholderText("Type the text")
+        self.label_text.setMaxLength(60)
+        self.label_text.textEdited.connect(lambda t: self._edit_label("Change text", "text", t))
+        form.addRow("Text", self.label_text)
+        self.label_surface = QComboBox()
+        self.label_surface.activated.connect(self._on_label_surface_changed)
+        form.addRow("Where", self.label_surface)
+        self.label_style = QComboBox()
+        for key, text in LABEL_STYLE_TEXTS.items():
+            self.label_style.addItem(text, key)
+        self.label_style.activated.connect(
+            lambda _: self._edit_label("Change text style", "style", self.label_style.currentData()))
+        form.addRow("Style", self.label_style)
+        self.label_size = spin(*LABEL_SIZE_RANGE, step=0.5)
+        self.label_size.setToolTip("Height of the capital letters")
+        self.label_size.valueChanged.connect(lambda v: self._edit_label("Change letter size", "size", v))
+        form.addRow("Letter height", self.label_size)
+        self.label_depth_name = QLabel("Stands out")
+        self.label_depth = spin(*LABEL_DEPTH_RANGE, step=0.1)
+        self.label_depth.valueChanged.connect(lambda v: self._edit_label("Change text depth", "depth", v))
+        form.addRow(self.label_depth_name, self.label_depth)
+        self.label_u_name, self.label_v_name = QLabel(), QLabel()
+        self.label_u = spin(-500, 500, step=1.0)
+        self.label_v = spin(-500, 500, step=1.0)
+        self.label_u.valueChanged.connect(lambda v: self._edit_label("Move text", "u", v))
+        self.label_v.valueChanged.connect(lambda v: self._edit_label("Move text", "v", v))
+        form.addRow(self.label_u_name, self.label_u)
+        form.addRow(self.label_v_name, self.label_v)
+        form.addRow("", hint("Measured from the middle of the surface. 0 = centred."))
+        buttons = QHBoxLayout()
+        center = icon_button("Centre it", "center")
+        center.clicked.connect(self._center_label)
+        remove = icon_button("Remove", "trash", "danger")
+        remove.clicked.connect(self.remove_selected_label)
+        buttons.addWidget(center)
+        buttons.addWidget(remove)
+        form.addRow(buttons)
+        lay.addWidget(self.label_box)
+        layout.addWidget(self.label_card)
+        layout.addStretch()
+        return widget
+
     def _build_check_tab(self):
         widget, layout = page("Check & export", "Check the design, then save files for your slicer.")
         box, lay = card()
@@ -1078,7 +1199,152 @@ class MainWindow(QMainWindow):
         self.export_hint = hint("")
         lay.addWidget(self.export_hint)
         layout.addWidget(box)
+        layout.addWidget(self._build_fit_test_card())
+        layout.addWidget(self._build_printer_card())
         return widget
+
+    def _build_fit_test_card(self) -> QFrame:
+        """Print just the parts that must fit, to check them before the whole thing."""
+        box, lay = card("Fit test print")
+        self.fit_card = box
+        lay.addWidget(hint("Print only the parts that have to fit, to check them with a little "
+                           "plastic before you print the whole thing."))
+        self.fit_lid_check = QCheckBox("The lid: the top of the box and the edge of the lid")
+        self.fit_openings_check = QCheckBox("Openings in the walls")
+        for check in (self.fit_lid_check, self.fit_openings_check):
+            check.setChecked(True)
+            check.toggled.connect(self._refresh_fit_test)
+            lay.addWidget(check)
+        self.fit_summary = hint("")
+        lay.addWidget(self.fit_summary)
+        self.fit_button = icon_button("", "export")
+        self.fit_button.clicked.connect(self.export_fit_test)
+        lay.addWidget(self.fit_button)
+        self._fit_cache: dict = {}
+        self._on_format_changed()
+        return box
+
+    def fit_test_choice(self) -> tuple[bool, bool]:
+        """Which tests are ticked (and possible): (lid, openings)."""
+        return (self.fit_lid_check.isChecked() and not self.fit_lid_check.isHidden(),
+                self.fit_openings_check.isChecked() and not self.fit_openings_check.isHidden())
+
+    def _refresh_fit_test(self, *_):
+        p = self.project
+        lid_ok = (self.parts is not None and self.parts.lid is not None
+                  and geometry.fit_test_lid_band(p) is not None)
+        openings_ok = geometry.fit_test_openings_band(p) is not None
+        posts = any(m.length > 0 for m in p.mounts)
+        holes = any(h.surface in geometry.WALL_SURFACES and h.kind != VENT for h in p.holes)
+        self.fit_openings_check.setText(
+            "Screw posts and openings in the walls" if posts and holes else
+            "Screw posts, to try the board on them" if posts else "Openings in the walls")
+        self.fit_lid_check.setHidden(not lid_ok)
+        self.fit_openings_check.setHidden(not openings_ok)
+        lid, openings = self.fit_test_choice()
+        ready = False
+        if not lid_ok and not openings_ok:
+            text = "Nothing to test yet: add a lid, openings in the walls or screw posts."
+        elif self.parts is None or validation.has_errors(self.issues):
+            text = "Fix the problems marked in red above first."
+        elif not lid and not openings:
+            text = "Tick what you want to test."
+        elif self.tabs.currentIndex() != TAB_CHECK:
+            return                      # the weight is worked out when this step is shown
+        else:
+            ready = True
+            material = self.material_combo.currentData()
+            key = (json.dumps(project_io.to_dict(p), sort_keys=True), lid, openings)
+            if key not in self._fit_cache:
+                pieces = geometry.fit_test_parts(p, lid, openings, self.parts)
+                self._fit_cache = {key: (sum(s.volume() for s in pieces.values()),
+                                         sum(s.volume() for s in self.parts.printable().values()))}
+            test, whole = self._fit_cache[key]
+            text = (f"About {printers.grams(test, material):.0f} g of {material}, instead of "
+                    f"{printers.grams(whole, material):.0f} g for the whole thing.")
+        self.fit_summary.setText(text)
+        self.fit_button.setEnabled(ready)
+
+    def _build_printer_card(self) -> QFrame:
+        """The user's printer and filament: for the size checks and the plastic estimate."""
+        box, lay = card("Your printer and filament")
+        self.printer_card = box
+        form = self.printer_form = form_layout()
+        self.printer_combo = QComboBox()
+        self.printer_combo.addItem("Not set", "")
+        for key, printer in printers.PRINTERS.items():
+            self.printer_combo.addItem(printer.name, key)
+        self.printer_combo.addItem("Other (type its size)", printers.CUSTOM)
+        form.addRow("Printer", self.printer_combo)
+        self.bed_w, self.bed_d, self.bed_h = (spin(50.0, 1000.0, step=5.0, decimals=0)
+                                              for _ in range(3))
+        bed = QHBoxLayout()
+        bed.setSpacing(6)
+        for widget, tip in ((self.bed_w, "Plate, left to right"), (self.bed_d, "Plate, front to back"),
+                            (self.bed_h, "Tallest print")):
+            widget.setToolTip(tip)
+            bed.addWidget(widget)
+        self.bed_row = QWidget()
+        self.bed_row.setLayout(bed)
+        bed.setContentsMargins(0, 0, 0, 0)
+        form.addRow("Build size", self.bed_row)
+        self.nozzle_combo = QComboBox()
+        for nozzle in printers.NOZZLES:
+            self.nozzle_combo.addItem(f"{nozzle:g} mm", nozzle)
+        form.addRow("Nozzle", self.nozzle_combo)
+        self.material_combo = QComboBox()
+        for material in printers.MATERIALS:
+            self.material_combo.addItem(material, material)
+        form.addRow("Filament", self.material_combo)
+        self.price_spin = spin(0.0, 10000.0, step=5.0, decimals=0)
+        self.price_spin.setSuffix(price_suffix())
+        self.price_spin.setToolTip("What a 1 kg spool costs you, for the cost estimate. "
+                                   "0 = don't show a cost.")
+        form.addRow("Price", self.price_spin)
+        lay.addLayout(form)
+        lay.addWidget(hint("Used to check that the parts fit on your printer and to estimate "
+                           "the plastic. Saved for all your designs."))
+        # Load the saved choice.
+        value = self.settings.value
+        set_quietly(self.printer_combo, value("printer/model", ""))
+        set_quietly(self.bed_w, float(value("printer/width", 220)))
+        set_quietly(self.bed_d, float(value("printer/depth", 220)))
+        set_quietly(self.bed_h, float(value("printer/height", 250)))
+        set_quietly(self.nozzle_combo, float(value("printer/nozzle", 0.4)))
+        set_quietly(self.material_combo, value("printer/material", "PLA"))
+        set_quietly(self.price_spin, float(value("printer/price", default_filament_price())))
+        for widget in (self.printer_combo, self.nozzle_combo, self.material_combo):
+            widget.activated.connect(self._on_printer_changed)
+        for widget in (self.bed_w, self.bed_d, self.bed_h, self.price_spin):
+            widget.valueChanged.connect(self._on_printer_changed)
+        self._show_printer_rows()
+        return box
+
+    def _show_printer_rows(self):
+        self.printer_form.setRowVisible(self.bed_row, self.printer_combo.currentData() == printers.CUSTOM)
+
+    def _on_printer_changed(self, *_):
+        settings = self.settings
+        settings.setValue("printer/model", self.printer_combo.currentData())
+        settings.setValue("printer/width", self.bed_w.value())
+        settings.setValue("printer/depth", self.bed_d.value())
+        settings.setValue("printer/height", self.bed_h.value())
+        settings.setValue("printer/nozzle", self.nozzle_combo.currentData())
+        settings.setValue("printer/material", self.material_combo.currentData())
+        settings.setValue("printer/price", self.price_spin.value())
+        self._show_printer_rows()
+        self.rebuild()
+
+    def printer(self) -> printers.Printer | None:
+        """The user's printer, or None when it isn't set."""
+        key = self.printer_combo.currentData()
+        nozzle = self.nozzle_combo.currentData()
+        if key == printers.CUSTOM:
+            return printers.Printer("printer", self.bed_w.value(), self.bed_d.value(),
+                                    self.bed_h.value(), nozzle)
+        if key in printers.PRINTERS:
+            return replace(printers.PRINTERS[key], nozzle=nozzle)
+        return None
 
     # ------------------------------------------------------------------
     # Editing + undo
@@ -1098,12 +1364,15 @@ class MainWindow(QMainWindow):
             self.selected_id = None
         if self.selected_mount_id and not self.project.mount(self.selected_mount_id):
             self.selected_mount_id = None
+        if self.selected_label_id and not self.project.label(self.selected_label_id):
+            self.selected_label_id = None
         self.refresh_controls()
         # Throttle (not debounce) so the preview keeps up while dragging or typing.
         if not self._rebuild_timer.isActive():
             self._rebuild_timer.start()
         self.viewer.set_hole_markers(self.project, self.selected_id, self._problem_holes())
         self.viewer.set_mount_markers(self.project, self.selected_mount_id, self._problem_mounts())
+        self.viewer.set_label_markers(self.project, self.selected_label_id, self._problem_labels())
         self._update_title()
 
     def _edit_hole(self, label, attr, value):
@@ -1122,7 +1391,7 @@ class MainWindow(QMainWindow):
             set_quietly(btn, shape == p.shape)
         set_quietly(self.name_edit, p.name)
         if p.template:
-            self.template_note.setText(f"Based on the {self._template_label()}. Choose Box or "
+            self.template_note.setText(f"Based on {self._template_label()}. Choose Box or "
                                        "Round container to start over with a plain one.")
         self.template_note.setVisible(bool(p.template))
         for shape, btn in self.shape_buttons.items():
@@ -1189,6 +1458,7 @@ class MainWindow(QMainWindow):
         set_quietly(self.lip_height, p.lid.lip_height)
         self.refresh_holes()
         self.refresh_mounts()
+        self.refresh_labels()
 
     def _compartment_sizes(self, attr: str, word: str, where: str) -> "SimpleNamespace":
         """A switch to set each compartment's size, with one box per compartment."""
@@ -1238,10 +1508,89 @@ class MainWindow(QMainWindow):
             ui.rest.setText(f"the rest: {sizes[-1]:.1f} mm")
             theme.set_level(ui.rest, "ok" if sizes[-1] >= 3 else "")
 
+    def _fill_template_combo(self):
+        """The template list: the user's own templates first, then the built-in ones."""
+        combo = self.template_combo
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem(theme.icon("template", theme.MUTED), "…or start from a template", None)
+
+        def heading(text):
+            # A heading that can't be picked, then the group's templates.
+            combo.addItem(text, None)
+            item = combo.model().item(combo.count() - 1)
+            item.setEnabled(False)
+            font = item.font()
+            font.setBold(True)
+            item.setFont(font)
+
+        mine = userdata.my_templates()
+        if mine:
+            heading("My templates")
+            for t in mine:
+                combo.addItem("    " + t.name, userdata.MY_TEMPLATE + t.name)
+                combo.setItemData(combo.count() - 1, f"Your own template, saved in {t.path.parent}",
+                                  Qt.ItemDataRole.ToolTipRole)
+            combo.addItem("    Rename or remove my templates…", MANAGE_TEMPLATES)
+        for title, keys in templates.GROUPS:
+            heading(title)
+            for key in keys:
+                t = templates.TEMPLATES[key]
+                combo.addItem("    " + t.label, key)
+                combo.setItemData(combo.count() - 1, t.description, Qt.ItemDataRole.ToolTipRole)
+        combo.setCurrentIndex(0)
+        combo.blockSignals(False)
+
+    def save_as_my_template(self) -> bool:
+        """Keep the design as an own template, to start new designs from."""
+        name, ok = QInputDialog.getText(self, "Save as my template",
+                                        "Name of the template (it will be in the template list):",
+                                        text=self.project.name)
+        name = name.strip()
+        if not ok or not name:
+            return False
+        existing = userdata.find_template(name)
+        if existing is not None and QMessageBox.question(
+                self, APP_NAME, f"You already have a template called “{existing.name}”. "
+                                "Replace it?") != QMessageBox.StandardButton.Yes:
+            return False
+        try:
+            userdata.save_template(self.project, name)
+        except OSError as exc:
+            QMessageBox.warning(self, APP_NAME, f"Couldn't save the template:\n{exc}")
+            return False
+        self._fill_template_combo()
+        self.statusBar().showMessage(f"Saved “{name}” as your template. Start from it under "
+                                     "“…or start from a template”.", 8000)
+        return True
+
+    def manage_my_templates(self):
+        dialog = MyTemplatesDialog(self)
+        dialog.exec()
+        self._fill_template_combo()
+
     def _on_template(self, index: int):
         key = self.template_combo.itemData(index)
         self.template_combo.setCurrentIndex(0)
         if key is None:
+            return
+        if key == MANAGE_TEMPLATES:
+            self.manage_my_templates()
+            return
+        if key.startswith(userdata.MY_TEMPLATE):
+            name = key[len(userdata.MY_TEMPLATE):]
+            mine = userdata.find_template(name)
+            if mine is None:
+                self._fill_template_combo()
+                return
+            try:
+                project = userdata.load_template(mine)
+            except project_io.ProjectFileError as exc:
+                QMessageBox.warning(self, APP_NAME, str(exc))
+                return
+            self._replace_project(f"Start from “{mine.name}”", project)
+            self.statusBar().showMessage(f"Started from your template “{mine.name}”. "
+                                         "Undo goes back to what you had.", 10000)
             return
         template = templates.TEMPLATES[key]
         self._replace_project(f"Start from “{template.label}”", templates.from_template(key))
@@ -1256,19 +1605,23 @@ class MainWindow(QMainWindow):
         what = "box" if shape == BOX else "round container"
         before = self._template_label()
         self._replace_project(f"Start a plain {what}", default_project(shape))
-        self.statusBar().showMessage(f"Started a plain {what}. Undo brings back the {before}.",
+        self.statusBar().showMessage(f"Started a plain {what}. Undo brings back {before}.",
                                      10000)
 
     def _replace_project(self, label: str, fresh: Project):
         """Swap in a whole new design as one undo step, and show all of it."""
-        self.selected_id = self.selected_mount_id = None
+        self.selected_id = self.selected_mount_id = self.selected_label_id = None
         self.edit(label, lambda p: p.__dict__.update(fresh.__dict__))
         self.viewer._fitted_size = None
         self.rebuild()
 
     def _template_label(self) -> str:
-        template = templates.TEMPLATES.get(self.project.template)
-        return f"“{template.label}” template" if template else "template"
+        """“the “Pi case” template” or “your “Screw box” template”."""
+        key = self.project.template
+        if key.startswith(userdata.MY_TEMPLATE):
+            return f"your “{key[len(userdata.MY_TEMPLATE):]}” template"
+        template = templates.TEMPLATES.get(key)
+        return f"the “{template.label}” template" if template else "the template"
 
     def _refresh_dividers(self):
         p, d = self.project, self.project.dividers
@@ -1475,10 +1828,12 @@ class MainWindow(QMainWindow):
         self.mount_info.setText(info)
         self._show_problems(self.mount_problem, [i for i in self.issues if i.mount_id == m.id])
 
-    def _list_icon(self, name: str, hole_id: str | None = None, mount_id: str | None = None) -> QIcon:
+    def _list_icon(self, name: str, hole_id: str | None = None, mount_id: str | None = None,
+                   label_id: str | None = None) -> QIcon:
         """The item's own icon, or a red / amber sign if a check found a problem with it."""
         levels = {i.level for i in self.issues if i.level != validation.INFO and (
-            (hole_id and i.hole_id == hole_id) or (mount_id and i.mount_id == mount_id))}
+            (hole_id and i.hole_id == hole_id) or (mount_id and i.mount_id == mount_id)
+            or (label_id and i.label_id == label_id))}
         if validation.ERROR in levels:
             return theme.icon("error", theme.DANGER)
         if validation.WARNING in levels:
@@ -1498,6 +1853,9 @@ class MainWindow(QMainWindow):
     def _problem_holes(self) -> set:
         return {i.hole_id for i in self.issues if i.hole_id and i.level != validation.INFO}
 
+    def _problem_labels(self) -> set:
+        return {i.label_id for i in self.issues if i.label_id and i.level != validation.INFO}
+
     # ------------------------------------------------------------------
     # Rebuilding geometry and checks
     # ------------------------------------------------------------------
@@ -1509,7 +1867,7 @@ class MainWindow(QMainWindow):
                 self.parts, self.issues = None, size_issues
             else:
                 self.parts = geometry.build_parts(p)
-                self.issues = validation.check(p, self.parts)
+                self.issues = validation.check(p, self.parts, self.printer())
         except Exception as exc:   # never crash the editor because of geometry trouble
             self.parts = None
             self.issues = [validation.Issue(validation.ERROR, "Something went wrong building the shape.",
@@ -1517,9 +1875,11 @@ class MainWindow(QMainWindow):
         self.viewer.set_parts(p, self.parts)
         self.viewer.set_hole_markers(p, self.selected_id, self._problem_holes())
         self.viewer.set_mount_markers(p, self.selected_mount_id, self._problem_mounts())
+        self.viewer.set_label_markers(p, self.selected_label_id, self._problem_labels())
         self._refresh_issues()
         self.refresh_holes()
         self.refresh_mounts()
+        self.refresh_labels()
 
     def _refresh_issues(self):
         icons = {validation.ERROR: ("error", theme.DANGER),
@@ -1569,23 +1929,32 @@ class MainWindow(QMainWindow):
     def _refresh_parts_summary(self):
         if self.parts is None:
             self.parts_summary.setText("Nothing to print yet: fix the problems below.")
+            self._refresh_fit_test()
             return
-        rows, plastic = [], []
+        rows, weights = [], []
         names = {"body": "Box" if self.project.shape == BOX else "Container", "lid": "Lid"}
+        material = self.material_combo.currentData()
         for part, solid in self.parts.printable().items():
             lo = solid.bounding_box()
             size = " × ".join(f"{lo[i + 3] - lo[i]:.1f}" for i in range(3))
             rows.append((names[part], f"{size} mm"))
-            plastic.append(solid.volume() / 1000)
-        parts = "" if len(plastic) < 2 else " (" + " + ".join(f"{v:.0f}" for v in plastic) + ")"
-        rows.append(("Plastic", f"about {sum(plastic):.0f} cm³{parts}"))
+            weights.append(printers.grams(solid.volume(), material))
+        parts = "" if len(weights) < 2 else " (" + " + ".join(f"{g:.0f}" for g in weights) + ")"
+        rows.append(("Plastic", f"about {sum(weights):.0f} g of {material}{parts}"))
+        price = self.price_spin.value()
+        if price > 0:
+            rows.append(("Cost", "about " + money(sum(weights) / 1000 * price)))
         holes = len(self.project.holes)
         line = f"{holes} hole{'s' * (holes != 1)}"
         posts = sum(len(mounts.post_positions(m)) for m in self.project.mounts)
         if posts:
             line += f", {posts} screw post{'s' * (posts != 1)}"
+        texts = sum(bool(t.text.strip()) for t in self.project.labels)
+        if texts:
+            line += f", {texts} text{'s' * (texts != 1)}"
         rows.append(("Features", line))
         self.parts_summary.setText(summary_table(rows))
+        self._refresh_fit_test()
 
     # ------------------------------------------------------------------
     # Hole actions
@@ -1709,6 +2078,142 @@ class MainWindow(QMainWindow):
         holes = self.project.holes
         self.select_hole(holes[row].id if 0 <= row < len(holes) else None)
 
+    # ---- text --------------------------------------------------------------
+    def refresh_labels(self):
+        p = self.project
+        self.label_list.blockSignals(True)
+        self.label_list.clear()
+        current = -1
+        for i, label in enumerate(p.labels):
+            where = SURFACE_LABELS.get(label.surface, label.surface)
+            text = label.text.strip() or "(empty)"
+            style = "raised" if label.style == RAISED else "engraved"
+            item = QListWidgetItem(self._list_icon("text", label_id=label.id), f"{text} · {where} · {style}")
+            self.label_list.addItem(item)
+            if label.id == self.selected_label_id:
+                current = i
+        self.label_list.setCurrentRow(current)
+        self.label_list.blockSignals(False)
+        fit_list(self.label_list, 5)
+        self.label_list.setVisible(bool(p.labels))
+        label = p.label(self.selected_label_id) if self.selected_label_id else None
+        self.label_card.setVisible(label is not None)
+        self.label_surface.blockSignals(True)
+        self.label_surface.clear()
+        for surface in p.surfaces():
+            self.label_surface.addItem(SURFACE_LABELS[surface], surface)
+        if label is not None and label.surface not in p.surfaces():
+            self.label_surface.addItem(SURFACE_LABELS.get(label.surface, label.surface) + " (gone)",
+                                       label.surface)
+        self.label_surface.blockSignals(False)
+        if label is None:
+            self.label_problem.setText("")
+            self.label_problem.setVisible(False)
+            return
+        if self.label_text.text() != label.text:
+            set_quietly(self.label_text, label.text)
+        set_quietly(self.label_surface, label.surface)
+        set_quietly(self.label_style, label.style)
+        set_quietly(self.label_size, label.size)
+        set_quietly(self.label_depth, label.depth)
+        self.label_depth_name.setText("Stands out" if label.style == RAISED else "Cut in")
+        set_quietly(self.label_u, label.u)
+        set_quietly(self.label_v, label.v)
+        side, flat = label.surface == SIDE, label.surface in (BOTTOM, LID)
+        self.label_u_name.setText("Around" if side else "Left / right")
+        self.label_v_name.setText("Front / back" if flat else "Up / down")
+        self.label_u.setSuffix("°" if side else " mm")
+        self._show_problems(self.label_problem, [i for i in self.issues if i.label_id == label.id])
+
+    def select_label(self, label_id: str | None):
+        self.selected_label_id = label_id
+        self.refresh_labels()
+        self.viewer.set_label_markers(self.project, label_id, self._problem_labels())
+
+    def _on_label_row_changed(self, row):
+        labels = self.project.labels
+        self.select_label(labels[row].id if 0 <= row < len(labels) else None)
+
+    def _edit_label(self, name, attr, value):
+        label_id = self.selected_label_id
+        if label_id is None or self.project.label(label_id) is None:
+            return
+        self.edit(name, lambda p: setattr(p.label(label_id), attr, value), merge=f"{label_id}:{attr}")
+
+    def add_label(self, surface: str | None = None):
+        p = self.project
+        if surface is None:
+            current = p.label(self.selected_label_id) if self.selected_label_id else None
+            if current is not None and current.surface in p.surfaces():
+                surface = current.surface
+            elif p.lid.enabled and LID in p.surfaces():
+                surface = LID
+            else:
+                surface = FRONT if p.shape == BOX else SIDE
+        label = Label(text="Text", surface=surface,
+                      style=ENGRAVED if surface in (LID, BOTTOM) else RAISED)
+        # Smaller letters when the surface is small.
+        while clamp_label(p, label) is None and label.size > 3.0:
+            label.size = max(3.0, label.size - 1.0)
+        pos = clamp_label(p, label)
+        if pos is None:
+            self.statusBar().showMessage(f"There's no room for text on the "
+                                         f"{SURFACE_LABELS[surface].lower()}.", 5000)
+            return
+        label.u, label.v = pos
+        self.edit("Add text", lambda proj: proj.labels.append(copy.deepcopy(label)))
+        self.tabs.setCurrentIndex(TAB_TEXT)
+        self.select_label(label.id)
+        self.label_text.setFocus()
+        self.label_text.selectAll()
+
+    def _delete_selected(self):
+        """The Delete key: removes the selected text on the Text step, else the selected hole."""
+        if self.tabs.currentIndex() == TAB_TEXT and self.selected_label_id:
+            self.remove_selected_label()
+        else:
+            self.remove_selected_hole()
+
+    def remove_selected_label(self):
+        label_id = self.selected_label_id
+        if label_id is None or not self.project.label(label_id):
+            return
+        self.selected_label_id = None
+        self.edit("Remove text", lambda p: p.labels.remove(p.label(label_id)))
+
+    def _center_label(self):
+        label_id = self.selected_label_id
+        if label_id is None:
+            return
+
+        def change(p):
+            t = p.label(label_id)
+            if t.surface != SIDE:
+                t.u = 0.0
+            t.v = 0.0
+            pos = clamp_label(p, t)
+            if pos:
+                t.u, t.v = pos
+        self.edit("Centre text", change)
+
+    def _on_label_surface_changed(self, _index):
+        label_id = self.selected_label_id
+        surface = self.label_surface.currentData()
+        if label_id is None or surface is None:
+            return
+
+        def change(p):
+            t = p.label(label_id)
+            if t.surface == surface:
+                return
+            t.surface, t.u, t.v = surface, 0.0, 0.0
+            if surface in (LID, BOTTOM):
+                t.style = ENGRAVED          # raised text there would need supports
+            pos = clamp_label(p, t)
+            if pos:
+                t.u, t.v = pos
+        self.edit("Move text to another surface", change)
+
     # ---- screw posts -----------------------------------------------------
     def add_mount(self, board: str):
         m = mounts.new_mount(self.project, board)
@@ -1766,13 +2271,20 @@ class MainWindow(QMainWindow):
         return picking.hole_under_ray(self.project, origin, direction, mesh_distance,
                                       self.viewer.lid_offset, self.viewer.show_lid)
 
+    def _label_under(self, origin, direction, mesh_distance):
+        return picking.label_under_ray(self.project, origin, direction, mesh_distance,
+                                       self.viewer.lid_offset, self.viewer.show_lid)
+
     def hole_at(self, origin, direction, mesh_distance) -> bool:
         return (self._hole_under(origin, direction, mesh_distance) is not None
+                or self._label_under(origin, direction, mesh_distance) is not None
                 or picking.mount_under_ray(self.project, origin, direction, mesh_distance) is not None)
 
     def drag_begin(self, origin, direction, mesh_distance) -> bool:
         hole = self._hole_under(origin, direction, mesh_distance)
         if hole is None:
+            if self._label_drag_begin(origin, direction, mesh_distance):
+                return True
             return self._mount_drag_begin(origin, direction, mesh_distance)
         self.tabs.setCurrentIndex(TAB_HOLES)
         self.select_hole(hole.id)
@@ -1786,6 +2298,46 @@ class MainWindow(QMainWindow):
         self._drag = {"id": hole.id, "du": hole.u - hit[1], "dv": hole.v - hit[2],
                       "key": f"drag:{self._drag_count}", "type": "hole"}
         return True
+
+    def _label_drag_begin(self, origin, direction, mesh_distance) -> bool:
+        label = self._label_under(origin, direction, mesh_distance)
+        if label is None:
+            return False
+        self.tabs.setCurrentIndex(TAB_TEXT)
+        self.select_label(label.id)
+        hit = picking.surface_hit(self.project, label.surface, origin, direction,
+                                  self.viewer.lid_offset)
+        if hit is None:
+            return True
+        self._drag_count += 1
+        self._drag = {"id": label.id, "du": label.u - hit[1], "dv": label.v - hit[2],
+                      "key": f"drag:{self._drag_count}", "type": "label"}
+        return True
+
+    def _label_drag_move(self, origin, direction):
+        drag = self._drag
+        label = self.project.label(drag["id"])
+        if label is None:
+            return
+        hit = picking.surface_hit(self.project, label.surface, origin, direction,
+                                  self.viewer.lid_offset)
+        if hit is None:
+            return
+        moved = copy.deepcopy(label)
+        moved.u, moved.v = hit[1] + drag["du"], hit[2] + drag["dv"]
+        notes = []
+        if label.surface != SIDE and abs(moved.u) <= picking.SNAP_MM:
+            moved.u = 0.0
+            notes.append("centred")
+        pos = clamp_label(self.project, moved)
+        if pos is None:
+            return
+        if abs(pos[0] - moved.u) > 0.05 or abs(pos[1] - moved.v) > 0.05:
+            notes = ["kept on the surface"]
+        label_id = label.id
+        self.edit("Move text", lambda p: _set_position(p.label(label_id), pos), merge=drag["key"])
+        name = validation.label_name(self.project, self.project.label(label_id))
+        self.statusBar().showMessage(f"{name}: {', '.join(notes)}" if notes else name, 1500)
 
     def _mount_drag_begin(self, origin, direction, mesh_distance) -> bool:
         m = picking.mount_under_ray(self.project, origin, direction, mesh_distance)
@@ -1830,6 +2382,9 @@ class MainWindow(QMainWindow):
         drag = self._drag
         if drag and drag["type"] == "mount":
             self._mount_drag_move(origin, direction)
+            return
+        if drag and drag["type"] == "label":
+            self._label_drag_move(origin, direction)
             return
         hole = self.project.hole(drag["id"]) if drag else None
         if hole is None:
@@ -1876,16 +2431,44 @@ class MainWindow(QMainWindow):
 
     def _on_issue_row_changed(self, row):
         issue = self._issue_at(row)
-        self.fix_button.setVisible(bool(issue and issue.fix))
-        if issue and issue.fix:
+        fixable = bool(issue and (issue.fix or issue.fix_values))
+        self.fix_button.setVisible(fixable)
+        if fixable:
             self.fix_button.setText(issue.fix_label or "Fix it")
         if issue and issue.hole_id:
             self.select_hole(issue.hole_id)
         elif issue and issue.mount_id:
             self.select_mount(issue.mount_id)
+        elif issue and issue.label_id:
+            self.select_label(issue.label_id)
 
     def _apply_fix(self):
         issue = self._issue_at(self.issue_list.currentRow())
+        if issue and issue.label_id and (issue.fix or issue.fix_values):
+            label_id, pos, values = issue.label_id, issue.fix, dict(issue.fix_values or {})
+
+            def change_label(p):
+                t = p.label(label_id)
+                if pos:
+                    t.u, t.v = pos
+                for attr, value in values.items():
+                    setattr(t, attr, value)
+            self.edit(issue.fix_label or "Fix text", change_label)
+            self.statusBar().showMessage("Changed. Press Ctrl+Z to undo.", 5000)
+            return
+        if issue and issue.fix_values:
+            values = dict(issue.fix_values)
+
+            def set_values(p):
+                for path, value in values.items():
+                    target, *rest = path.split(".")
+                    if rest:
+                        setattr(getattr(p, target), rest[0], value)
+                    else:
+                        setattr(p, target, value)
+            self.edit(issue.fix_label or "Fix", set_values)
+            self.statusBar().showMessage("Changed. Press Ctrl+Z to undo.", 5000)
+            return
         if issue and issue.fix and issue.mount_id:
             mount_id, pos = issue.mount_id, issue.fix
             self.edit("Fix post position", lambda p: _set_position(p.mount(mount_id), pos))
@@ -1927,6 +2510,7 @@ class MainWindow(QMainWindow):
         self.path = path
         self.selected_id = None
         self.selected_mount_id = None
+        self.selected_label_id = None
         self.undo_stack.clear()
         self.viewer._fitted_size = None
         self.refresh_controls()
@@ -1949,9 +2533,12 @@ class MainWindow(QMainWindow):
             project = project_io.load_project(path)
         except project_io.ProjectFileError as exc:
             QMessageBox.warning(self, APP_NAME, str(exc))
+            if not path.exists():
+                self._forget_recent(path)
             return
         self.settings.setValue("last_dir", str(path.parent))
         self._load(project, path)
+        self._add_recent(path)
 
     def save_project(self) -> bool:
         if self.path is None:
@@ -1962,6 +2549,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, APP_NAME, f"Couldn't save the project:\n{exc}")
             return False
         self.undo_stack.setClean()
+        self._add_recent(self.path)
         self.statusBar().showMessage(f"Saved {self.path.name}", 4000)
         self._update_title()
         return True
@@ -1980,10 +2568,109 @@ class MainWindow(QMainWindow):
         self.settings.setValue("last_dir", str(path.parent))
         return self.save_project()
 
+    # ---- recent designs ------------------------------------------------------
+    def recent_files(self) -> list[Path]:
+        value = self.settings.value("recent_files", [])
+        if isinstance(value, str):
+            value = [value]
+        return [Path(v) for v in (value or []) if v]
+
+    def _set_recent(self, paths: list[Path]) -> None:
+        self.settings.setValue("recent_files", [str(p) for p in paths[:RECENT_MAX]])
+
+    def _add_recent(self, path: Path) -> None:
+        path = Path(path).absolute()
+        self._set_recent([path] + [p for p in self.recent_files() if p != path])
+
+    def _forget_recent(self, path: Path) -> None:
+        path = Path(path).absolute()
+        self._set_recent([p for p in self.recent_files() if p != path])
+
+    def _fill_recent_menu(self) -> None:
+        menu = self.recent_menu
+        menu.clear()
+        existing = [p for p in self.recent_files() if p.exists()]
+        self._set_recent(existing)                      # forget files that are gone
+        if not existing:
+            menu.addAction("No recent designs").setEnabled(False)
+            return
+        home = str(Path.home())
+        for path in existing:
+            folder = str(path.parent)
+            if folder.startswith(home):
+                folder = "~" + folder[len(home):]
+            act = menu.addAction(theme.icon("open", theme.MUTED), f"{path.stem}    {folder}")
+            act.setToolTip(str(path))
+            act.triggered.connect(lambda _=False, p=path: self.open_recent(p))
+        menu.addSeparator()
+        menu.addAction("Clear the list", lambda: self._set_recent([]))
+
+    def open_recent(self, path: Path) -> None:
+        if not self._confirm_discard():
+            return
+        if not path.exists():
+            self._forget_recent(path)
+            QMessageBox.warning(self, APP_NAME, f"{path.name} isn't there any more.\n\n{path.parent}")
+            return
+        self.open_path(path)
+
+    # ---- automatic backups ---------------------------------------------------
+    def _schedule_autosave(self, *_):
+        if self.autosave is None:
+            return
+        if self.undo_stack.isClean():
+            self._autosave_timer.stop()
+            self.autosave.clear()                       # saved: no backup needed
+        else:
+            self._autosave_timer.start()
+
+    def _write_autosave(self):
+        if self.autosave is not None and not self.undo_stack.isClean():
+            self.autosave.write(self.project, self.path)
+
+    def close_autosave(self):
+        self._autosave_timer.stop()
+        if self.autosave is not None:
+            self.autosave.close()
+
+    def offer_recovery(self, backups: list[Backup]) -> bool:
+        """After a crash: offer the newest backup. Older ones are kept for next time."""
+        if not backups:
+            return False
+        backup, rest = backups[0], backups[1:]
+        for other in rest:
+            other.keep()
+        when = QLocale().toString(QDateTime.fromSecsSinceEpoch(int(backup.saved_at)),
+                                  QLocale.FormatType.ShortFormat)
+        name = backup.file.name if backup.file else backup.project.name
+        box = QMessageBox(self)
+        box.setWindowTitle("Recover your design?")
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setText(f"<b>3Dn00b didn't close properly last time.</b><br><br>Your unsaved changes "
+                    f"to “{escape(name)}” (from {escape(when)}) can be recovered.")
+        box.setInformativeText("If you throw them away, they can't be brought back.")
+        recover = box.addButton("Recover", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("Throw away", QMessageBox.ButtonRole.DestructiveRole)
+        box.setDefaultButton(recover)
+        box.exec()
+        if box.clickedButton() is not recover:
+            backup.discard()
+            return False
+        file = backup.file if backup.file and backup.file.exists() else None
+        self._load(backup.project, file)
+        self.undo_stack.resetClean()                    # it still has to be saved
+        self._update_title()
+        backup.discard()
+        self._write_autosave()                          # now it's this window's backup
+        self.statusBar().showMessage(f"Recovered “{name}”. Save it to keep it.", 10000)
+        return True
+
     def _on_format_changed(self, _index=None):
         fmt = self.format_combo.currentData()
         self.settings.setValue("export_format", fmt)
         self.export_button.setText(f"Export for printing ({fmt.upper()})…")
+        if hasattr(self, "fit_button"):
+            self.fit_button.setText(f"Export fit test ({fmt.upper()})…")
 
     def export_stl(self):
         """Export the printable parts in the chosen file type (STL or 3MF)."""
@@ -2017,6 +2704,34 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, APP_NAME, "Saved for printing:\n\n"
                                 + "\n".join(f.name for f in files)
                                 + f"\n\nin {folder}\n\nOpen these in your slicer to print them.")
+
+    def export_fit_test(self):
+        """Export the pieces of the fit test, in the chosen file type."""
+        lid, openings = self.fit_test_choice()
+        if self.parts is None or validation.has_errors(self.issues) or not (lid or openings):
+            return
+        fmt = self.format_combo.currentData()
+        folder = QFileDialog.getExistingDirectory(self, "Choose a folder for the fit test",
+                                                  self._last_dir())
+        if not folder:
+            return
+        pieces = geometry.fit_test_parts(self.project, lid, openings, self.parts)
+        existing = [f for f in project_io.fit_test_files(self.project, folder, fmt, pieces)
+                    if f.exists()]
+        if existing and QMessageBox.question(
+                self, APP_NAME, "Replace these files?\n" + "\n".join(f.name for f in existing)
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            files = project_io.export_fit_test(self.project, folder, fmt, pieces=pieces)
+        except OSError as exc:
+            QMessageBox.warning(self, APP_NAME, f"Couldn't export:\n{exc}")
+            return
+        self.settings.setValue("last_dir", folder)
+        QMessageBox.information(self, APP_NAME, "Saved the fit test:\n\n"
+                                + "\n".join(f.name for f in files)
+                                + f"\n\nin {folder}\n\nPrint these first. When the lid fits and the "
+                                "plugs go in, print the whole thing.")
 
     def about_text(self) -> str:
         return (f"<h3>{APP_NAME} {__version__}</h3>"
@@ -2061,11 +2776,101 @@ class MainWindow(QMainWindow):
         self.viewer.show_lid = on
         self.rebuild()
 
+    def _on_sizes(self, on):
+        self.viewer.show_sizes = on
+        self.settings.setValue("view/sizes", on)
+        self.viewer.set_measurements(self.project, self.project.hole(self.selected_id)
+                                     if self.selected_id else None)
+
+    def _on_see_through(self, on):
+        self.viewer.see_through = on
+        self.rebuild()
+
     def closeEvent(self, event):
         if self._confirm_discard():
+            self.close_autosave()
             event.accept()
         else:
             event.ignore()
+
+
+class MyTemplatesDialog(QDialog):
+    """Rename or remove the user's own templates."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setWindowTitle("My templates")
+        self.setMinimumWidth(420)
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+        self.list = QListWidget()
+        self.list.setMinimumHeight(200)
+        layout.addWidget(self.list)
+        row = QHBoxLayout()
+        self.rename_button = icon_button("Rename…", "template")
+        self.remove_button = icon_button("Remove", "trash", "danger")
+        close = QPushButton("Close")
+        self.rename_button.clicked.connect(self.rename)
+        self.remove_button.clicked.connect(self.remove)
+        close.clicked.connect(self.accept)
+        row.addWidget(self.rename_button)
+        row.addWidget(self.remove_button)
+        row.addStretch()
+        row.addWidget(close)
+        layout.addLayout(row)
+        layout.addWidget(hint(f"Your templates are kept in {userdata.templates_dir()}. They are "
+                              "ordinary project files, so you can copy them to another computer."))
+        self.list.currentRowChanged.connect(self._update_buttons)
+        self.refresh()
+
+    def refresh(self, select: str | None = None):
+        self.templates = userdata.my_templates()
+        self.list.clear()
+        for t in self.templates:
+            self.list.addItem(QListWidgetItem(theme.icon("box" if t.shape == BOX else "cylinder",
+                                                         theme.MUTED), t.name))
+        names = [t.name for t in self.templates]
+        self.list.setCurrentRow(names.index(select) if select in names else 0 if names else -1)
+        self._update_buttons()
+
+    def selected(self):
+        row = self.list.currentRow()
+        return self.templates[row] if 0 <= row < len(self.templates) else None
+
+    def _update_buttons(self, *_):
+        for button in (self.rename_button, self.remove_button):
+            button.setEnabled(self.selected() is not None)
+
+    def rename(self):
+        t = self.selected()
+        if t is None:
+            return
+        name, ok = QInputDialog.getText(self, "Rename template", "New name:", text=t.name)
+        name = name.strip()
+        if not ok or not name or name == t.name:
+            return
+        other = userdata.find_template(name)
+        if other is not None and other.path != t.path and QMessageBox.question(
+                self, APP_NAME, f"You already have a template called “{other.name}”. "
+                                "Replace it?") != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            userdata.rename_template(t, name)
+        except (OSError, project_io.ProjectFileError) as exc:
+            QMessageBox.warning(self, APP_NAME, f"Couldn't rename it:\n{exc}")
+        self.refresh(name)
+
+    def remove(self):
+        t = self.selected()
+        if t is None or QMessageBox.question(
+                self, APP_NAME, f"Remove your template “{t.name}”? Designs you started from it "
+                                "keep working.") != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            userdata.remove_template(t)
+        except OSError as exc:
+            QMessageBox.warning(self, APP_NAME, f"Couldn't remove it:\n{exc}")
+        self.refresh()
 
 
 def _set_position(hole: Hole, pos) -> None:
@@ -2080,6 +2885,7 @@ def release_window(window: MainWindow) -> None:
     "leaked instance" warnings in the terminal.
     """
     window._rebuild_timer.stop()
+    window.close_autosave()
     window.parts = None
     window.viewer.release_geometry()
     window.undo_stack.clear()
@@ -2092,7 +2898,11 @@ def main_window_app(argv) -> int:
     if len(argv) > 1:
         window.open_path(Path(argv[1]))
     window.show()
-    if window.welcome_due():
+    from .autosave import leftover_backups
+    backups = leftover_backups()
+    if backups:                                       # it crashed last time
+        QTimer.singleShot(400, lambda: window.offer_recovery(backups))
+    elif window.welcome_due():
         QTimer.singleShot(400, window.show_welcome)   # once the window is on screen
     code = app.exec()
     release_window(window)

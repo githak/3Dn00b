@@ -64,35 +64,38 @@ def _top(p: Project, m: Mount) -> float:
 
 # ---- boards -------------------------------------------------------------------
 
+# Raspberry Pi 3 B+, 4 and 5 (85 x 56 mm). Socket positions from the official Raspberry Pi
+# mechanical drawings (datasheets.raspberrypi.com), measured from the corner with the power
+# and HDMI edge at the front:
+#   front: micro USB / USB-C at 10.6 / 11.2, HDMI at 32 (Pi 3) or 26 + 39.5 (Pi 4) or
+#          25.8 + 39.2 (Pi 5), audio at 53.5 / 54. The audio jack sticks out 2.6 mm.
+#   right: USB and network across 1.5 to 54.5 (their order differs between models),
+#          up to 16.5 mm tall; they stick out 2 mm (Pi 3) or 3 mm (Pi 4 and 5).
+#   left:  micro SD card under the board at 28, sticking out 2.5 mm; the Pi 5's power
+#          button at 18.4.
+PI_ROOM = {"left": 3.0, "right": 3.5, "front": 3.0, "back": 1.5}   # room around the board
+
+
 def pi_case(fan: bool = False, gpio: bool = False) -> Project:
-    # 85 x 56 mm. Room around it: the USB and network sockets stick out about
-    # 2 mm on the right, the SD card on the left.
     name = ("Raspberry Pi 5 case with fan" if fan else
             "Raspberry Pi case with GPIO slot" if gpio else "Raspberry Pi case")
-    p = _box(name, 85 + 2.0 + 2.5, 56 + 3.0, 32.0)
-    m = _board(p, "rpi-ab", 6.0, u=(2.0 - 2.5) / 2, v=0.0)
-    top, low = _top(p, m), mounts.board_bottom(p, m)
-    # Power, HDMI and audio along the front edge (Pi 3, 4 and 5 all fit in one opening).
-    x0, _ = _floor_point(m, 3.5, 0)
-    x1, _ = _floor_point(m, 59.0, 0)
-    _opening(p, FRONT, (x0 + x1) / 2, top - 2.5, top + 7.5, x1 - x0, rounding=2.0)
-    # USB and network sockets on the right edge.
-    _, y0 = _floor_point(m, 85, 1.5)
-    _, y1 = _floor_point(m, 85, 54.5)
-    _opening(p, RIGHT, (y0 + y1) / 2, top - 1.0, top + 16.5, y1 - y0)
-    # The micro SD card, under the board on the left edge.
-    _, y = _floor_point(m, 0, 28.0)
-    _opening(p, LEFT, y, low - 3.5, low + 1.0, 16.0, rounding=2.0)
+    room = PI_ROOM
+    p = _box(name, 85 + room["left"] + room["right"], 56 + room["front"] + room["back"], 32.0)
+    m = _board(p, "rpi-ab", 6.0, u=(room["left"] - room["right"]) / 2,
+               v=(room["front"] - room["back"]) / 2)
+    pi_openings(p, m)
     if fan:
-        # A 30 mm fan under the lid, over the processor, held by four screws 24 mm apart.
-        # It stays clear of the tall USB and network sockets.
-        x, y = _floor_point(m, 30.0, 32.0)
+        # A 30 mm fan under the lid, over the Pi 5's processor (33.2 x 22.9 on the
+        # drawing), held by four screws 24 mm apart, clear of the tall sockets.
+        x, y = _floor_point(m, 33.2, 22.9)
         p.holes.append(Hole(surface=LID, diameter=26.0, u=x, v=y))
         p.holes += [Hole(surface=LID, diameter=3.4, u=x + dx, v=y + dy)
                     for dx in (-12.0, 12.0) for dy in (-12.0, 12.0)]
     else:
-        # Air out over the processor.
-        p.holes.append(Hole(surface=LID, kind=VENT, width=40.0, height=16.0, rounding=1.0))
+        # Air out over the processor (Pi 4 at 29 x 32.5, Pi 5 at 32.5 x 23.5).
+        x, y = _floor_point(m, 31.0, 28.0)
+        p.holes.append(Hole(surface=LID, kind=VENT, width=40.0, height=16.0, u=x, v=y,
+                            rounding=1.0))
     if gpio:
         # A slot in the lid for a ribbon cable, as close to the 40-pin header as the
         # lid's lip allows (the header is centred between the mounting holes along the
@@ -102,6 +105,26 @@ def pi_case(fan: bool = False, gpio: bool = False) -> Project:
         slot.u, slot.v = clamp_hole(p, slot)
         p.holes.append(slot)
     return p
+
+
+def pi_openings(p: Project, m: Mount) -> None:
+    """All the openings a Raspberry Pi 3 B+ / 4 / 5 on posts `m` needs."""
+    top = _top(p, m)
+    _pi_front_opening(p, m)
+    # USB and network sockets on the right edge (one opening fits every model's order).
+    a, b = _facing(p, m, 85, 1.5), _facing(p, m, 85, 54.5)
+    _opening(p, a[0], (a[1] + b[1]) / 2, top - 1.0, top + 17.5, abs(b[1] - a[1]))
+    # The micro SD card (under the board) and, on a Pi 5, the power button beside it.
+    a, b = _facing(p, m, 0, 16.0), _facing(p, m, 0, 35.0)
+    _opening(p, a[0], (a[1] + b[1]) / 2, top - 4.5, top + 4.5, abs(b[1] - a[1]), rounding=2.0)
+
+
+def _pi_front_opening(p: Project, m: Mount) -> None:
+    """Power, HDMI and audio along the front edge: one opening fits the Pi 3, 4 and 5,
+    tall enough for the moulded part of the plugs (a full-size HDMI plug is the largest)."""
+    top = _top(p, m)
+    a, b = _facing(p, m, 3.5, 0), _facing(p, m, 59.0, 0)
+    _opening(p, a[0], (a[1] + b[1]) / 2, top - 3.0, top + 9.0, abs(b[1] - a[1]), rounding=2.0)
 
 
 def pico_case() -> Project:
@@ -131,24 +154,28 @@ def esp32_case() -> Project:
     return p
 
 
+# Raspberry Pi Zero, Zero W and Zero 2 W (65 x 30 mm), from the official drawing: mini HDMI
+# at 12.4, micro USB (data) at 41.4 and micro USB (power) at 54 along the front edge (the
+# micro USB sockets stick out 1.35 mm); camera connector at 15 on the right edge; micro SD
+# card (on top) at 16.7 on the left edge (not on the drawing; from NopSCADlib).
+
 def pi_zero_case() -> Project:
-    # 65 x 30 mm; the micro SD card sticks out a little on the left.
-    p = _box("Raspberry Pi Zero case", 65 + 2.5 + 1.5, 30 + 3.0, 18.0, corner=2.5)
-    m = _board(p, "rpi-zero", 4.0, u=(2.5 - 1.5) / 2, v=0.0)
-    _zero_openings(p, m)
+    p = _box("Raspberry Pi Zero case", 65 + 2.5 + 1.5, 30 + 2.0 + 1.5, 18.0, corner=2.5)
+    m = _board(p, "rpi-zero", 4.0, u=(2.5 - 1.5) / 2, v=(2.0 - 1.5) / 2)
+    zero_openings(p, m)
     p.holes.append(Hole(surface=LID, kind=VENT, width=30.0, height=10.0, rounding=1.0))
     return p
 
 
-def _zero_openings(p: Project, m: Mount, camera: bool = True) -> None:
-    """Mini HDMI, USB and power along the long edge; SD card and camera at the ends."""
+def zero_openings(p: Project, m: Mount, camera: bool = True) -> None:
+    """Openings sized for the moulded part of the plugs, which goes into the wall."""
     top = _top(p, m)
-    sockets = ((12.4, 12.0, top - 3.0, top + 5.0),      # mini HDMI
-               (41.4, 9.0, top - 2.5, top + 4.0),       # micro USB (data)
-               (54.0, 9.0, top - 2.5, top + 4.0))       # micro USB (power)
-    for x, width, z0, z1 in sockets:
-        _opening(p, *_facing(p, m, x, 0), z0, z1, width, rounding=1.5)
-    _opening(p, *_facing(p, m, 0, 16.9), top - 1.5, top + 3.0, 14.0)      # SD card
+    _opening(p, *_facing(p, m, 12.4, 0), top - 3.0, top + 6.0, 14.0, rounding=2.0)   # mini HDMI
+    # Both micro USB sockets share one opening: they're only 12.6 mm apart, too close
+    # for a strip of plastic between two plugs.
+    a, b = _facing(p, m, 35.6, 0), _facing(p, m, 59.8, 0)
+    _opening(p, a[0], (a[1] + b[1]) / 2, top - 2.5, top + 5.0, abs(b[1] - a[1]), rounding=2.0)
+    _opening(p, *_facing(p, m, 0, 16.7), top - 1.5, top + 3.0, 14.0)      # SD card
     if camera:
         _opening(p, *_facing(p, m, 65, 15.0), top - 0.5, top + 2.5, 18.0)  # camera cable
 
@@ -168,45 +195,59 @@ def _facing(p: Project, m: Mount, x: float, y: float) -> tuple[str, float]:
 
 
 def pi_zero_stack() -> Project:
-    # Two boards crossing like a "+": the lower one left to right, the upper one front
-    # to back on taller posts. Cables reach their sockets through the openings.
-    p = _box("Two stacked Pi Zero 2 W", 70.0, 70.0, 24.0, corner=3.0)
-    lower = _board(p, "rpi-zero", 4.0, u=0.0, v=0.0)
-    # The upper board needs room for the lower board's parts, plus a little air.
-    room = mounts.BOARD_THICKNESS + mounts.parts_height(lower) + mounts.STACK_AIR
-    upper = _board(p, "rpi-zero", lower.length + room + 0.4, u=0.0, v=0.0, rotation=90)
-    _zero_openings(p, lower, camera=False)
-    _zero_openings(p, upper, camera=False)
+    """Two Pi Zero 2 W crossing like a +, the upper one on taller posts.
+
+    Placed so the cables can reach: the upper board's sockets face the right wall, right
+    behind it, and its SD card the front wall. The lower board's sockets face the front
+    wall; it sits as close to it as the upper board's front posts allow (they stand on
+    the floor in front of the lower board), about 10 mm in, which a plug reaches through
+    its opening. Its SD card faces the left wall.
+    """
+    width, depth = 65 + 2.5 + 2.5, 65 + 2.5 + 1.5
+    p = _box("Two stacked Pi Zero 2 W", width, depth, 27.0, corner=3.0)
+    # The upper board stands higher than the lower board's parts need (4 mm plus 1 mm of
+    # air), so its SD card opening stays clear of the lower board's USB opening.
+    upper = _board(p, "rpi-zero", 12.5, u=width / 2 - 2.0 - 15, v=-depth / 2 + 2.5 + 32.5,
+                   rotation=90)
+    front_post = min(y for _, y in mounts.post_positions(upper))
+    lower = _board(p, "rpi-zero", 4.0, u=-width / 2 + 2.5 + 32.5,
+                   v=front_post + mounts.post_radius(upper) + 0.5 + 15)
+    zero_openings(p, lower, camera=False)
+    zero_openings(p, upper, camera=False)
     p.holes.append(Hole(surface=LID, kind=VENT, width=24.0, height=24.0, rounding=1.0))
     return p
 
 
 def pi_3a_case() -> Project:
-    # 65 x 56 mm: the Pi 3 B+ layout without the network socket and with one USB socket.
-    p = _box("Raspberry Pi 3 A+ case", 65 + 2.0 + 2.0, 56 + 3.0, 24.0)
-    m = _board(p, "rpi-3a", 6.0, u=0.0, v=0.0)
-    top, low = _top(p, m), mounts.board_bottom(p, m)
-    x0, _ = _floor_point(m, 3.5, 0)
-    x1, _ = _floor_point(m, 59.0, 0)
-    _opening(p, FRONT, (x0 + x1) / 2, top - 2.5, top + 7.5, x1 - x0, rounding=2.0)
-    _opening(p, *_facing(p, m, 65, 31.5), top - 1.0, top + 9.0, 18.0)          # USB
-    _opening(p, *_facing(p, m, 0, 28.0), low - 3.5, low + 1.0, 16.0, rounding=2.0)  # SD
+    # 65 x 56 mm: the Pi 3 B+ front edge and SD card, and one USB socket on the right at
+    # 31.5 (sticking out 2.5 mm); no network socket.
+    room = dict(PI_ROOM, right=3.0)
+    p = _box("Raspberry Pi 3 A+ case", 65 + room["left"] + room["right"],
+             56 + room["front"] + room["back"], 24.0)
+    m = _board(p, "rpi-3a", 6.0, u=(room["left"] - room["right"]) / 2,
+               v=(room["front"] - room["back"]) / 2)
+    top = _top(p, m)
+    _pi_front_opening(p, m)
+    _opening(p, *_facing(p, m, 65, 31.45), top - 1.0, top + 9.0, 18.0)          # USB
+    _opening(p, *_facing(p, m, 0, 28.0), top - 5.0, top - 0.5, 15.0, rounding=2.0)  # SD
     p.holes.append(Hole(surface=LID, kind=VENT, width=30.0, height=14.0, rounding=1.0))
     return p
 
 
 def arduino_case(board: str = "uno") -> Project:
-    # The USB socket sticks out 6.4 mm on the left, so the board sits further in to
-    # let it drop into place. The Mega has the same sockets, on a longer board.
+    # USB B socket at 37.8 (Uno) or about 38.6 (Mega) and power jack at 7.6 on the left
+    # edge (Arduino datasheets). The USB socket sticks out 6.4 mm, so the board sits 7 mm
+    # in to let it drop into place.
     w, d = mounts.BOARDS[board].size
     name = "Arduino Mega case" if board == "mega" else "Arduino Uno case"
-    p = _box(name, w + 6.5 + 1.9, d + 3.7, 26.0)
-    m = _board(p, board, 5.0, u=(6.5 - 1.9) / 2, v=0.0)
+    p = _box(name, w + 7.0 + 1.9, d + 3.7, 26.0)
+    m = _board(p, board, 5.0, u=(7.0 - 1.9) / 2, v=0.0)
     top = _top(p, m)
-    _, y = _floor_point(m, 0, 37.8)
-    _opening(p, LEFT, y, top - 0.5, top + 12.0, 13.0)               # USB B
-    _, y = _floor_point(m, 0, 7.6)
-    _opening(p, LEFT, y, top - 0.5, top + 11.5, 10.5, rounding=3.0)  # power jack
+    _, y = _floor_point(m, 0, 38.2)
+    _opening(p, LEFT, y, top - 0.5, top + 12.0, 14.0)               # USB B (Uno and Mega)
+    # The jack sits 4.6 mm back from the wall, so the plug's moulded part goes into it.
+    _, y = _floor_point(m, 0, 7.62)
+    _opening(p, LEFT, y, top - 0.5, top + 12.0, 11.5, rounding=3.0)  # power jack
     return p
 
 
@@ -412,8 +453,8 @@ def remote_holder() -> Project:
 
 TEMPLATES = {
     "pi": Template("Raspberry Pi 3 / 4 / 5 case",
-                   "Posts for the board, openings for power, HDMI, USB, network and the SD card, "
-                   "and a lid with an air vent.", pi_case),
+                   "Posts for the board, openings for power, HDMI, audio, USB, network, the SD "
+                   "card and the Pi 5's power button, and a lid with an air vent.", pi_case),
     "pi5-fan": Template("Raspberry Pi 5 case with a 30 mm fan",
                         "Like the Pi 3 / 4 / 5 case, with a 30 mm fan in the lid blowing onto "
                         "the processor. The fan's wires go to the Pi's 5 V and ground pins.",
@@ -425,9 +466,9 @@ TEMPLATES = {
                         "Posts, openings for mini HDMI, USB, power, the SD card and the camera "
                         "cable, and a lid with an air vent.", pi_zero_case),
     "pi-zero-stack": Template("Two stacked Pi Zero 2 W (crossed)",
-                              "Two boards crossing like a +, the upper one on taller posts, "
-                              "with openings for both boards' cables and SD cards.",
-                              pi_zero_stack),
+                              "Two boards crossing, the upper one on taller posts, placed so "
+                              "every cable reaches: the upper board's sockets face the right "
+                              "wall, the lower board's the front wall.", pi_zero_stack),
     "pi-3a": Template("Raspberry Pi 3 A+ case",
                       "Posts, openings for power, HDMI, audio, USB and the SD card, and a lid "
                       "with an air vent.", pi_3a_case),

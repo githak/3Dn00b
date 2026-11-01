@@ -27,6 +27,19 @@ class TourPage:
     step: int                                  # which step (page of the panel) to show
     targets: Callable[[object], list]          # window -> the widgets to highlight
     prepare: Callable[[object], None] = lambda window: None
+    show_step: bool = True                     # also highlight the step's button in the rail
+
+    def highlights(self, window) -> list:
+        """What to highlight: the page's own widgets or areas, plus its step in the rail."""
+        widgets = list(self.targets(window))
+        if self.show_step:
+            widgets.insert(0, window.rail_buttons[self.step])
+        return widgets
+
+    def rects(self, window) -> list[QRect]:
+        """The highlighted areas, in window coordinates (hidden widgets left out)."""
+        return [t if isinstance(t, QRect) else visible_rect(t, window)
+                for t in self.highlights(window) if isinstance(t, QRect) or t.isVisible()]
 
 
 def _select_first_hole(window) -> None:
@@ -42,13 +55,54 @@ def _select_first_board(window) -> None:
 def _select_nothing(window) -> None:
     window.select_hole(None)
     window.select_mount(None)
+    window.select_label(None)
+
+
+def _measure_first_hole(window) -> None:
+    """A hole selected, so its measurements show too."""
+    _select_nothing(window)
+    _select_first_hole(window)
+
+
+def _demo_text(window) -> None:
+    """Engrave a name on the example's lid (once), and select it."""
+    from ..model import LID
+    _select_nothing(window)
+    if not window.project.labels:
+        window.add_label(LID)
+        window._edit_label("Change text", "text", "My Pi")
+        window.rebuild()
+    window.select_label(window.project.labels[0].id)
+    window.label_text.deselect()
+
+
+def _see_through(window) -> None:
+    _select_nothing(window)
+    window.see_through_action.setChecked(True)
+
+
+def _model_area(window) -> QRect:
+    """The middle of the 3D view, between its buttons and its hint, where the model is."""
+    view = visible_rect(window.viewer, window)
+    top = visible_rect(window.view_overlay, window).bottom() + 16
+    bottom = visible_rect(window.viewer.hint, window).top() - 16
+    return QRect(view.left() + 16, top, view.width() - 32, max(bottom - top, 50))
+
+
+def _plain_view(window) -> None:
+    """How every tour picture starts: solid, with the lid and the sizes, from the usual
+    angle. (Sizes is set on the view only: the action would save the choice.)"""
+    window.see_through_action.setChecked(False)
+    window.show_lid_action.setChecked(True)
+    window.viewer.show_sizes = True
+    window.viewer.reset_view(window.project)
 
 
 PAGES = (
     TourPage("Work through the steps",
              "The steps down the left side take you from an idea to a file you can print: "
-             "Shape, Holes, Posts, Lid and Export. Click a step to open it, or press Ctrl+1 "
-             "to Ctrl+5.", 0, lambda w: [w.rail]),
+             "Shape, Holes, Posts, Lid, Text and Export. Click a step to open it, or press "
+             "Ctrl+1 to Ctrl+6.", 0, lambda w: [w.rail], show_step=False),
     TourPage("Start with a shape or a template",
              "Pick a box or a round container, or start from a ready-made template: cases for "
              "Raspberry Pi and Arduino boards, storage boxes, trays and more. Then type the sizes "
@@ -67,23 +121,38 @@ PAGES = (
     TourPage("Choose a lid",
              "Push-on, snap-on, sliding, screwed down or threaded. For tight lids, add a tab or a "
              "finger notch so they're easy to open.", 3, lambda w: [w.lid_card]),
+    TourPage("Add text",
+             "Put a name or a label on the walls, the lid or the bottom: raised so it stands "
+             "out, or engraved (cut in). Engraved text prints neatly on the lid and the bottom. "
+             "Drag text in the 3D view to move it.",
+             4, lambda w: [w.add_text_card, w.label_card], _demo_text),
     TourPage("See it in 3D",
              "The preview updates as you type. Drag to turn it, scroll to zoom and middle-drag "
              "to move it. The buttons in the corner show it from the front, the top or the side, "
-             "and hide the lid.", 0, lambda w: [w.viewer], _select_nothing),
+             "and Sizes shows the measurements, including how far the selected hole is from "
+             "the edges (Ctrl+M).",
+             0, lambda w: [w.viewer], _measure_first_hole, show_step=False),
+    TourPage("See inside",
+             "Turn on See-through to look through the walls and the lid: the outlines of holes "
+             "and boards show on top, so you can check where everything sits against the walls. "
+             "Lid hides the lid, and Top looks straight down into the box. Shortcuts: Ctrl+T "
+             "and Ctrl+L.", 0, lambda w: [w.view_overlay, _model_area(w)], _see_through,
+             show_step=False),
     TourPage("Check and export",
              "The app checks your design while you work and explains any problem in plain words. "
              "The status in the corner says when it's ready to print, and Export saves STL or 3MF "
-             "files for your slicer.\n\nYou can take this tour again from the ? button at the top "
-             "right, or by pressing F1.",
-             4, lambda w: [w.check_card, w.status_badge, w.export_tool_button]),
+             "files for your slicer. Print a quick fit test first to try the lid and the plugs, "
+             "and choose your printer to check the size and see how much plastic it takes."
+             "\n\nYou can take this tour again from the ? button at the top right, or by "
+             "pressing F1.",
+             5, lambda w: [w.check_card, w.status_badge, w.export_tool_button]),
 )
 
 HOW = (("shape", "Choose", "A box, a round container or a ready-made template."),
-       ("holes", "Customise", "Sizes, holes, compartments, screw posts and a lid."),
+       ("holes", "Customise", "Sizes, holes, compartments, screw posts, a lid and text."),
        ("export", "Print", "Export a file and open it in your slicer."))
 IS = ("A simple designer for things to 3D print: boxes, cases and round containers.",
-      "Type sizes in millimetres, add holes, compartments, screw posts and a lid.",
+      "Type sizes in millimetres, add holes, compartments, screw posts, a lid and text.",
       "Ready-made templates for Raspberry Pi and Arduino cases and everyday storage.",
       "It checks your design and explains problems in plain words.",
       "It saves STL or 3MF files that any slicer can print.")
@@ -104,6 +173,27 @@ def visible_rect(widget: QWidget, window: QWidget) -> QRect:
         current = current.parentWidget()
         rect = rect.intersected(current.rect())
     return rect
+
+
+def grab_window(window) -> QPixmap:
+    """A screenshot of the main window.
+
+    QWidget.grab() leaves out what the 3D view paints as text (the measurements), so
+    the 3D view is grabbed on its own and its floating buttons are drawn on top again.
+    """
+    shot = window.grab()
+    viewer = getattr(window, "viewer", None)
+    if viewer is None or not viewer.isVisible():
+        return shot
+    frame = viewer.grabFramebuffer()
+    top_left = viewer.mapTo(window, QPoint(0, 0))
+    painter = QPainter(shot)
+    painter.drawImage(QRect(top_left, viewer.size()), frame)
+    for child in viewer.findChildren(QWidget, options=Qt.FindChildOption.FindDirectChildrenOnly):
+        if child.isVisible():
+            child.render(painter, top_left + child.pos())
+    painter.end()
+    return shot
 
 
 def highlight(shot: QPixmap, rects: list[QRect]) -> QPixmap:
@@ -131,7 +221,7 @@ def highlight(shot: QPixmap, rects: list[QRect]) -> QPixmap:
 def capture_tour(pages=PAGES) -> list[QPixmap]:
     """Screenshots of an example design (a Raspberry Pi case), one per tour page."""
     from .main_window import MainWindow, release_window
-    demo = MainWindow(templates.from_template("pi"))
+    demo = MainWindow(templates.from_template("pi"), autosave=False)
     demo.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)   # never seen
     demo.resize(SHOT_SIZE)
     demo.show()
@@ -139,12 +229,12 @@ def capture_tour(pages=PAGES) -> list[QPixmap]:
     shots = []
     try:
         for page in pages:
+            _plain_view(demo)
             demo.tabs.setCurrentIndex(page.step)
             page.prepare(demo)
             for _ in range(3):
                 app.processEvents()
-            rects = [visible_rect(w, demo) for w in page.targets(demo) if w.isVisible()]
-            shots.append(highlight(demo.grab(), rects))
+            shots.append(highlight(grab_window(demo), page.rects(demo)))
     finally:
         demo.undo_stack.setClean()
         demo.hide()

@@ -12,15 +12,16 @@ import numpy as np
 
 from . import geometry, mounts
 from .model import (HOLE_KIND_LABELS, INSIDE_CORNER_LABELS, LID_STYLE_LABELS, OPENING_LABELS,
-                    SCREWS, SHAPES, SIDE_LABELS,
-                    Dividers, Hole, Lid, Mount, Project)
+                    LABEL_STYLE_LABELS, SCREWS, SHAPES, SIDE_LABELS, SURFACE_LABELS,
+                    Dividers, Hole, Label, Lid, Mount, Project)
 
 FORMAT_NAME = "3dn00b-project"
-FORMAT_VERSION = 14  # 2: rectangular holes; 3: air vents; 4: dividers; 5: screw posts;
+FORMAT_VERSION = 15  # 2: rectangular holes; 3: air vents; 4: dividers; 5: screw posts;
                      # 6: screwed-down lids; 7: snap-on and sliding lids; 8: threaded lids;
                      # 9: custom boards with 1 or 2 holes; 10: rounded/angled inside corners;
                      # 11: rounded hole corners and strengthened hole edges;
-                     # 12: compartments of different sizes; 13: easy-opening lid tab and notch
+                     # 12: compartments of different sizes; 13: easy-opening lid tab and notch;
+                     # 14: lid sides; 15: text labels
 PROJECT_SUFFIX = ".3dn00b"
 
 
@@ -47,7 +48,8 @@ def from_dict(data: dict) -> Project:
         dividers = _build(Dividers, raw.get("dividers") or {})
         mount_list = [_build(Mount, m) for m in raw.get("mounts") or []]
         holes = [_build(Hole, h) for h in raw.get("holes") or []]
-        rest = {k: v for k, v in raw.items() if k not in ("lid", "holes", "dividers", "mounts")}
+        labels = [_build(Label, t) for t in raw.get("labels") or []]
+        rest = {k: v for k, v in raw.items() if k not in _NESTED}
         project = _build(Project, rest)
     except (TypeError, ValueError) as exc:
         raise ProjectFileError("The project file is damaged.") from exc
@@ -57,18 +59,25 @@ def from_dict(data: dict) -> Project:
             or lid.style not in LID_STYLE_LABELS or lid.screw not in SCREWS
             or lid.opening not in OPENING_LABELS
             or lid.opening_side not in SIDE_LABELS or lid.slide_from not in SIDE_LABELS
-            or project.inside_corners not in INSIDE_CORNER_LABELS):
+            or project.inside_corners not in INSIDE_CORNER_LABELS
+            or any(t.style not in LABEL_STYLE_LABELS or t.surface not in SURFACE_LABELS
+                   for t in labels)):
         raise ProjectFileError("The project uses a shape this version doesn't know.")
     project.lid, project.holes, project.dividers = lid, holes, dividers
-    project.mounts = mount_list
+    project.mounts, project.labels = mount_list, labels
     return project
+
+
+_NESTED = ("lid", "holes", "dividers", "mounts", "labels")
 
 
 def _build(cls, raw: dict):
     """Create a dataclass from a dict, ignoring unknown keys and checking types."""
+    if not isinstance(raw, dict):
+        raise ValueError(cls.__name__)
     kwargs = {}
     for f in fields(cls):
-        if f.name not in raw or f.name in ("lid", "holes", "dividers", "mounts"):
+        if f.name not in raw or f.name in _NESTED:
             continue
         value = raw[f.name]
         default = getattr(cls(), f.name)
@@ -242,3 +251,33 @@ def export_3mf_file(project: Project, folder: str | Path, stem: str | None = Non
     path = Path(folder) / f"{safe_file_stem(stem or project.name)}.3mf"
     write_3mf(geometry.build_parts(project).printable(), path, project.name)
     return path
+
+
+FIT_TEST = "fit-test"
+
+
+def fit_test_files(project: Project, folder: str | Path, fmt: str,
+                   pieces: dict, stem: str | None = None) -> list[Path]:
+    """Where export_fit_test() writes its files (for asking before replacing them)."""
+    stem = f"{safe_file_stem(stem or project.name)}-{FIT_TEST}"
+    if fmt == "3mf":
+        return [Path(folder) / f"{stem}.3mf"]
+    return [Path(folder) / f"{stem}-{name}.stl" for name in pieces]
+
+
+def export_fit_test(project: Project, folder: str | Path, fmt: str = "stl", lid: bool = True,
+                    openings: bool = True, stem: str | None = None,
+                    parts: geometry.Parts | None = None, pieces: dict | None = None) -> list[Path]:
+    """Export the fit test pieces (STL: one file each, 3MF: one file)."""
+    if pieces is None:
+        pieces = geometry.fit_test_parts(project, lid, openings, parts)
+    if not pieces:
+        return []
+    files = fit_test_files(project, folder, fmt, pieces, stem)
+    title = f"{project.name} fit test"
+    if fmt == "3mf":
+        write_3mf(pieces, files[0], title)
+    else:
+        for (name, solid), path in zip(pieces.items(), files):
+            write_stl(solid, path, f"{title} {name}")
+    return files

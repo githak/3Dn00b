@@ -139,7 +139,11 @@ def smoke_test(app) -> int:
                 stl = project_io.export_stl_files(window.project, tmp)
                 three_mf = project_io.export_3mf_file(window.project, tmp)
                 assert all(f.stat().st_size > 1000 for f in stl + [three_mf]), "export failed"
+                fit = project_io.export_fit_test(window.project, tmp)
+                assert len(fit) == 3, "fit test export failed"     # openings, top, lid ring
                 project_io.save_project(default_project(), Path(tmp) / "test.3dn00b")
+            from .text import outline
+            assert outline("Æøå 3D", 8) is not None, "the font for text is missing"
             print("3Dn00b smoke test: OK")
             result["code"] = 0
         except Exception as exc:          # report and fail, but don't hang

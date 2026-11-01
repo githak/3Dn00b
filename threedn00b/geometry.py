@@ -12,15 +12,15 @@ from dataclasses import dataclass
 import numpy as np
 from manifold3d import CrossSection, Error, JoinType, Manifold, OpType
 
-from .model import (TAB_REACH, TAB_WIDTH, ANGLED, BACK, BOTTOM, BOX, CAP_TOP_GAP, CYLINDER, FRAME_RIM, FRONT, LEFT,
-                    LID, RIGHT, ROUND, SCREWS, SIDE, SNAP_BUMP, SNAP_RIDGE, THREADED, THREAD_DEPTH,
+from .model import (RAISED, TAB_REACH, TAB_WIDTH, ANGLED, BACK, BOTTOM, BOX, CAP_TOP_GAP, CYLINDER, FRAME_RIM, FRONT, LEFT,
+                    LID, RIGHT, ROUND, SCREWED, SCREWS, SIDE, SLIDING, SNAP_BUMP, SNAP_RIDGE, THREADED, THREAD_DEPTH,
                     THREAD_PITCH, VENT, Hole, Project, corner_rounding, divider_fillet,
                     divider_positions, divider_top, floor_inset, frame_thickness,
                     has_dividers, has_finger_notch, has_frame, has_lid_tab, has_lip, has_screw_lid, has_sliding_lid,
                     has_snap_lid, has_threaded_lid, inside_fillet, lid_ceiling, lid_pilot_depth,
                     notch_size, SIDE_ANGLES, side_span,
                     lid_screw_positions, lid_top_z, lip_outer_offset, lip_wall, slide_engage,
-                    slide_groove, thread_sizes, vent_openings)
+                    slide_groove, surface_frame, thread_sizes, vent_openings)
 
 
 @dataclass
@@ -201,6 +201,7 @@ def build_body(project: Project) -> Manifold:
     notch = _finger_notch(project)
     if notch is not None:
         body = body - notch
+    body = _apply_labels(project, body, lid=False)
     cutters = [_hole_cutter(project, hole) for hole in project.holes if hole.surface != LID]
     cutters = [c for c in cutters if c is not None]
     if cutters:
@@ -333,7 +334,17 @@ def build_lid_columns(project: Project) -> Manifold | None:
     depth = lid_pilot_depth(project)
     columns = []
     for x, y in positions:
-        column = Manifold.cylinder(h - z0, r, -1.0, _circle_segments(r, 0.5, 24, 96)).translate([x, y, z0])
+        # The column, filled out towards the corner so it is joined to the walls along
+        # its whole height (not only through the floor).
+        reach = r + project.wall
+        if project.shape == CYLINDER:
+            fill = CrossSection.square([reach, 1.4 * r]).translate([0.0, -0.7 * r]) \
+                .rotate(math.degrees(math.atan2(y, x)))
+        else:
+            fill = CrossSection.square([reach, reach]).translate(
+                [-reach if x < 0 else 0.0, -reach if y < 0 else 0.0])
+        section = (CrossSection.circle(r, _circle_segments(r, 0.5, 24, 96)) + fill).translate([x, y])
+        column = Manifold.extrude(section, h - z0).translate([0.0, 0.0, z0])
         hole = Manifold.cylinder(depth + 1.0, pilot, -1.0, _circle_segments(pilot, 0.4, 16, 48))
         columns.append(column - hole.translate([x, y, h - depth]))
     # Clip to the outside of the box so nothing pokes out through the walls.
@@ -543,11 +554,66 @@ def _finger_notch(project: Project) -> Manifold | None:
 
 
 def _cut_lid_holes(project: Project, lid: Manifold) -> Manifold:
+    lid = _apply_labels(project, lid, lid=True)
     cutters = [_hole_cutter(project, hole) for hole in project.holes if hole.surface == LID]
     cutters = [c for c in cutters if c is not None]
     if cutters:
         lid = lid - Manifold.batch_boolean(cutters, OpType.Add)
     return lid
+
+
+LABEL_EMBED = 0.3       # raised text reaches this far into the surface, so they join
+
+
+def label_solid(project: Project, label) -> Manifold | None:
+    """The text as a solid on the outside of its surface: what is added (raised
+    text) or cut away (engraved text)."""
+    from .text import outline
+    if label.surface not in project.surfaces():
+        return None
+    shape = outline(label.text, label.size)
+    if shape is None:
+        return None
+    if label.style == RAISED:
+        z0, z1 = -LABEL_EMBED, label.depth
+    else:
+        z0, z1 = -label.depth, 1.0
+    slab = Manifold.extrude(shape, z1 - z0).translate([0.0, 0.0, z0])
+    if label.surface == SIDE:
+        # Wrap it around the round wall: across becomes the angle, out becomes the radius.
+        radius = project.outer_diameter / 2
+        start = math.radians(label.u)
+        z_mid = project.outer_height / 2 + label.v
+        slab = slab.refine_to_length(1.0)
+
+        def wrap(points):
+            angle = start + points[:, 0] / radius
+            r = radius + points[:, 2]
+            return np.column_stack([r * np.sin(angle), -r * np.cos(angle), z_mid + points[:, 1]])
+        return slab.warp_batch(wrap)
+    center, normal, right, up = surface_frame(project, label.surface)
+    origin = np.array(center) + np.array(right) * label.u + np.array(up) * label.v
+    text_up = np.array(up)
+    if label.surface == BOTTOM:
+        text_up = -text_up          # reads the right way when the box is tipped towards you
+    matrix = np.column_stack([np.array(right, float), text_up.astype(float),
+                              np.array(normal, float), origin])
+    return slab.transform(matrix)
+
+
+def _apply_labels(project: Project, solid: Manifold, lid: bool) -> Manifold:
+    raised, engraved = [], []
+    for label in project.labels:
+        if (label.surface == LID) != lid:
+            continue
+        piece = label_solid(project, label)
+        if piece is not None:
+            (raised if label.style == RAISED else engraved).append(piece)
+    if raised:
+        solid = solid + Manifold.batch_boolean(raised, OpType.Add)
+    if engraved:
+        solid = solid - Manifold.batch_boolean(engraved, OpType.Add)
+    return solid
 
 
 def build_parts(project: Project) -> Parts:
@@ -618,3 +684,163 @@ def is_valid_solid(m: Manifold) -> bool:
 
 def overlap_volume(a: Manifold, b: Manifold) -> float:
     return (a ^ b).volume()
+
+
+# ---------------------------------------------------------------------------
+# Fit test print: only the parts that must fit, to check them with little plastic.
+# ---------------------------------------------------------------------------
+
+FIT_MARGIN = 2.0       # extra wall above and below what is being tested
+FIT_RIM = 3.0          # how far the lid's test ring reaches in past what must fit
+FIT_JOIN = 3.0         # test bands closer than this become one piece
+WALL_SURFACES = (FRONT, BACK, LEFT, RIGHT, SIDE)
+
+
+def fit_test_lid_band(project: Project) -> tuple[float, float] | None:
+    """Heights (from, to) of the top of the box that the lid needs to fit."""
+    if _lid_style(project) is None:
+        return None
+    h, lid = project.outer_height, project.lid
+    if has_threaded_lid(project):
+        z0 = thread_sizes(project).shoulder - FIT_MARGIN
+    elif has_sliding_lid(project):
+        z0 = slide_groove(project)[0] - FIT_MARGIN - 1.0
+    elif has_screw_lid(project):
+        z0 = h - max(lid_pilot_depth(project), 3.0) - FIT_MARGIN
+    else:
+        z0 = h - lid.lip_height - FIT_MARGIN - 1.0
+    return max(0.0, z0), h
+
+
+def _lid_style(project: Project) -> str | None:
+    """The kind of lid that will be built, or None when there is no lid."""
+    if not project.lid.enabled:
+        return None
+    if project.lid.style == THREADED and not has_threaded_lid(project):
+        return None
+    if has_sliding_lid(project) and project.shape != BOX:
+        return None
+    return project.lid.style
+
+
+def fit_test_openings_band(project: Project) -> tuple[float, float] | None:
+    """Heights (from, to) of the walls with openings and the screw posts. With screw
+    posts it starts at the bottom, so you can screw the board on and try the plugs."""
+    from . import mounts
+    zs = []
+    for hole in project.holes:
+        if hole.surface in WALL_SURFACES and hole.kind != VENT:
+            z = project.outer_height / 2 + hole.v
+            reach = hole.half_extents[1] + (FRAME_RIM if has_frame(project, hole) else 0.0)
+            zs += [z - reach, z + reach]
+    tops = [mounts.board_bottom(project, m) for m in project.mounts if m.length > 0]
+    if not zs and not tops:
+        return None
+    z0 = 0.0 if tops else max(project.bottom, min(zs) - FIT_MARGIN)
+    z1 = min(project.outer_height, max(zs + tops) + FIT_MARGIN)
+    return z0, z1
+
+
+FIT_FLOOR_RIM = 4.0    # the test piece keeps this much of the floor along the walls
+
+
+def _band(body: Manifold, z0: float, z1: float, project: Project) -> Manifold:
+    big = project.outer_width + project.outer_depth + 20.0
+    cut = Manifold.cube([big, big, z1 - z0]).translate([-big / 2, -big / 2, z0])
+    band = body ^ cut
+    if z0 <= 0.0:
+        band = band - _floor_middle(project)
+    return _on_plate(band)
+
+
+def _floor_middle(project: Project) -> Manifold:
+    """The part of the floor a test piece doesn't need: it keeps a rim along the
+    walls, the floor under the screw posts and dividers, and a bar from each post
+    to the nearest wall, so the posts stay exactly where they belong."""
+    from . import mounts
+    middle = footprint(project, project.wall + FIT_FLOOR_RIM)
+    if middle is None:
+        return Manifold()
+    keep = []
+    for m in project.mounts:
+        if m.length <= 0:
+            continue
+        r = mounts.post_radius(m)
+        for x, y in mounts.post_positions(m):
+            keep.append(CrossSection.circle(r + 2.0, _circle_segments(r + 2.0, 0.5, 16, 64))
+                        .translate([x, y]))
+            if project.shape == CYLINDER:
+                reach = project.outer_diameter / 2
+                bar = CrossSection.square([reach, 2 * r]).translate([0.0, -r]) \
+                    .rotate(math.degrees(math.atan2(y, x))) if (x or y) else None
+            else:
+                to_x = project.inner_width / 2 - abs(x)
+                to_y = project.inner_depth / 2 - abs(y)
+                if to_x < to_y:
+                    bar = CrossSection.square([to_x + 1.0, 2 * r]).translate(
+                        [0.0 if x >= 0 else -(to_x + 1.0), -r])
+                else:
+                    bar = CrossSection.square([2 * r, to_y + 1.0]).translate(
+                        [-r, 0.0 if y >= 0 else -(to_y + 1.0)])
+            if bar is not None:
+                keep.append(bar.translate([x, y]))
+    for x, y in lid_screw_positions(project):
+        r = SCREWS[project.lid.screw].post / 2 + 1.0
+        keep.append(CrossSection.circle(r, _circle_segments(r, 0.5, 16, 64)).translate([x, y]))
+    dividers = _divider_outline(project, 2.0)
+    if dividers is not None:
+        keep.append(dividers)
+    if keep:
+        middle = middle - CrossSection.batch_boolean(keep, OpType.Add)
+    if middle.area() < 25.0:
+        return Manifold()
+    return _prism(middle, project.bottom + 0.51, -0.5)
+
+
+def _lid_ring(project: Project, lid: Manifold) -> Manifold:
+    """The lid without its middle: just what has to fit on the box."""
+    style = _lid_style(project)
+    wall = project.wall
+    if style == THREADED:
+        r = thread_sizes(project).root - FIT_RIM
+        middle = CrossSection.circle(r, _circle_segments(r)) if r > FIT_RIM else None
+    elif style == SCREWED:
+        middle = footprint(project, wall + FIT_RIM)
+        if middle is not None:
+            d = SCREWS[project.lid.screw].clearance / 2 + FIT_RIM
+            for x, y in lid_screw_positions(project):
+                middle = middle - CrossSection.circle(d, _circle_segments(d, 0.5, 16, 64)).translate([x, y])
+    elif style == SLIDING:
+        middle = footprint(project, wall + slide_engage(project) + FIT_RIM)
+    else:
+        middle = footprint(project, wall + lip_outer_offset(project) + lip_wall(project) + FIT_RIM)
+    if middle is None or middle.area() < 25.0:
+        return lid
+    lo, hi = _bounds(lid)
+    return lid - _prism(middle, hi[2] - lo[2] + 2.0, lo[2] - 1.0)
+
+
+def fit_test_parts(project: Project, lid: bool = True, openings: bool = True,
+                   parts: Parts | None = None) -> dict[str, Manifold]:
+    """Pieces of the box and lid to print first, laid flat for printing.
+
+    "box-top" is the top of the box that the lid fits on, "box-openings" the walls
+    with the openings (and the floor with the screw posts). When they are close
+    together they are one piece, "box".
+    """
+    if parts is None:
+        parts = build_parts(project)
+    lid_band = fit_test_lid_band(project) if lid and parts.lid is not None else None
+    open_band = fit_test_openings_band(project) if openings else None
+    out = {}
+    if lid_band and open_band and open_band[1] >= lid_band[0] - FIT_JOIN:
+        out["box"] = _band(parts.body, min(open_band[0], lid_band[0]), lid_band[1], project)
+    else:
+        if open_band:
+            out["box-openings"] = _band(parts.body, *open_band, project)
+        if lid_band:
+            out["box-top"] = _band(parts.body, *lid_band, project)
+    if lid_band:
+        ring = _lid_ring(project, parts.lid)
+        out["lid"] = _on_plate(ring.rotate([180.0, 0.0, 0.0]))
+    return out
