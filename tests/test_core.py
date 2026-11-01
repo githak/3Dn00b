@@ -1873,12 +1873,15 @@ NANO = [("left", 8.89, 1.9, 11.0, 7.0, 1.9)]
 NANO_EVERY = [("left", 8.89, 1.3, 10.5, 6.5, 1.6)]
 NANO_ESP32 = [("left", 8.89, 1.6, 12.5, 6.5, 1.5)]
 MEGA = [("left", 38.6, 5.5, 12.0, 11.0, 6.4), ("left", 7.62, 6.5, 10.0, 10.0, 1.5)]
+# ESP32-S3-DevKitC-1 (Espressif's DXF): two micro USB sockets at one end, 6.0 and 19.4 mm
+# from the front edge, sticking out 0.87 mm.
+ESP32_S3 = [("left", 6.0, 1.3, 10.5, 6.5, 0.87), ("left", 19.4, 1.3, 10.5, 6.5, 0.87)]
 
 BOARD_SOCKETS = {
     "pi": [PI3 + PI_SD, PI4 + PI_SD, PI5 + PI_SD], "pi-gpio": [PI3 + PI_SD, PI4 + PI_SD, PI5 + PI_SD],
     "pi5-fan": [PI5 + PI_SD], "pi-3a": [PI3A], "pi-zero": [ZERO + ZERO_CAMERA],
     "pi-zero-stack": [ZERO], "pico": [PICO], "arduino": [UNO, UNO_R4], "mega": [MEGA],
-    "pi5-hat": [PI5 + PI_SD], "nano": [NANO, NANO_EVERY, NANO_ESP32],
+    "pi5-hat": [PI5 + PI_SD], "nano": [NANO, NANO_EVERY, NANO_ESP32], "esp32-s3": [ESP32_S3],
 }
 
 
@@ -2538,3 +2541,102 @@ def test_heat_set_inserts_for_lid_screws():
     assert geometry.piece_count(parts.body) == 1 and geometry.overlap_volume(parts.body, parts.lid) < 0.01
     msg = messages(validation.check(p, parts))
     assert "into heat-set inserts" in msg
+
+
+# ---- boards without screw holes --------------------------------------------------
+
+def _block(m, x0, y0, x1, y1, z0, z1):
+    """A box over the board area (x0..x1, y0..y1 from its lower-left corner), z0..z1."""
+    from manifold3d import Manifold
+    corners = [templates._floor_point(m, x, y) for x, y in ((x0, y0), (x1, y1))]
+    (ax, ay), (bx, by) = corners
+    lo_x, hi_x, lo_y, hi_y = min(ax, bx), max(ax, bx), min(ay, by), max(ay, by)
+    return Manifold.cube([hi_x - lo_x, hi_y - lo_y, z1 - z0]).translate([lo_x, lo_y, z0])
+
+
+@pytest.mark.parametrize("rotation", [0, 90])
+def test_esp32_s3_rests_on_supports_clear_of_its_parts(rotation):
+    """The DevKitC-1 (no screw holes) rests on its supports, the guides hold its corners,
+    and nothing printed is where its sockets, antenna or pin headers are."""
+    p = templates.from_template("esp32-s3")
+    m = p.mounts[0]
+    if rotation:                                   # USB end at the front
+        p.width, p.depth, p.holes = p.depth, p.width, []
+        m.rotation, (m.u, m.v) = 90, (0.0, m.u)
+    body = geometry.build_body(p)
+    assert geometry.piece_count(body) == 1
+    low = mounts.board_bottom(p, m)
+    top = low + mounts.BOARD_THICKNESS
+    board = _block(m, 0, 0, 62.87, 25.4, low, top)
+    assert geometry.overlap_volume(board, body) == 0
+    # Each support is right under the board, and the board can't slide: the guides are
+    # within 0.5 mm of each edge, near each corner, and reach 2 mm above the board.
+    for x, y in mounts.post_positions(m):
+        assert not body.ray_cast([x, y, low + 0.01], [x, y, low + 5])
+        hit = body.ray_cast([x, y, low + 0.5], [x, y, low - 0.5])
+        assert hit and hit[0].position[2] == pytest.approx(low, abs=0.02)
+    for x, y, dx, dy in ((-0.5, 1.0, 1, 0), (2.0, -0.5, 0, 1), (63.37, 1.0, -1, 0),
+                         (2.0, 25.9, 0, -1), (-0.5, 24.4, 1, 0), (60.0, 25.9, 0, -1)):
+        fx, fy = templates._floor_point(m, x - 0.05 * dx, y - 0.05 * dy)
+        hit = body.ray_cast([fx, fy, top + 3], [fx, fy, top - 1])
+        assert hit and hit[0].position[2] == pytest.approx(top + 2.0, abs=0.02), (x, y)
+        gx, gy = templates._floor_point(m, x + 0.1 * dx, y + 0.1 * dy)
+        assert not body.ray_cast([gx, gy, top + 3], [gx, gy, top - 1]), (x, y)    # room
+    # The micro USB sockets (8.2 mm wide, 0.87 mm out), the antenna (6.28 mm past the far
+    # end) and the pin headers (plastic and pins, 8.5 mm below the board).
+    for y in (6.0, 19.4):
+        assert geometry.overlap_volume(_block(m, -0.87, y - 4.1, 5, y + 4.1, top, top + 3), body) == 0
+    assert geometry.overlap_volume(_block(m, 62, 3.65, 62.87 + 6.28, 21.65, top, top + 3.2), body) == 0
+    for y in (1.27, 25.4 - 1.27):
+        header = _block(m, 6.44, y - 1.53, 62.82, y + 1.53, low - 8.5, low)
+        assert geometry.overlap_volume(header, body) == 0
+
+
+def test_boards_without_screw_holes():
+    p = default_project(BOX)
+    p.width, p.depth, p.height = 100.0, 60.0, 40.0
+    m = mounts.new_mount(p, "esp32-s3")
+    m.length = 10.0
+    p.mounts = [m]
+    assert mounts.has_guides(m) and not mounts.has_guides(Mount(board="nano"))
+    assert mounts.post_radius(m) == mounts.SUPPORT_DIAMETER / 2
+    # The area it takes up includes the guides, so it is kept further from the walls.
+    hx, hy = mounts.half_extents(m)
+    assert (hx, hy) == pytest.approx((62.87 / 2 + mounts.GUIDE_OUT, 25.4 / 2 + mounts.GUIDE_OUT))
+    assert len(mounts.guide_shapes(m)) == 8
+    parts = geometry.build_parts(p)
+    assert geometry.piece_count(parts.body) == 1
+    x, y = mounts.post_positions(m)[0]
+    # Solid supports: no screw hole down the middle.
+    top = p.bottom + m.length
+    hit = parts.body.ray_cast([x, y, top + 1], [x, y, p.bottom - 1])
+    assert hit and hit[0].position[2] == pytest.approx(top, abs=0.02)
+    assert not [i for i in validation.check(p, parts) if i.level != "info"]
+    # Inserts and screw sizes don't apply.
+    m.inserts, m.screw = True, "M1"
+    assert not [i for i in validation.check(p) if i.level != "info"]
+    m.inserts, m.screw = False, "M3"
+    # Against the wall: the guides touch it.
+    m.u = p.inner_width / 2 - hx - 0.5
+    msg = messages(validation.check(p))
+    assert "the corner guides touch the wall" in msg
+    # Another board can't sit under it.
+    m.u = 0.0
+    under = mounts.new_mount(p, "pico")
+    under.length = 3.0
+    p.mounts.append(under)
+    m.length = 20.0
+    assert "can't sit above" in messages(validation.check(p))
+
+
+def test_fit_test_keeps_the_guides_on_the_floor():
+    p = templates.from_template("esp32-s3")
+    p.height = 60.0                            # the lid's band is a piece of its own
+    pieces = geometry.fit_test_parts(p)
+    assert "box-openings" in pieces
+    test = pieces["box-openings"]
+    assert geometry.piece_count(test) == 1
+    # The guides are in it, whole (it was only moved to the middle of the plate).
+    b = geometry.build_body(p).bounding_box()
+    guide = geometry.guide_solid(p, p.mounts[0]).translate([-(b[0] + b[3]) / 2, -(b[1] + b[4]) / 2, 0])
+    assert geometry.overlap_volume(guide, test) == pytest.approx(guide.volume(), rel=0.01)

@@ -1884,9 +1884,9 @@ class MainWindow(QMainWindow):
         current = -1
         for i, m in enumerate(p.mounts):
             count = len(mounts.post_positions(m))
+            what = f"{count} supports" if mounts.has_guides(m) else f"{m.screw} × {count}"
             self.mount_list.addItem(QListWidgetItem(
-                self._list_icon("posts", mount_id=m.id),
-                f"Posts {i + 1} · {mounts.label(m)} · {m.screw} × {count}"))
+                self._list_icon("posts", mount_id=m.id), f"Posts {i + 1} · {mounts.label(m)} · {what}"))
             if m.id == self.selected_mount_id:
                 current = i
         self.mount_list.setCurrentRow(current)
@@ -1906,6 +1906,13 @@ class MainWindow(QMainWindow):
         set_quietly(self.screw_combo, m.screw)
         set_quietly(self.mount_inserts, m.inserts)
         self.mount_inserts.setEnabled(m.screw in INSERTS or m.inserts)
+        guided = mounts.has_guides(m)
+        self.mount_form.setRowVisible(self.screw_combo, not guided)
+        self.mount_form.setRowVisible(self.mount_inserts, not guided)
+        self.mount_form.labelForField(self.post_length).setText(
+            "Support height" if guided else "Post length")
+        self.post_length.setToolTip("How high the supports hold the board above the floor"
+                                    if guided else "How high the posts stand above the floor")
         is_custom = mounts.is_custom(m)
         labels, tips = CUSTOM_HOLE_LABELS.get(m.board, CUSTOM_HOLE_LABELS["custom"])
         for widget, text, tip in zip((self.spacing_x, self.spacing_y), labels, tips):
@@ -1926,14 +1933,20 @@ class MainWindow(QMainWindow):
             widget.setRange(min(widget.minimum(), value), max(widget.maximum(), value))
             widget.blockSignals(False)
             set_quietly(widget, value)
-        info = f"Use {m.screw} screws up to {mounts.max_screw_length(m):g} mm long."
-        if mounts.board_size(m):
+        if guided:
+            info = (f"This board has no screw holes. It rests on {len(mounts.post_positions(m))} "
+                    "supports, and a guide at each corner stops it sliding; the lid keeps it in. "
+                    "The green outline shows where it goes (it isn't printed).")
+        else:
+            info = f"Use {m.screw} screws up to {mounts.max_screw_length(m):g} mm long."
+        if mounts.board_size(m) and not guided:
             info += (" The board rests on top of the posts; the green outline shows where it "
                      "goes (it isn't printed).")
         if mounts.board_size(m):
             info += (f" Another board can sit above this one if there is "
                      f"{mounts.room_above(m):g} mm of room.")
-        if m.screw != mounts.BOARDS[m.board].screw and not (m.board == "single" or is_custom):
+        if m.screw != mounts.BOARDS[m.board].screw and not (m.board == "single" or is_custom
+                                                             or guided):
             info += f" This board is usually fixed with {mounts.BOARDS[m.board].screw} screws."
         self.mount_info.setText(info)
         self._show_problems(self.mount_problem, [i for i in self.issues if i.mount_id == m.id])
@@ -2056,9 +2069,13 @@ class MainWindow(QMainWindow):
             rows.append(("Cost", "about " + money(sum(weights) / 1000 * price)))
         holes = len(self.project.holes)
         line = f"{holes} hole{'s' * (holes != 1)}"
-        posts = sum(len(mounts.post_positions(m)) for m in self.project.mounts)
+        posts = sum(len(mounts.post_positions(m)) for m in self.project.mounts
+                    if not mounts.has_guides(m))
         if posts:
             line += f", {posts} screw post{'s' * (posts != 1)}"
+        held = sum(mounts.has_guides(m) for m in self.project.mounts)
+        if held:
+            line += f", {held} board{'s' * (held != 1)} on supports"
         texts = sum(bool(t.text.strip()) for t in self.project.labels)
         if texts:
             line += f", {texts} text{'s' * (texts != 1)}"

@@ -178,6 +178,30 @@ def nano_case() -> Project:
     return p
 
 
+def esp32_s3_case() -> Project:
+    """Espressif's ESP32-S3-DevKitC-1 (62.87 x 25.40 mm, from its dimension drawings).
+
+    It has no screw holes, so it rests on supports between its pin rows, with a guide at
+    each corner. Its two micro USB sockets are at one end, 13.4 mm apart (room for a strip
+    of plastic between two openings); the module's antenna sticks out 6.28 mm past the
+    other end, which gets the room. The supports are 10 mm tall: standard pin headers
+    reach about 8.5 mm below the board.
+    """
+    w, d = mounts.BOARDS["esp32-s3"].size
+    room = mounts.GUIDE_OUT + 1.1             # the guides, then a little more than 1 mm of air
+    antenna_room = 6.28 + 1.2
+    p = _box("ESP32-S3 DevKitC-1 case", room + w + antenna_room, d + 2 * room, 23.0, corner=2.5)
+    m = _board(p, "esp32-s3", 10.0, u=(room - antenna_room) / 2, v=0.0)
+    top = _top(p, m)
+    for y in (6.0, 19.4):                     # the native USB and the USB-to-UART sockets
+        _opening(p, *_facing(p, m, 0, y), top - 3.0, top + 5.0, 11.0, rounding=2.0)
+    # A hole for wires soldered to the pins, which come out under the board.
+    wall, along = _facing(p, m, w / 2, d)
+    _opening(p, wall, along, mounts.board_bottom(p, m) - 7.0, mounts.board_bottom(p, m) - 1.0,
+             6.0, rounding=3.0)
+    return p
+
+
 ESP32_SIZE = (51.5, 28.5, 47.0, 23.5)    # common 30-pin ESP32 DevKit: board and hole spacing
 
 
@@ -535,6 +559,12 @@ TEMPLATES = {
                      "headers underneath, an opening for the USB plug and a hole for wires. On "
                      "a W, the antenna is at the end away from the USB plug: keep metal away "
                      "from it.", pico_case),
+    "esp32-s3": Template("ESP32-S3 DevKitC-1 case",
+                         "For Espressif's ESP32-S3-DevKitC-1 (and the DevKitC-1U). It has no "
+                         "screw holes, so it rests on supports between its pin rows and corner "
+                         "guides keep it in place. Openings for both USB plugs and a hole for "
+                         "wires. Jumper wires on the pins need about 20 mm under the board: make "
+                         "the supports and the box taller.", esp32_s3_case),
     "esp32": Template("ESP32 DevKit case",
                       "For the common 30-pin ESP32 boards. Boards differ: measure yours and "
                       "change the board size and hole spacing in the Posts tab.", esp32_case),
@@ -592,7 +622,7 @@ TEMPLATES = {
 # How the list is grouped in the app: (heading, template keys).
 GROUPS = (
     ("Cases for boards", ("pi", "pi-gpio", "pi5-fan", "pi5-hat", "pi-3a", "pi-zero",
-                          "pi-zero-stack", "pico", "arduino", "mega", "nano", "esp32",
+                          "pi-zero-stack", "pico", "arduino", "mega", "nano", "esp32-s3", "esp32",
                           "breadboard", "project-box")),
     ("Storage", ("storage", "tray", "sorter", "parts", "craft", "batteries", "pills", "cards",
                  "dice", "picks", "tin", "money")),
