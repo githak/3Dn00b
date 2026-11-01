@@ -186,7 +186,7 @@ double-click it. (Some systems need `libfuse2` for AppImages; without it, run it
 | --- | --- | --- |
 | .deb (amd64) | Debian 12 and 13, Ubuntu 22.04 to 26.10, Mint 21 and 22, Pop!_OS, Zorin | Ubuntu 22.04, 24.04 and 26.04 |
 | .deb (arm64) | Raspberry Pi OS Trixie, Debian 13, Ubuntu 24.04 and newer | Ubuntu 24.04 and 26.04 (ARM, emulated) |
-| .rpm | Fedora 40 and newer, openSUSE Tumbleweed | builds and installs in Fedora 43's rpm; not yet run (see below) |
+| .rpm | Fedora 40 and newer, openSUSE Tumbleweed | its libraries are checked, and Fedora 43 accepts the package; not yet installed and run on Fedora |
 | AppImage | most Linux systems with glibc 2.34 or newer | Ubuntu 22.04, 24.04 and 26.04 with only desktop basics |
 
 The .deb and .rpm contain their own copies of the libraries the distributions don't
