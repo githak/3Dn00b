@@ -245,14 +245,32 @@ def build_dividers(project: Project) -> Manifold | None:
     return walls
 
 
+def guide_solid(project: Project, m) -> Manifold | None:
+    """The corner guides of a board without screw holes, standing on the floor."""
+    from . import mounts
+    shapes = mounts.guide_shapes(m)
+    if not shapes:
+        return None
+    outline = CrossSection.batch_boolean([CrossSection([s]) for s in shapes], OpType.Add)
+    height = mounts.holder_top(project, m) - project.bottom + 0.01
+    return Manifold.extrude(outline, height).translate([0.0, 0.0, project.bottom - 0.01])
+
+
 def build_posts(project: Project) -> Manifold | None:
-    """Screw posts on the floor, each with a pilot hole down to the floor."""
+    """Screw posts on the floor, each with a pilot hole down to the floor; for a board
+    without screw holes, plain supports and its corner guides."""
     from . import mounts
     posts = []
     for m in project.mounts:
         screw = mounts.SCREWS[m.screw]
         r, pilot = mounts.post_radius(m), screw.pilot / 2
         if m.length <= 0:
+            continue
+        if mounts.has_guides(m):
+            for x, y in mounts.post_positions(m):
+                support = Manifold.cylinder(m.length + 0.01, r, -1.0, _circle_segments(r, 0.5, 24, 96))
+                posts.append(support.translate([x, y, project.bottom - 0.01]))
+            posts.append(guide_solid(project, m))
             continue
         insert = INSERTS.get(m.screw) if m.inserts else None
         for x, y in mounts.post_positions(m):
@@ -826,7 +844,7 @@ def fit_test_openings_band(project: Project) -> tuple[float, float] | None:
             z = project.outer_height / 2 + hole.v
             reach = hole.half_extents[1] + (FRAME_RIM if has_frame(project, hole) else 0.0)
             zs += [z - reach, z + reach]
-    tops = [mounts.board_bottom(project, m) for m in project.mounts if m.length > 0]
+    tops = [mounts.holder_top(project, m) for m in project.mounts if m.length > 0]
     if not zs and not tops:
         return None
     z0 = 0.0 if tops else max(project.bottom, min(zs) - FIT_MARGIN)
@@ -862,21 +880,12 @@ def _floor_middle(project: Project) -> Manifold:
         for x, y in mounts.post_positions(m):
             keep.append(CrossSection.circle(r + 2.0, _circle_segments(r + 2.0, 0.5, 16, 64))
                         .translate([x, y]))
-            if project.shape == CYLINDER:
-                reach = project.outer_diameter / 2
-                bar = CrossSection.square([reach, 2 * r]).translate([0.0, -r]) \
-                    .rotate(math.degrees(math.atan2(y, x))) if (x or y) else None
-            else:
-                to_x = project.inner_width / 2 - abs(x)
-                to_y = project.inner_depth / 2 - abs(y)
-                if to_x < to_y:
-                    bar = CrossSection.square([to_x + 1.0, 2 * r]).translate(
-                        [0.0 if x >= 0 else -(to_x + 1.0), -r])
-                else:
-                    bar = CrossSection.square([2 * r, to_y + 1.0]).translate(
-                        [-r, 0.0 if y >= 0 else -(to_y + 1.0)])
-            if bar is not None:
-                keep.append(bar.translate([x, y]))
+            keep += _bar_to_wall(project, x, y, r)
+        # A board's corner guides keep the floor under them too, joined to the wall.
+        for x, y in mounts.board_corners(m, mounts.GUIDE_OUT) if mounts.has_guides(m) else ():
+            keep += _bar_to_wall(project, x, y, 2.0)
+        for shape in mounts.guide_shapes(m):
+            keep.append(CrossSection([shape]).offset(2.0, JoinType.Miter))
     for x, y in lid_screw_positions(project):
         r = SCREWS[project.lid.screw].post / 2 + 1.0
         keep.append(CrossSection.circle(r, _circle_segments(r, 0.5, 16, 64)).translate([x, y]))
@@ -888,6 +897,23 @@ def _floor_middle(project: Project) -> Manifold:
     if middle.area() < 25.0:
         return Manifold()
     return _prism(middle, project.bottom + 0.51, -0.5)
+
+
+def _bar_to_wall(project: Project, x: float, y: float, r: float) -> list[CrossSection]:
+    """A strip of floor 2r wide from (x, y) to the nearest wall."""
+    if project.shape == CYLINDER:
+        if not (x or y):
+            return []
+        reach = project.outer_diameter / 2
+        return [CrossSection.square([reach, 2 * r]).translate([0.0, -r])
+                .rotate(math.degrees(math.atan2(y, x))).translate([x, y])]
+    to_x = project.inner_width / 2 - abs(x)
+    to_y = project.inner_depth / 2 - abs(y)
+    if to_x < to_y:
+        bar = CrossSection.square([to_x + 1.0, 2 * r]).translate([0.0 if x >= 0 else -(to_x + 1.0), -r])
+    else:
+        bar = CrossSection.square([2 * r, to_y + 1.0]).translate([-r, 0.0 if y >= 0 else -(to_y + 1.0)])
+    return [bar.translate([x, y])]
 
 
 def _lid_ring(project: Project, lid: Manifold) -> Manifold:

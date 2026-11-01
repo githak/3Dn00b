@@ -21,7 +21,8 @@ print. No sketches, no constraints, no feature trees.
     3 / 4 / 5 (also with a 30 mm fan or a GPIO ribbon-cable slot in the lid),
     Pi 5 with an M.2 HAT+ or AI HAT+, Pi 3 A+, Pi Zero / Zero 2 W, two Pi Zero 2 W
     stacked crosswise, Pi Pico / Pico 2 (also W), Arduino Uno R3 / R4, Mega 2560
-    and Nano (Nano, Nano Every, Nano ESP32), 30-pin ESP32 DevKit, a half-size
+    and Nano (Nano, Nano Every, Nano ESP32), ESP32-S3-DevKitC-1, 30-pin ESP32
+    DevKit, a half-size
     breadboard box, and a project box for your own board. Every board's holes and
     sockets are checked against the maker's official drawings.
   - *Storage*: storage box, parts tray, screw sorter, 4 × 4 parts box, 3 × 3
@@ -71,8 +72,9 @@ print. No sketches, no constraints, no feature trees.
   already in your wall. The checks tell you how far apart to put the screws.
 - **Screw posts for circuit boards**: pick a board (Raspberry Pi Zero / Zero 2 W,
   3 / 4 / 5, 3 A+, Pico / Pico 2, Arduino Uno R3 / R4, Mega 2560 / Giga R1, Nano,
-  or your own board with 1, 2 or 4 holes) and all its posts
-  appear in the right pattern. Choose the screw size (M1 to M4) and how tall the
+  ESP32-S3-DevKitC-1, or your own board with 1, 2 or 4 holes) and all its posts
+  appear in the right pattern. A board with no screw holes (the ESP32-S3-DevKitC-1)
+  rests on supports instead, with a guide at each corner that stops it sliding. Choose the screw size (M1 to M4) and how tall the
   posts are; the screw cuts its own thread into the post, or tick **Heat-set
   inserts** for brass threads you melt in with a soldering iron (M2 to M4; the
   posts get a little wider). Drag the board's green

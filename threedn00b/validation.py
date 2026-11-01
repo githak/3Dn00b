@@ -680,7 +680,8 @@ def _check_mounts(p: Project) -> list[Issue]:
     div_top = divider_top(p)
     for m in p.mounts:
         name = mount_name(p, m)
-        if m.inserts:
+        guided = mounts.has_guides(m)
+        if m.inserts and not guided:
             insert = INSERTS.get(m.screw)
             if insert is None:
                 out.append(Issue(WARNING, f"{name}: there are no heat-set inserts for {m.screw} "
@@ -693,6 +694,7 @@ def _check_mounts(p: Project) -> list[Issue]:
         screw = mounts.SCREWS[m.screw]
         size = mounts.board_size(m)
         top = mounts.board_bottom(p, m) + (mounts.BOARD_THICKNESS if size else 0.0)
+        top = max(top, mounts.holder_top(p, m))          # corner guides reach above the board
         ceiling = lid_ceiling(p)
         if mounts.is_custom(m) and not mounts.holes_on_board(m):
             what = "the hole is outside" if m.board == "custom1" else "the holes don't fit on"
@@ -717,24 +719,26 @@ def _check_mounts(p: Project) -> list[Issue]:
                              "Move it further in, or turn it.", mount_id=m.id, fix=fix,
                              fix_label=fix_label))
         elif room < need - 1e-6:
+            what = "corner guides" if guided else "board"
             if need > 1.0:
-                msg = f"{name}: the board would hit the lid's lip."
+                msg = f"{name}: the {what} would hit the lid's lip."
                 hint = "Move it away from the wall, or make the posts shorter."
             else:
-                msg = f"{name}: the board touches the wall."
+                msg = f"{name}: the {what} touch{'' if guided else 'es'} the wall."
                 hint = "Leave at least 1 mm of room so it goes in easily."
             out.append(Issue(WARNING if need <= 1.0 else ERROR, msg, hint, mount_id=m.id,
                              fix=fix, fix_label=fix_label))
-        if m.screw == "M1":
+        if m.screw == "M1" and not guided:
             out.append(Issue(WARNING, f"{name}: holes for M1 screws are tiny ({screw.pilot} mm) and "
                              "may close up when printed.", "You may need to drill them out.",
                              mount_id=m.id))
-        elif m.screw == "M1.6":
+        elif m.screw == "M1.6" and not guided:
             out.append(Issue(INFO, f"{name}: holes for M1.6 screws are small ({screw.pilot} mm).",
                              "If a screw won't go in, open the hole up with a 1.3 mm drill.",
                              mount_id=m.id))
-        if m.length > 6 * screw.post:
+        if m.length > 12 * mounts.post_radius(m):
             out.append(Issue(WARNING, f"{name}: the posts are tall and thin and may snap.",
+                             "Use shorter posts." if guided else
                              "Use shorter posts or a bigger screw size.", mount_id=m.id))
         r = mounts.post_radius(m)
         posts = mounts.post_positions(m)
@@ -744,7 +748,7 @@ def _check_mounts(p: Project) -> list[Issue]:
             out.append(Issue(WARNING, f"{name}: a post stands on a divider.",
                              "Move the posts into a compartment.", mount_id=m.id))
         elif size and div_top > mounts.board_bottom(p, m):
-            corners = mounts.board_corners(m)
+            corners = mounts.outline_corners(m)
             lo_x, hi_x = min(c[0] for c in corners), max(c[0] for c in corners)
             lo_y, hi_y = min(c[1] for c in corners), max(c[1] for c in corners)
             if any(lo_x < x < hi_x for x in xs) or any(lo_y < y < hi_y for y in ys):
@@ -766,17 +770,27 @@ FRAME_ROOM = 0.5      # room kept between a board and a hole's strengthening fra
 
 
 def _check_frames(p: Project, m, name: str) -> list[Issue]:
-    """Does the board run into the frame around a strengthened wall hole?"""
+    """Does the board (or its corner guides) run into the frame around a strengthened
+    wall hole?"""
     corners = mounts.board_corners(m)
     if not corners or not any(has_frame(p, h) for h in p.holes):
         return []
     outline = geometry.CrossSection([corners]).offset(FRAME_ROOM, geometry.JoinType.Miter)
     z = mounts.board_bottom(p, m)
     board = geometry.Manifold.extrude(outline, mounts.BOARD_THICKNESS).translate([0.0, 0.0, z])
+    guides = geometry.guide_solid(p, m)
     out = []
     for hole in p.holes:
         frame = geometry.frame_solid(p, hole)
-        if frame is not None and geometry.overlap_volume(board, frame) > 0.001:
+        if frame is None:
+            continue
+        hit = geometry.overlap_volume(board, frame) > 0.001
+        if guides is not None and not hit and geometry.overlap_volume(guides, frame) > 0.001:
+            out.append(Issue(ERROR, f"{name}: a corner guide runs into the frame around "
+                             f"{hole_name(p, hole)}.",
+                             "Move the board away from the wall, or turn off the hole's frame.",
+                             mount_id=m.id))
+        elif hit:
             out.append(Issue(ERROR, f"{name}: the board runs into the frame around "
                              f"{hole_name(p, hole)}.",
                              "Move the board away from the wall, change the post length, or turn "
@@ -796,8 +810,13 @@ def _check_stacking(p: Project, a, b) -> list[Issue]:
         return []
     lower, upper = sorted((a, b), key=lambda m: mounts.board_bottom(p, m))
     low_name, up_name = mount_name(p, lower), mount_name(p, upper)
+    if mounts.has_guides(upper):
+        # Its supports and corner guides stand on the floor, all over its area.
+        return [Issue(ERROR, f"{up_name} can't sit above {low_name}: its supports and corner "
+                      "guides stand on the floor.", "Move one of them so they don't overlap.",
+                      mount_id=upper.id)]
     # Posts of the upper set stand on the floor: they must not need to go through the lower board.
-    corners = mounts.board_corners(lower)
+    corners = mounts.outline_corners(lower)
     if corners:
         x0, x1 = min(c[0] for c in corners), max(c[0] for c in corners)
         y0, y1 = min(c[1] for c in corners), max(c[1] for c in corners)

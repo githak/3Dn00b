@@ -371,6 +371,33 @@ def test_screw_post_controls(window):
     assert window.project.mounts[0].rotation == 0
 
 
+def test_board_without_screw_holes_hides_the_screw_controls(window):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    window.width_spin.setValue(110)
+    window.depth_spin.setValue(80)
+    window.board_combo.setCurrentIndex(window.board_combo.findData("esp32-s3"))
+    QTest.mouseClick(window.add_posts_button, Qt.MouseButton.LeftButton)
+    window.rebuild()
+    assert window.project.mounts[0].board == "esp32-s3"
+    form = window.mount_form
+    assert not form.isRowVisible(window.screw_combo) and not form.isRowVisible(window.mount_inserts)
+    assert form.labelForField(window.post_length).text() == "Support height"
+    assert "no screw holes" in window.mount_info.text() and "4 supports" in window.mount_info.text()
+    assert "4 supports" in window.mount_list.item(0).text()
+    assert not validation_errors(window)
+    window.tabs.setCurrentIndex(TAB_CHECK)
+    assert "1 board on supports" in window.parts_summary.text()
+    assert "screw post" not in window.parts_summary.text()
+    window.tabs.setCurrentIndex(2)
+    # A board with screw holes brings them back.
+    window.board_combo.setCurrentIndex(window.board_combo.findData("pico"))
+    QTest.mouseClick(window.add_posts_button, Qt.MouseButton.LeftButton)
+    window.rebuild()
+    assert form.isRowVisible(window.screw_combo)
+    assert form.labelForField(window.post_length).text() == "Post length"
+
+
 def test_drag_board_moves_all_posts_together(window):
     from PySide6.QtCore import QPoint
     window.width_spin.setValue(150)

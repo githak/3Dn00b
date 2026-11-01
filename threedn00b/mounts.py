@@ -16,17 +16,34 @@ BOARD_THICKNESS = 1.6     # standard circuit board thickness
 STACK_AIR = 1.0           # extra room between a board's tallest part and the board above
 ROTATIONS = (0, 90, 180, 270)
 
+# Boards without screw holes rest on round supports and are kept in place by an
+# L-shaped guide at each corner, which reaches a little above the board.
+SUPPORT_DIAMETER = 5.0
+GUIDE_GAP = 0.5           # room between the board's edges and the guides
+GUIDE_WALL = 1.6          # thickness of a guide
+GUIDE_ABOVE = 2.0         # how far the guides reach above the top of the board
+GUIDE_OUT = GUIDE_GAP + GUIDE_WALL
+
+
+@dataclass(frozen=True)
+class Guides:
+    """How long the arms of the corner guides are, measured from each corner: kept short
+    where sockets or an antenna stick out past the board's edge."""
+    along_length: float = 4.0    # along the long edges (x)
+    along_end: float = 4.0       # along the ends (y)
+
 
 @dataclass(frozen=True)
 class Board:
     name: str
     size: tuple[float, float] | None       # None = a single post with no board
-    holes: tuple[tuple[float, float], ...]
+    holes: tuple[tuple[float, float], ...]  # with guides: where the supports go
     screw: str
     parts_height: float = 10.0   # tallest part on top of the board
     flat: bool = False           # only low parts on top: stacking above it can be approved
     tall_parts: str = ""         # what the tallest parts are, for messages
     short: str = ""              # short name for messages
+    guides: Guides | None = None  # no screw holes: supports and corner guides hold it
 
 
 def _from_corner(width, depth, holes):
@@ -68,6 +85,20 @@ BOARDS = {
                   _from_corner(43.18, 17.78, [(1.27, 1.27), (41.91, 1.27), (1.27, 16.51),
                                               (41.91, 16.51)]),
                   "M1.6", parts_height=4.0, tall_parts="USB socket", short="Arduino Nano"),
+    # Espressif ESP32-S3-DevKitC-1, v1.0 and v1.1 (both dimension drawings, DXF): 62.87 x
+    # 25.40 mm on the outline (the drawing's dimension, 62.74, starts 0.13 mm in) and no screw
+    # holes. Its pin header rows run 1.27 mm from the long edges with their plastic under the
+    # board, 3.05 mm wide and reaching 0.25 mm past the edge; nothing else is underneath. The
+    # two micro USB sockets are at the end x = 0, 6.0 and 19.4 mm from the front edge (each
+    # 8.2 mm wide), sticking out 0.87 mm; the module's antenna sticks out 6.28 mm past the
+    # other end, 3.65 to 21.65 mm from the front edge. It rests on four supports between the
+    # header rows (clear of the USB sockets' solder tabs, 1.55 to 5.77 mm from that end); the
+    # guides' arms along the ends stay clear of the sockets and the antenna.
+    "esp32-s3": Board("ESP32-S3-DevKitC-1 / DevKitC-1U", (62.87, 25.4),
+                      _from_corner(62.87, 25.4, [(9.0, 7.0), (55.0, 7.0), (9.0, 18.4),
+                                                 (55.0, 18.4)]),
+                      "M3", parts_height=4.0, flat=True, tall_parts="module and USB sockets",
+                      short="ESP32-S3 DevKitC-1", guides=Guides(along_length=4.0, along_end=1.5)),
     "custom": Board("Custom board (4 holes)", None, (), "M3", parts_height=10.0,
                     tall_parts="parts", short="custom board"),
     "custom2": Board("Custom board (2 holes)", None, (), "M3", parts_height=10.0,
@@ -121,18 +152,50 @@ def post_positions(m: Mount) -> list[tuple[float, float]]:
     return [_to_floor(m, x, y) for x, y in _local_holes(m)]
 
 
-def board_corners(m: Mount) -> list[tuple[float, float]]:
-    """Corners of the board outline on the floor (empty for a single post)."""
+def board_corners(m: Mount, grow: float = 0.0) -> list[tuple[float, float]]:
+    """Corners of the board outline on the floor (empty for a single post), optionally
+    grown by `grow` all round."""
     size = board_size(m)
     if size is None:
         return []
-    w, d = size[0] / 2, size[1] / 2
+    w, d = size[0] / 2 + grow, size[1] / 2 + grow
     return [_to_floor(m, x, y) for x, y in ((-w, -d), (w, -d), (w, d), (-w, d))]
+
+
+def has_guides(m: Mount) -> bool:
+    """Is it a board with no screw holes, held by supports and corner guides?"""
+    return BOARDS[m.board].guides is not None
+
+
+def outline_corners(m: Mount) -> list[tuple[float, float]]:
+    """Corners of the area the board takes up on the floor, its corner guides included."""
+    return board_corners(m, GUIDE_OUT if has_guides(m) else 0.0)
+
+
+def guide_shapes(m: Mount) -> list[list[tuple[float, float]]]:
+    """The corner guides seen from above: two rectangles (floor corners, counter-clockwise)
+    for each corner, one along the long edge and one along the end."""
+    guides = BOARDS[m.board].guides
+    if guides is None:
+        return []
+    w, d = board_size(m)
+    hw, hd = w / 2, d / 2
+    out = []
+    for sx in (-1, 1):
+        for sy in (-1, 1):
+            for x0, y0 in ((hw - guides.along_length, hd + GUIDE_GAP),
+                           (hw + GUIDE_GAP, hd - guides.along_end)):
+                x1, y1 = hw + GUIDE_OUT, hd + GUIDE_OUT
+                pts = [(sx * x, sy * y) for x, y in ((x0, y0), (x1, y0), (x1, y1), (x0, y1))]
+                if sx * sy < 0:
+                    pts.reverse()                       # mirrored once: turn back round
+                out.append([_to_floor(m, x, y) for x, y in pts])
+    return out
 
 
 def half_extents(m: Mount) -> tuple[float, float]:
     """Half width/depth of the area the set covers on the floor."""
-    pts = board_corners(m) or post_positions(m)
+    pts = outline_corners(m) or post_positions(m)
     r = SCREWS[m.screw].post / 2
     hx = max(abs(x - m.u) for x, _ in pts)
     hy = max(abs(y - m.v) for _, y in pts)
@@ -142,6 +205,8 @@ def half_extents(m: Mount) -> tuple[float, float]:
 
 
 def post_radius(m: Mount) -> float:
+    if has_guides(m):
+        return SUPPORT_DIAMETER / 2
     return post_diameter(m.screw, m.inserts) / 2
 
 
@@ -170,6 +235,13 @@ def board_top(project: Project, m: Mount) -> float:
     return board_bottom(project, m) + (BOARD_THICKNESS if board_size(m) else 0.0)
 
 
+def holder_top(project: Project, m: Mount) -> float:
+    """Height (z) of the top of what is printed for the board: the posts, or the guides."""
+    if has_guides(m):
+        return board_top(project, m) + GUIDE_ABOVE
+    return board_bottom(project, m)
+
+
 def footprint_box(m: Mount) -> tuple[float, float, float, float]:
     """(x_min, x_max, y_min, y_max) covered on the floor; exact, as boards turn in 90° steps."""
     hx, hy = half_extents(m)
@@ -183,11 +255,12 @@ def label(m: Mount) -> str:
 def clearance(project: Project, m: Mount, u: float | None = None, v: float | None = None) -> float:
     """Room (mm) between the set and the walls; negative means it doesn't fit.
 
-    Measures from the board's corners when there is a board, else from the posts.
+    Measures from the board's corners (or its corner guides) when there is a board, else
+    from the posts.
     """
     du = 0.0 if u is None else u - m.u
     dv = 0.0 if v is None else v - m.v
-    corners = board_corners(m)
+    corners = outline_corners(m)
     if corners:
         return min(flat_clearance(project, "bottom", x + du, y + dv) for x, y in corners)
     r = post_radius(m)
@@ -206,7 +279,7 @@ def column_clearance(project: Project, m: Mount, u: float | None = None,
     du = 0.0 if u is None else u - m.u
     dv = 0.0 if v is None else v - m.v
     r = lid_column_radius(project)
-    corners = board_corners(m)
+    corners = outline_corners(m)
     room = 1e9
     for cx, cy in columns:
         if corners:
@@ -224,7 +297,7 @@ def needed_clearance(project: Project, m: Mount) -> float:
     """Room needed around the set: a little air, plus the lid's lip if the board reaches it."""
     need = 1.0 if board_size(m) else 0.0
     if has_lip(project) and board_size(m):
-        top = board_bottom(project, m) + BOARD_THICKNESS
+        top = max(board_top(project, m), holder_top(project, m))
         if top > project.outer_height - project.lid.lip_height - project.lid.gap:
             need = max(need, lip_outer_offset(project) + lip_wall(project) + project.lid.gap)
     return need
