@@ -8,7 +8,7 @@ Software for people getting into 3D printing and want to start with something ea
 sizes in millimetres, add holes and a lid, and export files your slicer can
 print. No sketches, no constraints, no feature trees.
 
-## What it can do (version 0.29)
+## What it can do (version 0.30.1)
 
 - **Templates** to start from, already sized to fit. Pick one under **What are you making?**
   in the Shape step, then change anything you like; Undo takes you back.
@@ -61,11 +61,21 @@ print. No sketches, no constraints, no feature trees.
   move it: it slides along its own wall, snaps to the centre lines and lines up
   with other holes, and always keeps a safe distance from the edges. Common
   sizes are built in (M3/M4 screws, cables).
+- **Cable notches**: a notch down from the top of a wall, round at the bottom, so a
+  cable can come out with the lid on. A push-on or snap-on lid gets a matching notch
+  in its lip; screwed-down lids and boxes without a lid work too. Common cable sizes
+  are built in.
+- **Fix it in place** (Shape step): **screw tabs** at the bottom to screw it down,
+  and/or **keyhole slots** in the back to hang it on two screws in a wall. Pick the
+  screw size; the keyholes go as far apart as fits, or as far apart as the screws
+  already in your wall. The checks tell you how far apart to put the screws.
 - **Screw posts for circuit boards**: pick a board (Raspberry Pi Zero / Zero 2 W,
   3 / 4 / 5, 3 A+, Pico / Pico 2, Arduino Uno R3 / R4, Mega 2560 / Giga R1, Nano,
   or your own board with 1, 2 or 4 holes) and all its posts
   appear in the right pattern. Choose the screw size (M1 to M4) and how tall the
-  posts are; the screw cuts its own thread into the post. Drag the board's green
+  posts are; the screw cuts its own thread into the post, or tick **Heat-set
+  inserts** for brass threads you melt in with a soldering iron (M2 to M4; the
+  posts get a little wider). Drag the board's green
   outline to move all its posts together, or turn it in 90° steps. The app checks
   that the board fits, doesn't touch the walls or the lid, and doesn't stick out.
   Boards can be **stacked**: one may overlap another if its posts are tall enough
@@ -81,7 +91,8 @@ print. No sketches, no constraints, no feature trees.
   container becomes a neck with a thread that prints without supports.
 - Or a **screwed-down lid**: a flat lid held by a screw in each corner (M2 to M4).
   The box gets a column in each corner for the screws to cut their own thread
-  into, and the app tells you how many screws you need and how long they can be.
+  into (or for heat-set inserts), and the app tells you how many screws you need
+  and how long they can be.
 - **Text**: names and labels on any wall, the bottom or the lid, **raised** (it
   stands out), **engraved** (cut in) or **cut through** (a hole in the shape of
   the letters, like a stencil: letters such as O and A keep their middle with thin
@@ -121,34 +132,79 @@ print. No sketches, no constraints, no feature trees.
   side down and ready for your slicer (the lid comes out upside down, which is how
   it prints best). Every exported part is guaranteed to be watertight.
 
-## Install on Debian, Ubuntu and Linux Mint
+## Install
 
-Download `3dn00b_<version>-1_amd64.deb` from the
-[Releases page](https://github.com/githak/3Dn00b/releases) and install it:
+Download the file for your system from the
+[Releases page](https://github.com/githak/3Dn00b/releases). Each one carries the
+libraries 3Dn00b needs; nothing is downloaded while installing.
+
+### Debian, Ubuntu, Linux Mint (PC): the .deb
 
 ```bash
-sudo apt install ./3dn00b_0.29.0-1_amd64.deb
+sudo apt install ./3dn00b_0.30.1-1_amd64.deb
 ```
 
-That's all: 3Dn00b appears in your applications menu, `.3dn00b` project files open
-in it, and the examples are in `/usr/share/3dn00b/examples/`. Nothing is
-downloaded while installing; apt adds the few system libraries it needs.
-To remove it: `sudo apt remove 3dn00b`.
+3Dn00b appears in your applications menu, `.3dn00b` project files open in it, and
+the examples are in `/usr/share/3dn00b/examples/`. apt adds the few system libraries
+it needs. To remove it: `sudo apt remove 3dn00b`.
 
-| Works on | Tested automatically |
+### Raspberry Pi 4 and 5, other ARM computers: the arm64 .deb
+
+```bash
+sudo apt install ./3dn00b_0.30.1-1_arm64.deb
+```
+
+For Raspberry Pi OS Trixie (the current one, since late 2025), Debian 13 and Ubuntu
+24.04 or newer. The older Raspberry Pi OS Bookworm is too old for the Qt libraries
+3Dn00b uses on ARM; use a newer Raspberry Pi OS. A Raspberry Pi 4 or 5 is fast
+enough; the 3D view uses the Pi's graphics chip.
+
+### Fedora (and other RPM systems): the .rpm
+
+```bash
+sudo dnf install ./3dn00b-0.30.1-1.x86_64.rpm
+```
+
+For Fedora 40 or newer and openSUSE Tumbleweed (use `sudo zypper install` there).
+
+### Any other Linux: the AppImage
+
+One file that runs without installing, on most Linux systems from the last few years
+(glibc 2.34 or newer: Ubuntu 22.04, Debian 12, Fedora 35, Linux Mint 21, openSUSE Leap
+16, Arch, Manjaro…). It brings its own Python too.
+
+```bash
+chmod +x 3Dn00b-0.30.1-x86_64.AppImage
+./3Dn00b-0.30.1-x86_64.AppImage
+```
+
+Or right-click it in your file manager, allow it to run as a program, and
+double-click it. (Some systems need `libfuse2` for AppImages; without it, run it with
+`--appimage-extract-and-run`.)
+
+| Package | Works on | Tested automatically |
+| --- | --- | --- |
+| .deb (amd64) | Debian 12 and 13, Ubuntu 22.04 to 26.10, Mint 21 and 22, Pop!_OS, Zorin | Ubuntu 22.04, 24.04 and 26.04 |
+| .deb (arm64) | Raspberry Pi OS Trixie, Debian 13, Ubuntu 24.04 and newer | Ubuntu 24.04 and 26.04 (ARM, emulated) |
+| .rpm | Fedora 40 and newer, openSUSE Tumbleweed | its libraries are checked, and Fedora 43 accepts the package; not yet installed and run on Fedora |
+| AppImage | most Linux systems with glibc 2.34 or newer | Ubuntu 22.04, 24.04 and 26.04 with only desktop basics |
+
+The .deb and .rpm contain their own copies of the libraries the distributions don't
+provide, for each Python version they use (3.10 to 3.14); a future Linux release with
+a newer Python needs a new package version. The AppImage has its own Python.
+
+To build them yourself (they download the libraries from PyPI):
+
+| Command | Writes |
 | --- | --- |
-| Debian 12 (bookworm) and 13 (trixie) | yes |
-| Ubuntu 22.04 to 26.10 (Python 3.10 to 3.14) | 22.04, 24.04 and 26.04 |
-| Linux Mint 21 and 22, Pop!_OS, Zorin and other Ubuntu-based systems | through Ubuntu |
+| `python3 packaging/build_deb.py` | `dist/3dn00b_<version>-1_amd64.deb` |
+| `python3 packaging/build_deb.py --arch arm64` | `dist/3dn00b_<version>-1_arm64.deb` |
+| `python3 packaging/build_rpm.py` | `dist/3dn00b-<version>-1.x86_64.rpm` (needs `rpmbuild`) |
+| `python3 packaging/build_appimage.py` | `dist/3Dn00b-<version>-x86_64.AppImage` (needs Docker) |
 
-The package is for 64-bit PCs (amd64) and contains its own copies of the
-libraries Debian doesn't provide, for Python 3.10 to 3.14. A future Linux release
-with a newer Python needs a new package version.
-
-To build the package yourself: `python3 packaging/build_deb.py` (it downloads the
-libraries from PyPI and writes `dist/3dn00b_<version>-1_amd64.deb`).
-`packaging/test_deb.sh dist/*.deb` installs it in clean Debian and Ubuntu
-containers (Docker) and runs a smoke test.
+`packaging/test_deb.sh`, `test_rpm.sh` and `test_appimage.sh` install or run them in
+clean containers (Docker) and run a smoke test; testing the arm64 package on a PC
+needs `qemu-user-static`.
 
 ## Run from source (any Linux)
 

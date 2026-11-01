@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from .model import (SCREWS, Mount, Project, flat_clearance, has_lip, lid_column_radius,
+from .model import (SCREWS, Mount, Project, flat_clearance, has_lip, lid_column_radius, post_diameter,
                     lid_screw_positions, lip_outer_offset, lip_wall)
 
 BOARD_THICKNESS = 1.6     # standard circuit board thickness
@@ -142,7 +142,7 @@ def half_extents(m: Mount) -> tuple[float, float]:
 
 
 def post_radius(m: Mount) -> float:
-    return SCREWS[m.screw].post / 2
+    return post_diameter(m.screw, m.inserts) / 2
 
 
 def board_bottom(project: Project, m: Mount) -> float:

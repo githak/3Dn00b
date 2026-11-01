@@ -20,7 +20,9 @@ from .model import (SIDE_LABELS, ALONG_V, BACK, BOTTOM, BOX, CYLINDER, FRONT, LE
                     has_set_sizes, divider_positions, divider_top,
                     has_dividers, has_frame,
                     hole_edge_clearance, hole_limits, inside_fillet, lip_outer_offset, lip_wall, opening_gap,
-                    point_near_opening, CUT_THROUGH, ENGRAVED, LABEL_DEPTH_RANGE, LABEL_MIN_SIZE, RAISED, RECT,
+                    point_near_opening, CUT_THROUGH, ENGRAVED, NOTCH, WALL_SURFACES, has_finger_notch,
+                    notch_size, KEYHOLE_SURFACE, keyhole_max_spacing, keyhole_openings,
+                    keyhole_sizes, keyhole_spacing, tab_sizes, INSERTS, LABEL_DEPTH_RANGE, LABEL_MIN_SIZE, RAISED, RECT,
                     Label, clamp_label, label_half_extents, label_limits, label_thickness)
 
 ERROR, WARNING, INFO = "error", "warning", "info"
@@ -208,6 +210,11 @@ def check(project: Project, parts: geometry.Parts | None = None,
         issues += _check_holes(project)
         issues += _check_dividers(project)
         issues += _check_mounts(project)
+        issues += _check_fixing(project)
+        if any(m.inserts for m in project.mounts) or (has_screw_lid(project) and project.lid.inserts):
+            issues.append(Issue(INFO, "Heat-set inserts: press them in with a soldering iron "
+                                "(about 220 °C for PLA), slowly and straight.",
+                                "They give strong metal threads that don't wear out."))
         label_issues = _check_labels(project)
         issues += label_issues
         if parts is None:
@@ -365,10 +372,23 @@ def _check_screw_lid(p: Project) -> list[Issue]:
     if lid.screw == "M1":
         out.append(Issue(WARNING, f"Holes for M1 screws are tiny ({screw.pilot} mm) and may close "
                          "up when printed.", "You may need to drill them out."))
-    longest = math.floor((lid.thickness + depth - 0.5) * 2) / 2
-    out.append(Issue(INFO, f"The lid needs {len(positions)} {lid.screw} screws, up to {longest:g} mm "
-                     "long. They cut their own thread into the corner columns.",
-                     "Don't overtighten them, or the thread in the plastic can strip."))
+    insert = INSERTS.get(lid.screw) if lid.inserts else None
+    if lid.inserts and insert is None:
+        out.append(Issue(WARNING, f"There are no heat-set inserts for {lid.screw} screws.",
+                         "Use M2 to M4 screws, or plain holes."))
+    if insert is not None:
+        if depth < insert.depth - 1e-6:
+            out.append(Issue(WARNING, f"The corner columns are too short for {lid.screw} heat-set "
+                             f"inserts ({_mm(insert.depth)} deep).", "Make the box taller."))
+        longest = math.floor((lid.thickness + min(insert.depth, depth) - 0.5) * 2) / 2
+        out.append(Issue(INFO, f"The lid needs {len(positions)} {lid.screw} screws, up to {longest:g} mm "
+                         "long, into heat-set inserts in the corner columns.",
+                         "Press the inserts in with a soldering iron before you fit the lid."))
+    else:
+        longest = math.floor((lid.thickness + depth - 0.5) * 2) / 2
+        out.append(Issue(INFO, f"The lid needs {len(positions)} {lid.screw} screws, up to {longest:g} mm "
+                         "long. They cut their own thread into the corner columns.",
+                         "Don't overtighten them, or the thread in the plastic can strip."))
     # Things that would run into the screw columns.
     for hole in p.holes:
         name = hole_name(p, hole)
@@ -418,6 +438,10 @@ def _check_holes(p: Project) -> list[Issue]:
                 out.append(Issue(ERROR, f"{name} is on a surface this shape doesn't have.",
                                  "Move it to another surface or remove it.", hole.id))
             continue
+        if hole.kind == NOTCH and hole.surface not in WALL_SURFACES:
+            out.append(Issue(ERROR, f"{name} is a cable notch, which goes in the top of a wall.",
+                             "Put it on a wall.", hole.id))
+            continue
         if hole_limits(p, hole, MIN_EDGE) is None:
             out.append(Issue(ERROR, f"{name} ({hole.size_label}) is too big for the {where}.",
                              "Make the hole smaller or the object bigger.", hole.id))
@@ -426,6 +450,9 @@ def _check_holes(p: Project) -> list[Issue]:
         clearance = hole_edge_clearance(p, hole)
         fix = clamp_hole(p, hole, margin)
         fix_label = "Move to the nearest safe spot"
+        if hole.kind == NOTCH:
+            out += _check_notch(p, hole, name, where, clearance, margin, fix, fix_label)
+            continue
         if _on_neck(p, hole):
             out.append(Issue(ERROR, f"{name} is on the neck, where the lid screws on.",
                              "Move the hole lower.", hole.id, fix, fix_label))
@@ -468,6 +495,130 @@ def _check_holes(p: Project) -> list[Issue]:
     if p.holes:
         out.append(Issue(INFO, "Printed holes often come out 0.2 to 0.4 mm smaller than designed.",
                          "For screws or cables, make the hole a little bigger than needed."))
+    return out
+
+
+def _check_notch(p: Project, hole: Hole, name: str, where: str, clearance: float,
+                 margin: float, fix, fix_label: str) -> list[Issue]:
+    out = []
+    if has_sliding_lid(p):
+        out.append(Issue(ERROR, f"{name} is a cable notch, which doesn't work with a sliding lid: "
+                         "the lid slides in grooves at the top of the walls.",
+                         "Use another kind of lid, or a hole lower down.", hole.id))
+        return out
+    if has_threaded_lid(p):
+        out.append(Issue(ERROR, f"{name} is a cable notch, which would cut into the thread "
+                         "of the screw-on lid.", "Use a hole lower down instead.", hole.id))
+        return out
+    if clearance < MIN_EDGE:
+        out.append(Issue(ERROR, f"{name} runs off the edge of the {where}.",
+                         "Move it further in, or make it narrower or less deep.", hole.id, fix,
+                         fix_label))
+    elif clearance < margin - 1e-6:
+        out.append(Issue(WARNING, f"Only {_mm(clearance)} of material is left next to {name}.",
+                         f"Keep at least {_mm(margin)} so the edge doesn't break.", hole.id, fix,
+                         fix_label))
+    if hole.height < hole.width - 1e-6:
+        out.append(Issue(WARNING, f"{name} is less deep than it is wide, so a round cable "
+                         "would stick out above the top of the wall.",
+                         f"Make it at least {_mm(hole.width)} deep.", hole.id))
+    if has_finger_notch(p) and _same_side(p, hole, p.lid.opening_side):
+        width, _ = notch_size(p)
+        if abs(_side_offset(p, hole)) < width / 2 + hole.width / 2 + 1.0:
+            out.append(Issue(WARNING, f"{name} runs into the finger notch.",
+                             "Move one of them along the wall.", hole.id))
+    if has_lip(p):
+        out.append(Issue(INFO, f"{name}: the lid's lip gets a matching notch, so the cable fits "
+                         "with the lid on.", "", hole.id))
+    return out
+
+
+def _same_side(p: Project, hole: Hole, side: str) -> bool:
+    """Is the hole on that side of the box (for a round container: within 45° of it)?"""
+    if p.shape != BOX:
+        angle = {FRONT: 0.0, RIGHT: 90.0, BACK: 180.0, LEFT: -90.0}[side]
+        return abs((hole.u - angle + 180.0) % 360.0 - 180.0) < 45.0
+    return hole.surface == side
+
+
+def _side_offset(p: Project, hole: Hole) -> float:
+    """How far (mm) along the wall the hole is from the middle of that side."""
+    if p.shape != BOX:
+        angle = {FRONT: 0.0, RIGHT: 90.0, BACK: 180.0, LEFT: -90.0}[p.lid.opening_side]
+        return math.radians((hole.u - angle + 180.0) % 360.0 - 180.0) * p.outer_diameter / 2
+    return hole.u
+
+
+def _check_fixing(p: Project) -> list[Issue]:
+    out = []
+    f = p.fixing
+    screw = f"{f.screw:g} mm"
+    if f.keyholes:
+        sizes = keyhole_sizes(p)
+        if sizes is None:
+            out.append(Issue(ERROR, "The box is too low for keyhole slots in the back.",
+                             "Make it taller, or use smaller screws."))
+        else:
+            best = keyhole_max_spacing(p)
+            spacing = keyhole_spacing(p)
+            if f.keyhole_spacing > best + 1e-6:
+                out.append(Issue(ERROR, f"The keyholes are {_mm(f.keyhole_spacing)} apart, but the "
+                                 f"back only has room for {_mm(best)}.",
+                                 "Put them closer together, or make the box wider.",
+                                 fix_values={"fixing.keyhole_spacing": round(best, 1)},
+                                 fix_label=f"Make it {_mm(round(best, 1))}"))
+            elif 0 < f.keyhole_spacing < sizes.head + 2.0:
+                out.append(Issue(ERROR, f"The keyholes are only {_mm(f.keyhole_spacing)} apart, so "
+                                 "they run into each other.", "Put them further apart.",
+                                 fix_values={"fixing.keyhole_spacing": round(best, 1)},
+                                 fix_label=f"Make it {_mm(round(best, 1))}"))
+            else:
+                where = SURFACE_LABELS[KEYHOLE_SURFACE[p.shape]].lower()
+                keyholes = keyhole_openings(p)
+                for hole in p.holes:
+                    if any(h.surface == hole.surface and opening_gap(p, h, hole) < 1.0
+                           for h in keyholes):
+                        out.append(Issue(WARNING, f"{hole_name(p, hole)} runs into a keyhole slot.",
+                                         "Move the hole away from the top of the back wall.",
+                                         hole.id))
+                if p.shape == BOX and has_dividers(p):
+                    xs, _ = divider_positions(p)
+                    half = p.dividers.thickness / 2 + sizes.head / 2 + 1.0
+                    if any(abs(-h.u - x) < half for h in keyholes for x in xs):
+                        out.append(Issue(WARNING, "A keyhole is where a divider meets the back "
+                                         "wall, so the screw head can't get through.",
+                                         "Change the keyhole spacing, or the compartments."))
+                if p.wall < 2.0 - 1e-6:
+                    out.append(Issue(WARNING, f"Keyholes in a {_mm(p.wall)} wall may break.",
+                                     "Walls of 2 mm or more hold better."))
+                if spacing > 0:
+                    text = (f"Hang it on two {screw} screws {_mm(round(spacing, 1))} apart (middle "
+                            f"to middle), with their heads about 4 mm out from the wall.")
+                else:
+                    text = (f"Hang it on one {screw} screw, with its head about 4 mm out from the "
+                            "wall.")
+                out.append(Issue(INFO, text, f"The keyholes are in the {where}: put the heads "
+                                 "through the big holes and let the box slide down."))
+    if f.tabs:
+        t = tab_sizes(p)
+        out.append(Issue(INFO, f"The screw tabs take {screw} screws ({_mm(t.hole)} holes).",
+                         "Screw it down through the tabs."))
+        for hole in p.holes:
+            if hole.surface not in WALL_SURFACES:
+                continue
+            low = p.outer_height / 2 + hole.v - hole.half_extents[1]
+            if low > t.thickness + 1.0:
+                continue
+            if p.shape == BOX and hole.surface in (LEFT, RIGHT):
+                near = abs(hole.u) < t.width / 2 + hole.half_extents[0]
+            elif p.shape != BOX and hole.surface == SIDE:
+                arc = min(abs((hole.u - a + 180.0) % 360.0 - 180.0) for a in (90.0, -90.0))
+                near = math.radians(arc) * p.outer_diameter / 2 < t.width / 2 + hole.half_extents[0]
+            else:
+                near = False
+            if near:
+                out.append(Issue(WARNING, f"{hole_name(p, hole)} is just above a screw tab.",
+                                 "Move it up, or along the wall.", hole.id))
     return out
 
 
@@ -529,6 +680,16 @@ def _check_mounts(p: Project) -> list[Issue]:
     div_top = divider_top(p)
     for m in p.mounts:
         name = mount_name(p, m)
+        if m.inserts:
+            insert = INSERTS.get(m.screw)
+            if insert is None:
+                out.append(Issue(WARNING, f"{name}: there are no heat-set inserts for {m.screw} "
+                                 "screws.", "Use plain holes, or M2 to M4 screws.", mount_id=m.id))
+            elif m.length < insert.depth + 0.6 - 1e-6:
+                out.append(Issue(WARNING, f"{name}: the posts are too short for {m.screw} heat-set "
+                                 f"inserts ({_mm(insert.depth)} deep).",
+                                 f"Make the posts at least {_mm(insert.depth + 0.6)} tall.",
+                                 mount_id=m.id))
         screw = mounts.SCREWS[m.screw]
         size = mounts.board_size(m)
         top = mounts.board_bottom(p, m) + (mounts.BOARD_THICKNESS if size else 0.0)

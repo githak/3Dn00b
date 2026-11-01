@@ -41,8 +41,12 @@ SIZE_RANGE = (10.0, 300.0)
 WALL_RANGE = (0.8, 10.0)
 HOLE_DIAMETER_RANGE = (1.0, 100.0)
 
-ROUND, RECT, VENT = "round", "rect", "vent"
-HOLE_KIND_LABELS = {ROUND: "Round", RECT: "Rectangle", VENT: "Air vent"}
+ROUND, RECT, VENT, NOTCH = "round", "rect", "vent", "notch"
+HOLE_KIND_LABELS = {ROUND: "Round", RECT: "Rectangle", VENT: "Air vent", NOTCH: "Cable notch"}
+# A cable notch is a slot down from the top of a wall, open at the top and round at the
+# bottom, so a cable can come out with the lid on. Its width and height (depth from the
+# top) are the hole's width and height; it always reaches the top of the wall.
+WALL_SURFACES = (FRONT, BACK, LEFT, RIGHT, SIDE)
 # Air vents: slots run along v ("up and down" on a wall) or along u ("sideways").
 ALONG_V, ALONG_U = "along_v", "along_u"
 # Hard minimum of material kept between a hole and the edge of its surface.
@@ -89,6 +93,8 @@ class Hole:
             return f"vent {self.width:g} × {self.height:g} mm, {self.slot_count} slots"
         if self.kind == RECT:
             return f"{self.width:g} × {self.height:g} mm"
+        if self.kind == NOTCH:
+            return f"notch {self.width:g} mm wide, {self.height:g} mm deep"
         return f"{self.diameter:g} mm"
 
     @property
@@ -131,6 +137,31 @@ SCREWS = {
     "M4": Screw(pilot=3.5, post=9.0, nominal=4.0),
 }
 
+# Heat-set inserts: brass threads pressed into a hole with a hot soldering iron. Sizes for
+# the common short inserts (hole diameter, hole depth), as their makers recommend.
+@dataclass(frozen=True)
+class Insert:
+    hole: float
+    depth: float
+
+
+INSERTS = {
+    "M2": Insert(hole=3.2, depth=4.0),
+    "M2.5": Insert(hole=3.6, depth=5.0),
+    "M3": Insert(hole=4.0, depth=6.0),
+    "M4": Insert(hole=5.6, depth=8.5),
+}
+INSERT_WALL = 1.6        # plastic around an insert
+
+
+def post_diameter(screw: str, inserts: bool = False) -> float:
+    """Outside of a post or column for this screw: wider with a heat-set insert in it."""
+    post = SCREWS[screw].post
+    if inserts and screw in INSERTS:
+        post = max(post, INSERTS[screw].hole + 2 * INSERT_WALL)
+    return post
+
+
 # Help for opening a push-on or snap-on lid, at the front.
 OPENING_LABELS = {
     "none": "Nothing extra",
@@ -171,12 +202,26 @@ class Lid:
     opening: str = "none"          # push-on and snap-on lids: key of OPENING_LABELS
     opening_side: str = FRONT      # where the tab and notch are: FRONT, BACK, LEFT or RIGHT
     slide_from: str = FRONT        # sliding lids: the side the lid slides in from
+    inserts: bool = False          # screwed lids: heat-set inserts in the corner columns
 
     @property
     def gap(self) -> float:
         if self.fit in FIT_PRESETS:
             return FIT_PRESETS[self.fit]
         return self.custom_gap
+
+
+@dataclass
+class Fixing:
+    """Ways to fix the box in place: screw tabs at the bottom, and keyhole slots in the
+    back to hang it on two screws in a wall."""
+    tabs: bool = False
+    keyholes: bool = False
+    screw: float = 4.0             # size of the screws (mm across the thread)
+    keyhole_spacing: float = 0.0   # between the two keyholes; 0 = as far apart as fits
+
+
+FIXING_SCREWS = (3.0, 3.5, 4.0, 5.0)
 
 
 @dataclass
@@ -219,6 +264,7 @@ class Mount:
     # Height of the tallest part on top of the board; boards stacked above need
     # this much room plus a little air. Negative = the board's usual value.
     parts_height: float = -1.0
+    inserts: bool = False          # heat-set inserts in the posts instead of plain holes
 
 
 # Text on the outside of a surface: standing out (raised), cut in (engraved), or cut
@@ -264,6 +310,7 @@ class Project:
     holes: list[Hole] = field(default_factory=list)
     name: str = "My box"
     dividers: Dividers = field(default_factory=Dividers)   # boxes only
+    fixing: Fixing = field(default_factory=Fixing)
     mounts: list[Mount] = field(default_factory=list)
     # The template this design was started from ("" = none). Choosing Box or Round
     # container then starts over with a plain one rather than reshaping the template.
@@ -406,6 +453,8 @@ def corner_rounding(hole: Hole) -> float:
     """Radius actually used for the corners of a rectangular opening."""
     if hole.kind == ROUND:
         return 0.0
+    if hole.kind == NOTCH:
+        return min(hole.half_extents)                   # a round bottom, for the cable
     return max(0.0, min(hole.rounding, *hole.half_extents))
 
 
@@ -418,7 +467,19 @@ def frame_thickness(project: Project) -> float:
 
 
 def has_frame(project: Project, hole: Hole) -> bool:
-    return hole.strengthen and hole.surface in (FRONT, BACK, LEFT, RIGHT, SIDE)
+    return hole.strengthen and hole.kind != NOTCH and hole.surface in WALL_SURFACES
+
+
+def notch_v(project: Project, hole: Hole) -> float:
+    """Where a cable notch's middle is (v): it reaches down from the top of the wall."""
+    return project.outer_height / 2 - hole.height / 2
+
+
+def fix_notches(project: Project) -> None:
+    """Keep cable notches at the top of their wall (after the height or depth changes)."""
+    for hole in project.holes:
+        if hole.kind == NOTCH:
+            hole.v = round(notch_v(project, hole), 3)
 
 
 def divider_fillet(project: Project) -> float:
@@ -564,7 +625,7 @@ def has_screw_lid(project: Project) -> bool:
 
 
 def lid_column_radius(project: Project) -> float:
-    return SCREWS[project.lid.screw].post / 2
+    return post_diameter(project.lid.screw, project.lid.inserts) / 2
 
 
 def lid_screw_positions(project: Project) -> list[tuple[float, float]]:
@@ -664,21 +725,30 @@ def wall_limits(project: Project, surface: str, diameter: float,
 
 def hole_limits(project: Project, hole: Hole, margin: float = MIN_EDGE):
     """Allowed (u_min, u_max, v_min, v_max) for this hole's centre on its surface."""
-    return extent_limits(project, hole.surface, *hole.half_extents, margin)
+    return extent_limits(project, hole.surface, *hole.half_extents, margin,
+                         notch=hole.kind == NOTCH)
 
 
 def extent_limits(project: Project, surface: str, half_u: float, half_v: float,
-                  margin: float = MIN_EDGE):
+                  margin: float = MIN_EDGE, notch: bool = False):
     """Allowed (u_min, u_max, v_min, v_max) for the centre of an opening.
 
     `half_u`/`half_v` are half the opening's size along u and v. Returns None
     when it cannot fit on that surface at all. For bottom/lid surfaces this is
     the bounding rectangle; rounded corners are checked by flat_clearance().
+    A cable notch (`notch`) only moves sideways: it always reaches the top.
     """
-    if surface in (FRONT, BACK, LEFT, RIGHT, SIDE):
+    if surface not in WALL_SURFACES and notch:
+        return None
+    if surface in WALL_SURFACES:
         z_lo = project.bottom + inside_fillet(project) + half_v + margin
         # Stay below the lid's lip or groove.
         z_hi = wall_top_free(project) - half_v - margin
+        if notch:
+            bottom = project.outer_height - 2 * half_v
+            if bottom < project.bottom + inside_fillet(project) + margin - 1e-9:
+                return None                           # so deep it would reach the floor
+            z_lo = z_hi = project.outer_height - half_v
         v_lo, v_hi = z_lo - project.outer_height / 2, z_hi - project.outer_height / 2
         if surface == SIDE:
             u_lo, u_hi = -180.0, 180.0
@@ -755,6 +825,8 @@ def hole_edge_clearance(project: Project, hole: Hole) -> float:
     z_lo = project.bottom + inside_fillet(project)
     z_hi = wall_top_free(project)
     clear = min(z - hv - z_lo, z_hi - (z + hv))
+    if hole.kind == NOTCH:                      # open at the top on purpose
+        clear = z - hv - z_lo
     if hole.surface != SIDE:
         span = project.inner_width if hole.surface in (FRONT, BACK) else project.inner_depth
         half = span / 2 - wall_corner_zone(project, hole.surface)
@@ -978,3 +1050,112 @@ def clamp_label(project: Project, label: Label, margin: float = LABEL_MARGIN) ->
         u *= 0.97
         v *= 0.97
     return None
+
+
+# ---- fixing the box in place -----------------------------------------------
+
+def screw_head(screw: float) -> float:
+    """Room for the head of a common wood or machine screw of this size."""
+    return 2.0 * screw + 0.5
+
+
+def screw_clearance(screw: float) -> float:
+    """A hole the screw slides through."""
+    return screw + 0.5
+
+
+@dataclass(frozen=True)
+class TabSizes:
+    width: float            # along the wall
+    reach: float            # how far it sticks out from the wall
+    thickness: float
+    hole: float             # screw hole
+    hole_from_wall: float   # middle of the hole, from the outside of the wall
+
+
+def tab_sizes(project: Project) -> TabSizes:
+    screw = project.fixing.screw
+    width = 4.0 * screw + 2.0
+    reach = 3.0 * screw + 3.0
+    return TabSizes(width, reach, max(project.bottom, 3.0), screw_clearance(screw),
+                    reach - width / 2)
+
+
+def tab_positions(project: Project) -> list[tuple[float, float, float]]:
+    """Where the screw tabs go: (x, y, outward angle in degrees), at the left and right."""
+    if not project.fixing.tabs:
+        return []
+    if project.shape == BOX:
+        return [(-project.outer_width / 2, 0.0, 180.0), (project.outer_width / 2, 0.0, 0.0)]
+    r = project.outer_diameter / 2
+    return [(-r, 0.0, 180.0), (r, 0.0, 0.0)]
+
+
+@dataclass(frozen=True)
+class KeyholeSizes:
+    head: float             # the big round hole the screw head goes through
+    slot: float             # the slot the screw slides up into
+    length: float           # from the middle of the big hole to the top end of the slot
+    v: float                # where the middle of the big hole is (v on the back wall)
+
+
+KEYHOLE_SURFACE = {BOX: BACK, CYLINDER: SIDE}
+KEYHOLE_MAX_ANGLE = 20.0     # round containers: how far round from the back a keyhole may be
+
+
+def keyhole_sizes(project: Project) -> KeyholeSizes | None:
+    """Sizes and height of the keyholes, or None when the back wall is too low for them."""
+    screw = project.fixing.screw
+    head, slot = screw_head(screw), screw_clearance(screw)
+    length = head
+    top = wall_top_free(project) - 2.5                       # top of the slot
+    v_mid = top - slot / 2 - length
+    if v_mid - head / 2 < project.bottom + inside_fillet(project) + 2.0:
+        return None
+    return KeyholeSizes(head, slot, length, v_mid - project.outer_height / 2)
+
+
+def keyhole_max_spacing(project: Project) -> float:
+    """The furthest apart two keyholes can be (mm), keeping clear of the corners."""
+    sizes = keyhole_sizes(project)
+    if sizes is None:
+        return 0.0
+    if project.shape == BOX:
+        half = project.inner_width / 2 - wall_corner_zone(project, BACK) - sizes.head / 2 - 2.0
+    else:
+        # Within 20° of the back, so the screws in the wall go straight into the keyholes.
+        half = project.outer_diameter / 2 * math.sin(math.radians(KEYHOLE_MAX_ANGLE))
+    return max(0.0, 2 * half)
+
+
+def keyhole_spacing(project: Project) -> float:
+    """The spacing used: the one asked for, or as far apart as fits (0 = just one)."""
+    asked = project.fixing.keyhole_spacing
+    if asked > 0:
+        return asked
+    best = keyhole_max_spacing(project)
+    sizes = keyhole_sizes(project)
+    return best if sizes is not None and best >= 2 * sizes.head else 0.0
+
+
+def keyhole_openings(project: Project) -> list[Hole]:
+    """The keyholes as openings in the back: a round hole and a slot above it, each."""
+    if not project.fixing.keyholes:
+        return []
+    sizes = keyhole_sizes(project)
+    if sizes is None:
+        return []
+    spacing = keyhole_spacing(project)
+    offsets = [0.0] if spacing <= 0 else [-spacing / 2, spacing / 2]
+    surface = KEYHOLE_SURFACE[project.shape]
+    out = []
+    for du in offsets:
+        # The spacing is straight across (as the screws in the wall are), also on a round wall.
+        u = du if project.shape == BOX else \
+            180.0 + math.degrees(math.asin(max(-1.0, min(1.0, du / (project.outer_diameter / 2)))))
+        out.append(Hole(surface=surface, diameter=sizes.head, u=u, v=sizes.v))
+        out.append(Hole(surface=surface, kind=RECT, width=sizes.slot,
+                        height=sizes.length + sizes.slot, u=u,
+                        v=sizes.v + (sizes.length + sizes.slot) / 2 - sizes.slot / 2,
+                        rounding=sizes.slot / 2))
+    return out

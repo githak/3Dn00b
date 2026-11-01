@@ -1057,3 +1057,64 @@ def test_size_lines_follow_the_view(window):
     assert width_label_y() > 0                                     # now along the back
     viewer.orbit(-160, 0)                                          # turn round with the mouse
     assert width_label_y() < 0
+
+
+def test_cable_notch_in_the_holes_step(window):
+    from threedn00b.model import BOTTOM, NOTCH
+    window.lid_check.setChecked(True)
+    window.rebuild()
+    window.add_notch_button.click()
+    hole = window.project.holes[0]
+    assert hole.kind == NOTCH and hole.surface == FRONT
+    assert hole.v == pytest.approx(window.project.outer_height / 2 - hole.height / 2)
+    window.rebuild()
+    assert not window.hole_v.isVisibleTo(window)                  # always at the top
+    assert window.hole_form.labelForField(window.hole_height).text() == "Depth"
+    surfaces = [window.surface_combo.itemData(i) for i in range(window.surface_combo.count())]
+    assert BOTTOM not in surfaces and "lid" not in surfaces
+    window.hole_height.setValue(12.0)                              # deeper: still at the top
+    hole = window.project.holes[0]
+    assert hole.v == pytest.approx(window.project.outer_height / 2 - 6.0)
+    window.height_spin.setValue(50.0)
+    assert window.project.holes[0].v == pytest.approx(window.project.outer_height / 2 - 6.0)
+    # A hole on the bottom turned into a notch moves to a wall.
+    window.add_hole(BOTTOM)
+    window.kind_combo.setCurrentIndex(window.kind_combo.findData(NOTCH))
+    window.kind_combo.activated.emit(window.kind_combo.currentIndex())
+    assert window.project.holes[1].surface == FRONT
+
+
+def test_fix_it_in_place_card(window):
+    window.fix_tabs.setChecked(True)
+    window.fix_keyholes.setChecked(True)
+    assert window.project.fixing.tabs and window.project.fixing.keyholes
+    assert window.fix_spacing.text() == "As far apart as fits"
+    assert "Hang it on two screws" in window.fixing_info.text()
+    window.fix_screw.setCurrentIndex(window.fix_screw.findData(3.0))
+    window.fix_screw.activated.emit(window.fix_screw.currentIndex())
+    assert window.project.fixing.screw == 3.0
+    window.fix_spacing.setValue(40.0)
+    assert window.project.fixing.keyhole_spacing == 40.0
+    window.rebuild()
+    assert not validation_errors(window)
+    window.fix_keyholes.setChecked(False)
+    assert not window.fix_spacing.isVisibleTo(window)
+
+
+def test_heat_set_insert_switches(window):
+    window.add_mount("rpi-ab")
+    window.rebuild()
+    window.tabs.setCurrentIndex(2)
+    assert window.mount_inserts.isEnabled()
+    window.mount_inserts.setChecked(True)
+    assert window.project.mounts[0].inserts
+    window.add_mount("nano")                                       # M1.6: no inserts
+    window.rebuild()
+    assert not window.mount_inserts.isEnabled()
+    window.lid_check.setChecked(True)
+    window.lid_style.setCurrentIndex(window.lid_style.findData("screwed"))
+    window.lid_style.activated.emit(window.lid_style.currentIndex())
+    window.tabs.setCurrentIndex(3)
+    assert window.lid_inserts.isVisibleTo(window)
+    window.lid_inserts.setChecked(True)
+    assert window.project.lid.inserts

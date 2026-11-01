@@ -14,7 +14,7 @@ from PySide6.QtCore import QDateTime, QLocale, QRect, QSettings, QSize, Qt, QTim
 from PySide6.QtGui import (QAction, QColor, QIcon, QKeySequence, QPainter, QShortcut,
                            QTextDocument, QUndoCommand, QUndoStack)
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog,
-                               QDoubleSpinBox, QFileDialog, QFormLayout, QFrame,
+                               QDoubleSpinBox, QFileDialog, QFormLayout, QFrame, QGridLayout,
                                QHBoxLayout, QInputDialog, QLabel, QLineEdit, QListWidget,
                                QListView, QListWidgetItem, QMainWindow, QMessageBox,
                                QMenu, QPushButton, QRadioButton, QScrollArea, QSizePolicy, QSpinBox,
@@ -31,7 +31,8 @@ from ..model import (ALONG_U, ALONG_V, BOTTOM, BOX, CYLINDER, FIT_LABELS, FIT_PR
                      clamp_hole, compartment_depths, compartment_widths, default_project,
                      has_set_sizes, hole_limits, resized_sizes,
                      CUT_THROUGH, ENGRAVED, LABEL_DEPTH_RANGE, LABEL_SIZE_RANGE, RAISED, Label,
-                     clamp_label)
+                     clamp_label, NOTCH, WALL_SURFACES, fix_notches, notch_v, INSERTS,
+                     FIXING_SCREWS, keyhole_max_spacing, keyhole_spacing)
 from . import theme
 from .autosave import Autosave, Backup
 from .viewer import Viewer
@@ -52,6 +53,13 @@ COMMON_RECTS = [
     ("USB-A plug (16 × 8.5 mm)", (16.0, 8.5, 1.0)),
     ("Slide switch (9 × 4 mm)", (9.0, 4.0, 0.5)),
     ("Rocker switch (19 × 13 mm)", (19.0, 13.0, 0.5)),
+]
+# Cable notches: (width, depth, unused) for a cable of a given thickness.
+COMMON_NOTCHES = [
+    ("Common sizes…", None),
+    ("Thin cable, up to 4 mm (5 mm wide)", (5.0, 7.0, 0.0)),
+    ("Power cable, up to 6 mm (7 mm wide)", (7.0, 9.0, 0.0)),
+    ("Thick cable, up to 8 mm (9 mm wide)", (9.0, 11.0, 0.0)),
 ]
 NEW_HOLE_ROUNDING = 1.0     # corner radius of new rectangles and vents
 RECT_SIZE_RANGE = (1.0, 150.0)
@@ -82,7 +90,7 @@ LID_STYLE_HINTS = {
 }
 CHECK_TAB_TITLE = "6 Check && Export"
 LABEL_WIDTH = 120            # the field labels of every card line up
-HOLE_ICONS = {ROUND: "round-hole", RECT: "rect-hole", VENT: "vent"}
+HOLE_ICONS = {ROUND: "round-hole", RECT: "rect-hole", VENT: "vent", NOTCH: "notch"}
 # The steps in the rail: (icon, label, tooltip). Same order as the TAB_* pages.
 STEPS = (("shape", "Shape", "Shape and size"), ("holes", "Holes", "Holes, openings and vents"),
          ("posts", "Posts", "Screw posts for circuit boards"), ("lid", "Lid", "The lid"),
@@ -792,8 +800,66 @@ class MainWindow(QMainWindow):
         self.divider_info = hint("")
         lay.addWidget(self.divider_info)
         layout.addWidget(box)
+        layout.addWidget(self._build_fixing_card())
         layout.addStretch()
         return widget
+
+    def _build_fixing_card(self) -> QFrame:
+        """Screw tabs to screw it down, and keyholes to hang it on a wall."""
+        box, lay = card("Fix it in place")
+        self.fixing_card = box
+        self.fix_tabs = QCheckBox("Screw tabs at the bottom, to screw it down")
+        self.fix_tabs.setToolTip("Two flat tabs with a screw hole, at the left and the right")
+        self.fix_keyholes = QCheckBox("Keyhole slots in the back, to hang it on a wall")
+        self.fix_keyholes.setToolTip("Hang it on screws in the wall: the heads go through the "
+                                     "big holes and the box slides down onto them")
+        self.fix_tabs.toggled.connect(
+            lambda on: self.edit("Screw tabs", lambda p: setattr(p.fixing, "tabs", on)))
+        self.fix_keyholes.toggled.connect(
+            lambda on: self.edit("Keyhole slots", lambda p: setattr(p.fixing, "keyholes", on)))
+        lay.addWidget(self.fix_tabs)
+        lay.addWidget(self.fix_keyholes)
+        self.fixing_box = QWidget()
+        form = self.fixing_form = form_layout(self.fixing_box)
+        self.fix_screw = QComboBox()
+        for size in FIXING_SCREWS:
+            self.fix_screw.addItem(f"{size:g} mm (wood or M{size:g})" if size != 3.5
+                                   else "3.5 mm (wood)", size)
+        self.fix_screw.activated.connect(
+            lambda _: self.edit("Change screw size",
+                                lambda p: setattr(p.fixing, "screw", self.fix_screw.currentData())))
+        form.addRow("Screws", self.fix_screw)
+        self.fix_spacing = spin(0.0, 500.0, step=1.0)
+        self.fix_spacing.setSpecialValueText("As far apart as fits")
+        self.fix_spacing.setToolTip("Middle to middle, straight across. To hang it on two screws "
+                                    "that are already in the wall, type how far apart they are.")
+        self.fix_spacing.valueChanged.connect(
+            lambda v: self.edit("Change keyhole spacing",
+                                lambda p: setattr(p.fixing, "keyhole_spacing", v), merge="keyholes"))
+        form.addRow("Keyholes apart", self.fix_spacing)
+        lay.addWidget(self.fixing_box)
+        self.fixing_info = hint("")
+        lay.addWidget(self.fixing_info)
+        return box
+
+    def _refresh_fixing(self):
+        p, f = self.project, self.project.fixing
+        set_quietly(self.fix_tabs, f.tabs)
+        set_quietly(self.fix_keyholes, f.keyholes)
+        set_quietly(self.fix_screw, f.screw)
+        set_quietly(self.fix_spacing, f.keyhole_spacing)
+        self.fixing_box.setVisible(f.tabs or f.keyholes)
+        self.fixing_form.setRowVisible(self.fix_spacing, f.keyholes)
+        lines = []
+        if f.keyholes:
+            spacing = keyhole_spacing(p)
+            if spacing > 0:
+                lines.append(f"Hang it on two screws {spacing:.1f} mm apart (at most "
+                             f"{keyhole_max_spacing(p):.1f} mm), heads about 4 mm out.")
+            else:
+                lines.append("One keyhole in the middle: the back is too narrow for two.")
+        self.fixing_info.setText(" ".join(lines))
+        self.fixing_info.setVisible(bool(lines))
 
     def _build_holes_tab(self):
         widget, layout = page("Holes", "Openings for cables, screws, USB plugs, switches and air.")
@@ -806,9 +872,17 @@ class MainWindow(QMainWindow):
                                            "A rectangular opening: USB plugs, switches, displays")
         self.add_vent_button = icon_button("Air vent", "vent", "tile",
                                            "A row of slots that lets air in and out")
-        for button in (self.add_hole_button, self.add_rect_button, self.add_vent_button):
+        self.add_notch_button = icon_button("Cable notch", "notch", "tile",
+                                            "A notch in the top of a wall, so a cable can come out "
+                                            "with the lid on")
+        grid = QGridLayout()
+        grid.setSpacing(8)
+        for i, button in enumerate((self.add_hole_button, self.add_rect_button,
+                                    self.add_vent_button, self.add_notch_button)):
             button.setMinimumHeight(44)
-            row.addWidget(button)
+            grid.addWidget(button, i // 2, i % 2)
+        row.addLayout(grid)
+        self.add_notch_button.clicked.connect(lambda: self.add_hole(kind=NOTCH))
         # Lambdas, because clicked() would otherwise pass its 'checked' flag as `surface`.
         self.add_hole_button.clicked.connect(lambda: self.add_hole())
         self.add_rect_button.clicked.connect(lambda: self.add_hole(kind=RECT))
@@ -867,6 +941,10 @@ class MainWindow(QMainWindow):
         form.addRow("", self.common_sizes)
         self.measure_hint = hint("Plugs and switches vary: measure yours and add a little room.")
         form.addRow("", self.measure_hint)
+        self.notch_hint = hint("A notch down from the top of the wall, round at the bottom, so a "
+                               "cable can come out with the lid on. Make it a little wider than "
+                               "the cable.")
+        form.addRow("", self.notch_hint)
         self.hole_rounding = spin(0.0, 50.0, step=0.5)
         self.hole_rounding.setToolTip("Round corners are stronger: cracks start in sharp corners.\n"
                                       "0 = sharp corners.")
@@ -937,6 +1015,13 @@ class MainWindow(QMainWindow):
         self.screw_combo.activated.connect(
             lambda _: self._edit_mount("Change screw size", "screw", self.screw_combo.currentData()))
         form.addRow("Screw", self.screw_combo)
+        self.mount_inserts = QCheckBox("Heat-set inserts")
+        self.mount_inserts.setToolTip("Holes for brass threads that you melt in with a soldering "
+                                      "iron, instead of letting the screw cut its own thread.\n"
+                                      "The posts get a little wider. For M2 to M4 screws.")
+        self.mount_inserts.toggled.connect(
+            lambda on: self._edit_mount("Heat-set inserts", "inserts", on))
+        form.addRow("", self.mount_inserts)
         self.post_length = spin(1.0, 100.0, step=0.5)
         self.post_length.setToolTip("How high the posts stand above the floor")
         self.post_length.valueChanged.connect(lambda v: self._edit_mount("Change post length", "length", v))
@@ -1017,6 +1102,12 @@ class MainWindow(QMainWindow):
             lambda _: self.edit("Change lid screws",
                                 lambda p: setattr(p.lid, "screw", self.lid_screw.currentData())))
         form.addRow("Screws", self.lid_screw)
+        self.lid_inserts = QCheckBox("Heat-set inserts in the corners")
+        self.lid_inserts.setToolTip("Holes for brass threads that you melt in with a soldering "
+                                    "iron, so the lid can be screwed on and off many times.")
+        self.lid_inserts.toggled.connect(
+            lambda on: self.edit("Heat-set inserts", lambda p: setattr(p.lid, "inserts", on)))
+        form.addRow("", self.lid_inserts)
         self.fit_combo = QComboBox()
         for key in ("tight", "normal", "loose", "custom"):
             gap = f" ({FIT_PRESETS[key]:.2f} mm gap)" if key in FIT_PRESETS else ""
@@ -1359,6 +1450,7 @@ class MainWindow(QMainWindow):
         before = project_io.to_dict(self.project)
         trial = copy.deepcopy(self.project)
         change(trial)
+        fix_notches(trial)                      # cable notches stay at the top of the wall
         after = project_io.to_dict(trial)
         if after == before:
             return
@@ -1421,6 +1513,7 @@ class MainWindow(QMainWindow):
         self.shape_form.setRowVisible(self.inside_corner_size, p.inside_corners != SHARP)
         self._refresh_size_summary()
         self._refresh_dividers()
+        self._refresh_fixing()
 
         set_quietly(self.lid_check, p.lid.enabled)
         self.lid_box.setEnabled(p.lid.enabled)
@@ -1431,6 +1524,8 @@ class MainWindow(QMainWindow):
         set_quietly(self.lid_style, style)
         set_quietly(self.lid_screw, p.lid.screw)
         self.lid_form.setRowVisible(self.lid_screw, style == SCREWED)
+        set_quietly(self.lid_inserts, p.lid.inserts)
+        self.lid_form.setRowVisible(self.lid_inserts, style == SCREWED)
         self.lid_form.setRowVisible(self.fit_combo, style != SCREWED)
         self.lid_form.setRowVisible(self.gap_spin, style != SCREWED)
         self.gap_spin.setToolTip("Extra room between the threads" if style == THREADED else
@@ -1702,6 +1797,8 @@ class MainWindow(QMainWindow):
         self.surface_combo.blockSignals(True)
         self.surface_combo.clear()
         for s in p.surfaces():
+            if hole is not None and hole.kind == NOTCH and s not in WALL_SURFACES:
+                continue                                  # a notch only goes in a wall
             self.surface_combo.addItem(SURFACE_LABELS[s], s)
         if hole is not None and hole.surface not in p.surfaces():
             self.surface_combo.addItem(SURFACE_LABELS.get(hole.surface, hole.surface) + " (gone)",
@@ -1741,13 +1838,18 @@ class MainWindow(QMainWindow):
         self.hole_form.setRowVisible(self.measure_hint, hole.kind == RECT)
         set_quietly(self.hole_rounding, hole.rounding)
         set_quietly(self.hole_strengthen, hole.strengthen)
-        self.hole_form.setRowVisible(self.hole_rounding, is_rect)
-        self.hole_form.setRowVisible(self.hole_strengthen, not flat)
+        is_notch = hole.kind == NOTCH
+        self.hole_form.setRowVisible(self.hole_rounding, is_rect and not is_notch)
+        self.hole_form.setRowVisible(self.hole_strengthen, not flat and not is_notch)
+        self.hole_form.setRowVisible(self.hole_v, not is_notch)      # always at the top
+        self.hole_form.setRowVisible(self.notch_hint, is_notch)
+        self.hole_form.labelForField(self.hole_height).setText("Depth" if is_notch else "Height")
         self.hole_height.setToolTip("Front to back" if hole.surface in (BOTTOM, LID) else "Up and down")
         if self._common_kind != hole.kind:
             self._common_kind = hole.kind
             self.common_sizes.clear()
-            for text, value in (COMMON_RECTS if hole.kind == RECT else COMMON_HOLES):
+            for text, value in {RECT: COMMON_RECTS, NOTCH: COMMON_NOTCHES}.get(hole.kind,
+                                                                              COMMON_HOLES):
                 self.common_sizes.addItem(text, value)
         if hole.surface == SIDE:
             self.u_label.setText("Around")
@@ -1802,6 +1904,8 @@ class MainWindow(QMainWindow):
                 self.mount_form.setRowVisible(widget, False)
             return
         set_quietly(self.screw_combo, m.screw)
+        set_quietly(self.mount_inserts, m.inserts)
+        self.mount_inserts.setEnabled(m.screw in INSERTS or m.inserts)
         is_custom = mounts.is_custom(m)
         labels, tips = CUSTOM_HOLE_LABELS.get(m.board, CUSTOM_HOLE_LABELS["custom"])
         for widget, text, tip in zip((self.spacing_x, self.spacing_y), labels, tips):
@@ -1985,7 +2089,15 @@ class MainWindow(QMainWindow):
         if surface is None:
             current = p.hole(self.selected_id) if self.selected_id else None
             surface = current.surface if current else (FRONT if p.shape == BOX else SIDE)
-        if kind in (RECT, VENT):
+        if kind == NOTCH and surface not in WALL_SURFACES:
+            surface = FRONT if p.shape == BOX else SIDE        # notches go in a wall
+        if kind == NOTCH:
+            size = picking.fitting_notch(p, surface)
+            hole = Hole(surface=surface, kind=NOTCH, u=u, v=v)
+            if size:
+                hole.width, hole.height = size
+                hole.v = notch_v(p, hole)
+        elif kind in (RECT, VENT):
             size = (picking.fitting_rect if kind == RECT else picking.fitting_vent)(p, surface)
             hole = Hole(surface=surface, kind=kind, u=u, v=v, rounding=NEW_HOLE_ROUNDING,
                         strengthen=kind == RECT)
@@ -1995,7 +2107,8 @@ class MainWindow(QMainWindow):
             size = picking.fitting_diameter(p, surface)
             hole = Hole(surface=surface, diameter=size or 0.0, u=u, v=v)
         if size is None:
-            self.statusBar().showMessage(f"There's no room for a hole on the "
+            what = "a cable notch" if kind == NOTCH else "a hole"
+            self.statusBar().showMessage(f"There's no room for {what} on the "
                                          f"{SURFACE_LABELS[surface].lower()}.", 5000)
             return
         # Start somewhere valid: keep the clicked spot if it is safe, else the nearest safe one.
@@ -2070,6 +2183,14 @@ class MainWindow(QMainWindow):
             if h.kind == ROUND and h.rounding == 0:
                 h.rounding = NEW_HOLE_ROUNDING
             h.kind = kind
+            if kind == NOTCH:
+                if h.surface not in WALL_SURFACES:
+                    h.surface, h.u = (FRONT if p.shape == BOX else SIDE), 0.0
+                h.strengthen = False
+                size = picking.fitting_notch(p, h.surface)
+                if size:
+                    h.width, h.height = size
+                h.v = notch_v(p, h)
             if kind == VENT:
                 size = picking.fitting_vent(p, h.surface)
                 if size:

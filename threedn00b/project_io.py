@@ -13,15 +13,16 @@ import numpy as np
 from . import geometry, mounts
 from .model import (HOLE_KIND_LABELS, INSIDE_CORNER_LABELS, LID_STYLE_LABELS, OPENING_LABELS,
                     LABEL_STYLE_LABELS, SCREWS, SHAPES, SIDE_LABELS, SURFACE_LABELS,
-                    Dividers, Hole, Label, Lid, Mount, Project)
+                    Dividers, Fixing, Hole, Label, Lid, Mount, Project, fix_notches)
 
 FORMAT_NAME = "3dn00b-project"
-FORMAT_VERSION = 16  # 2: rectangular holes; 3: air vents; 4: dividers; 5: screw posts;
+FORMAT_VERSION = 17  # 2: rectangular holes; 3: air vents; 4: dividers; 5: screw posts;
                      # 6: screwed-down lids; 7: snap-on and sliding lids; 8: threaded lids;
                      # 9: custom boards with 1 or 2 holes; 10: rounded/angled inside corners;
                      # 11: rounded hole corners and strengthened hole edges;
                      # 12: compartments of different sizes; 13: easy-opening lid tab and notch;
-                     # 14: lid sides; 15: text labels; 16: text cut through
+                     # 14: lid sides; 15: text labels; 16: text cut through;
+                     # 17: cable notches, screw tabs, keyholes, heat-set inserts
 PROJECT_SUFFIX = ".3dn00b"
 
 
@@ -46,6 +47,7 @@ def from_dict(data: dict) -> Project:
     try:
         lid = _build(Lid, raw.get("lid") or {})
         dividers = _build(Dividers, raw.get("dividers") or {})
+        fixing = _build(Fixing, raw.get("fixing") or {})
         mount_list = [_build(Mount, m) for m in raw.get("mounts") or []]
         holes = [_build(Hole, h) for h in raw.get("holes") or []]
         labels = [_build(Label, t) for t in raw.get("labels") or []]
@@ -63,12 +65,13 @@ def from_dict(data: dict) -> Project:
             or any(t.style not in LABEL_STYLE_LABELS or t.surface not in SURFACE_LABELS
                    for t in labels)):
         raise ProjectFileError("The project uses a shape this version doesn't know.")
-    project.lid, project.holes, project.dividers = lid, holes, dividers
+    project.lid, project.holes, project.dividers, project.fixing = lid, holes, dividers, fixing
     project.mounts, project.labels = mount_list, labels
+    fix_notches(project)
     return project
 
 
-_NESTED = ("lid", "holes", "dividers", "mounts", "labels")
+_NESTED = ("lid", "holes", "dividers", "mounts", "labels", "fixing")
 
 
 def _build(cls, raw: dict):

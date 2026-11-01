@@ -12,15 +12,17 @@ from dataclasses import dataclass
 import numpy as np
 from manifold3d import CrossSection, Error, JoinType, Manifold, OpType
 
-from .model import (CUT_THROUGH, RAISED, TAB_REACH, TAB_WIDTH, ANGLED, BACK, BOTTOM, BOX, CAP_TOP_GAP, CYLINDER, FRAME_RIM, FRONT, LEFT,
-                    LID, RIGHT, ROUND, SCREWED, SCREWS, SIDE, SLIDING, SNAP_BUMP, SNAP_RIDGE, THREADED, THREAD_DEPTH,
+from .model import (CUT_THROUGH, INSERTS, RAISED, TAB_REACH, TAB_WIDTH, ANGLED, BACK, BOTTOM, BOX, CAP_TOP_GAP, CYLINDER, FRAME_RIM, FRONT, LEFT,
+                    LID, NOTCH, RECT, RIGHT, ROUND, SCREWED, SCREWS, SIDE, SLIDING, WALL_SURFACES, SNAP_BUMP, SNAP_RIDGE, THREADED, THREAD_DEPTH,
                     THREAD_PITCH, VENT, Hole, Project, corner_rounding, divider_fillet,
                     divider_positions, divider_top, floor_inset, frame_thickness,
                     has_dividers, has_finger_notch, has_frame, has_lid_tab, has_lip, has_screw_lid, has_sliding_lid,
                     has_snap_lid, has_threaded_lid, inside_fillet, lid_ceiling, lid_pilot_depth,
                     notch_size, SIDE_ANGLES, side_span,
-                    lid_screw_positions, lid_top_z, lip_outer_offset, lip_wall, slide_engage,
-                    slide_groove, surface_frame, thread_sizes, vent_openings)
+                    lid_column_radius, lid_screw_positions, lid_top_z, lip_outer_offset, lip_wall, notch_v,
+                    slide_engage,
+                    slide_groove, surface_frame, thread_sizes, vent_openings,
+                    keyhole_openings, tab_positions, tab_sizes)
 
 
 @dataclass
@@ -202,7 +204,11 @@ def build_body(project: Project) -> Manifold:
     if notch is not None:
         body = body - notch
     body = _apply_labels(project, body, lid=False)
-    cutters = [_hole_cutter(project, hole) for hole in project.holes if hole.surface != LID]
+    tabs = build_tabs(project)
+    if tabs is not None:
+        body = body + tabs
+    openings = [h for h in project.holes if h.surface != LID] + keyhole_openings(project)
+    cutters = [_hole_cutter(project, hole) for hole in openings]
     cutters = [c for c in cutters if c is not None]
     if cutters:
         body = body - Manifold.batch_boolean(cutters, OpType.Add)
@@ -245,18 +251,50 @@ def build_posts(project: Project) -> Manifold | None:
     posts = []
     for m in project.mounts:
         screw = mounts.SCREWS[m.screw]
-        r, pilot = screw.post / 2, screw.pilot / 2
+        r, pilot = mounts.post_radius(m), screw.pilot / 2
         if m.length <= 0:
             continue
+        insert = INSERTS.get(m.screw) if m.inserts else None
         for x, y in mounts.post_positions(m):
             post = Manifold.cylinder(m.length + 0.01, r, -1.0, _circle_segments(r, 0.5, 24, 96))
             hole = Manifold.cylinder(m.length + 1.0, pilot, -1.0, _circle_segments(pilot, 0.4, 16, 48))
-            posts.append((post - hole.translate([0.0, 0.0, 0.01]))
-                         .translate([x, y, project.bottom - 0.01]))
+            hole = hole.translate([0.0, 0.0, 0.01])
+            if insert is not None:
+                # The insert's hole from the top (never deeper than the post), the screw's
+                # own hole below it for the screw's tip.
+                depth = min(insert.depth, m.length - 0.6)
+                ir = insert.hole / 2
+                hole = hole + Manifold.cylinder(depth + 1.0, ir, -1.0, _circle_segments(ir, 0.4, 16, 64)) \
+                    .translate([0.0, 0.0, m.length + 0.01 - depth])
+            posts.append((post - hole).translate([x, y, project.bottom - 0.01]))
     if not posts:
         return None
     # Never poke out through the walls.
     return Manifold.batch_boolean(posts, OpType.Add) ^ _prism(footprint(project), project.outer_height, 0.0)
+
+
+def build_tabs(project: Project) -> Manifold | None:
+    """Flat screw tabs at the bottom, sticking out at the left and the right."""
+    positions = tab_positions(project)
+    if not positions:
+        return None
+    t = tab_sizes(project)
+    r = t.width / 2
+    seg = _circle_segments(r, 0.5, 16, 96)
+    # Made pointing along +x from x = 0 (the outside of the wall), then turned and moved.
+    # It starts 1 mm inside the wall so the two join.
+    shape = (CrossSection.square([t.reach - r + 1.0, t.width]).translate([-1.0, -r])
+             + CrossSection.circle(r, seg).translate([t.reach - r, 0.0]))
+    hole = CrossSection.circle(t.hole / 2, _circle_segments(t.hole / 2, 0.4, 16, 48)) \
+        .translate([t.hole_from_wall, 0.0])
+    tab = Manifold.extrude(shape - hole, t.thickness)
+    pieces = [tab.rotate([0.0, 0.0, angle]).translate([x, y, 0.0]) for x, y, angle in positions]
+    tabs = Manifold.batch_boolean(pieces, OpType.Add)
+    # Never into the box itself: keep the inside clear.
+    inside = footprint(project, project.wall)
+    if inside is not None:
+        tabs = tabs - _prism(inside, t.thickness + 2.0, -1.0)
+    return tabs
 
 
 def build_frames(project: Project) -> Manifold | None:
@@ -329,9 +367,10 @@ def build_lid_columns(project: Project) -> Manifold | None:
     if not positions:
         return None
     screw = SCREWS[project.lid.screw]
-    r, pilot = screw.post / 2, screw.pilot / 2
+    r, pilot = lid_column_radius(project), screw.pilot / 2
     h, z0 = project.outer_height, project.bottom - 0.01
     depth = lid_pilot_depth(project)
+    insert = INSERTS.get(project.lid.screw) if project.lid.inserts else None
     columns = []
     for x, y in positions:
         # The column, filled out towards the corner so it is joined to the walls along
@@ -345,8 +384,13 @@ def build_lid_columns(project: Project) -> Manifold | None:
                 [-reach if x < 0 else 0.0, -reach if y < 0 else 0.0])
         section = (CrossSection.circle(r, _circle_segments(r, 0.5, 24, 96)) + fill).translate([x, y])
         column = Manifold.extrude(section, h - z0).translate([0.0, 0.0, z0])
-        hole = Manifold.cylinder(depth + 1.0, pilot, -1.0, _circle_segments(pilot, 0.4, 16, 48))
-        columns.append(column - hole.translate([x, y, h - depth]))
+        hole = Manifold.cylinder(depth + 1.0, pilot, -1.0, _circle_segments(pilot, 0.4, 16, 48)) \
+            .translate([0.0, 0.0, h - depth])
+        if insert is not None:
+            ir, deep = insert.hole / 2, min(insert.depth, depth)
+            hole = hole + Manifold.cylinder(deep + 1.0, ir, -1.0, _circle_segments(ir, 0.4, 16, 64)) \
+                .translate([0.0, 0.0, h - deep])
+        columns.append(column - hole.translate([x, y, 0.0]))
     # Clip to the outside of the box so nothing pokes out through the walls.
     return Manifold.batch_boolean(columns, OpType.Add) ^ _prism(footprint(project), h, 0.0)
 
@@ -507,6 +551,10 @@ def build_lid(project: Project) -> Manifold | None:
         if outer is not None and inner is not None:
             ridge = _prism(outer, SNAP_RIDGE, z0) - _prism(inner, SNAP_RIDGE + 2, z0 - 1)
             lid = lid + (ridge ^ _snap_selector(project, z0 - 1, z0 + SNAP_RIDGE + 1, 0.0))
+    notches = [c for c in (_notch_lid_cutter(project, h) for h in project.holes
+                           if h.kind == NOTCH and h.surface in project.surfaces()) if c is not None]
+    if notches:
+        lid = lid - Manifold.batch_boolean(notches, OpType.Add)
     return _cut_lid_holes(project, lid)
 
 
@@ -629,7 +677,44 @@ def build_parts(project: Project) -> Parts:
     return Parts(body=build_body(project), lid=build_lid(project))
 
 
+def _notch_shape(project: Project, hole: Hole) -> Hole:
+    """A cable notch as a rounded slot reaching 4 mm above the top of the wall, so it is
+    open at the top and round at the bottom."""
+    return Hole(surface=hole.surface, kind=RECT, width=hole.width, height=hole.height + 4.0,
+                u=hole.u, v=notch_v(project, hole) + 2.0, rounding=hole.width / 2)
+
+
+def _notch_lid_cutter(project: Project, hole: Hole) -> Manifold | None:
+    """What a cable notch takes out of a push-on or snap-on lid's lip, so the cable
+    fits under the lid: the same notch, reaching in past the lip."""
+    shape = _notch_shape(project, hole)
+    outline = _opening_outline(shape)
+    if outline is None:
+        return None
+    reach = lip_outer_offset(project) + lip_wall(project) + 1.0     # past the lip
+    length = project.wall + reach + 2.0
+    cutter = Manifold.extrude(outline, length).translate([0.0, 0.0, -length / 2])
+    if hole.surface == SIDE:
+        big_r = project.outer_diameter / 2
+        mid = big_r + 1.0 - length / 2
+        a = math.radians(hole.u)
+        cutter = (cutter.rotate([90.0, 0.0, 0.0]).rotate([0.0, 0.0, hole.u])
+                  .translate([math.sin(a) * mid, -math.cos(a) * mid,
+                              project.outer_height / 2 + shape.v]))
+    else:
+        cutter = _on_wall_inside(project, shape, cutter.translate([0.0, 0.0, (reach - project.wall) / 2]))
+    # Only below the lid's flat top: the top itself stays whole.
+    big = project.outer_width + project.outer_depth + 20.0
+    below = Manifold.cube([big, big, project.outer_height + 0.02 + 1.0]).translate(
+        [-big / 2, -big / 2, -1.0])
+    return cutter ^ below
+
+
 def _hole_cutter(project: Project, hole: Hole) -> Manifold | None:
+    if hole.kind == NOTCH:
+        if hole.surface not in WALL_SURFACES:
+            return None
+        hole = _notch_shape(project, hole)
     if hole.kind == VENT:
         slots = [c for c in (_hole_cutter(project, s) for s in vent_openings(project, hole))
                  if c is not None]
@@ -702,7 +787,6 @@ def overlap_volume(a: Manifold, b: Manifold) -> float:
 FIT_MARGIN = 2.0       # extra wall above and below what is being tested
 FIT_RIM = 3.0          # how far the lid's test ring reaches in past what must fit
 FIT_JOIN = 3.0         # test bands closer than this become one piece
-WALL_SURFACES = (FRONT, BACK, LEFT, RIGHT, SIDE)
 
 
 def fit_test_lid_band(project: Project) -> tuple[float, float] | None:
