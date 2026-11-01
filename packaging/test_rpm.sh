@@ -35,7 +35,7 @@ for image in $IMAGES; do
             cat /tmp/smoke.log; echo "smoke test failed"; exit 1
         fi
         grep "smoke test" /tmp/smoke.log
-        dnf remove -y -q 3dn00b >/dev/null
+        dnf remove -y -q 3dn00b >/dev/null 2>&1
         test ! -e /usr/lib/3dn00b/app || { echo "files left behind"; exit 1; }
         echo "removed cleanly"
     '
