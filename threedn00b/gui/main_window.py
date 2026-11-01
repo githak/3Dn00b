@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox,
                                QSplitter, QStyle, QStyledItemDelegate, QTabWidget, QToolBar,
                                QToolButton, QVBoxLayout, QWidget)
 
-from .. import (APP_NAME, __version__, geometry, mounts, picking, printers, project_io, userdata,
+from .. import (APP_NAME, __version__, geometry, mounts, picking, printers, project_io, slicers, userdata,
                 templates, validation)
 from ..model import (ALONG_U, ALONG_V, BOTTOM, BOX, CYLINDER, FIT_LABELS, FIT_PRESETS,
                      FRONT, HOLE_DIAMETER_RANGE, HOLE_KIND_LABELS, INSIDE, LID, MIN_EDGE,
@@ -1300,6 +1300,12 @@ class MainWindow(QMainWindow):
         set_quietly(self.format_combo, self.settings.value("export_format", "stl"))
         self.format_combo.currentIndexChanged.connect(self._on_format_changed)
         form.addRow("File type", self.format_combo)
+        self.slicer_combo = QComboBox()
+        self.slicer_combo.setToolTip("After exporting, the files can open straight in this slicer.")
+        self.slicer_combo.activated.connect(
+            lambda _: self.settings.setValue("slicer", self.slicer_combo.currentData()))
+        form.addRow("Open in", self.slicer_combo)
+        self.export_form = form
         lay.addLayout(form)
         self.export_button = icon_button("", "export", "primary")
         self.export_button.setMinimumHeight(42)
@@ -1308,6 +1314,9 @@ class MainWindow(QMainWindow):
         self._on_format_changed()
         self.export_hint = hint("")
         lay.addWidget(self.export_hint)
+        self.slicer_hint = hint("")
+        lay.addWidget(self.slicer_hint)
+        self.refresh_slicers()
         layout.addWidget(box)
         layout.addWidget(self._build_fit_test_card())
         layout.addWidget(self._build_printer_card())
@@ -2866,9 +2875,8 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, APP_NAME, f"Couldn't export:\n{exc}")
             return
         self.settings.setValue("last_dir", folder)
-        QMessageBox.information(self, APP_NAME, "Saved for printing:\n\n"
-                                + "\n".join(f.name for f in files)
-                                + f"\n\nin {folder}\n\nOpen these in your slicer to print them.")
+        self._show_saved("Saved for printing:\n\n" + "\n".join(f.name for f in files)
+                         + f"\n\nin {folder}", files, "Open these in your slicer to print them.")
 
     def export_fit_test(self):
         """Export the pieces of the fit test, in the chosen file type."""
@@ -2893,10 +2901,56 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, APP_NAME, f"Couldn't export:\n{exc}")
             return
         self.settings.setValue("last_dir", folder)
-        QMessageBox.information(self, APP_NAME, "Saved the fit test:\n\n"
-                                + "\n".join(f.name for f in files)
-                                + f"\n\nin {folder}\n\nPrint these first. When the lid fits and the "
-                                "plugs go in, print the whole thing.")
+        self._show_saved("Saved the fit test:\n\n" + "\n".join(f.name for f in files)
+                         + f"\n\nin {folder}\n\nPrint these first. When the lid fits and the "
+                         "plugs go in, print the whole thing.", files)
+
+    # ------------------------------------------------------------------
+    # Slicers
+    # ------------------------------------------------------------------
+    def refresh_slicers(self):
+        """Look for slicers again and offer them under Export."""
+        self.slicers = slicers.find_slicers()
+        self.slicer_combo.clear()
+        for slicer in self.slicers:
+            self.slicer_combo.addItem(slicer.name, slicer.key)
+        saved = self.settings.value("slicer", "")
+        index = self.slicer_combo.findData(saved)
+        self.slicer_combo.setCurrentIndex(index if index >= 0 else 0)
+        self.export_form.setRowVisible(self.slicer_combo, bool(self.slicers))
+        self.slicer_hint.setText(
+            "" if self.slicers else
+            "No slicer found on this computer (PrusaSlicer, OrcaSlicer, Bambu Studio, Cura…). "
+            "Open the exported files from your slicer's File menu.")
+        self.slicer_hint.setVisible(not self.slicers)
+
+    def current_slicer(self) -> "slicers.Slicer | None":
+        key = self.slicer_combo.currentData()
+        return next((s for s in self.slicers if s.key == key), None)
+
+    def _show_saved(self, text: str, files: list, no_slicer: str = "") -> None:
+        """Say what was saved, with a button that opens the files in the chosen slicer."""
+        slicer = self.current_slicer()
+        if slicer is None:
+            QMessageBox.information(self, APP_NAME, text + (f"\n\n{no_slicer}" if no_slicer else ""))
+            return
+        box = QMessageBox(QMessageBox.Icon.Information, APP_NAME, text, parent=self)
+        open_button = box.addButton(f"Open in {slicer.name}", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton(QMessageBox.StandardButton.Close)
+        box.setDefaultButton(open_button)
+        box.exec()
+        if box.clickedButton() is open_button:
+            self.open_in_slicer(files)
+
+    def open_in_slicer(self, files: list) -> None:
+        slicer = self.current_slicer()
+        if slicer is None:
+            return
+        if slicers.launch(slicer, files):
+            self.statusBar().showMessage(f"Opening in {slicer.name}…", 5000)
+        else:
+            QMessageBox.warning(self, APP_NAME, f"Couldn't start {slicer.name}.\n\nOpen the files "
+                                "from its File menu instead.")
 
     def about_text(self) -> str:
         return (f"<h3>{APP_NAME} {__version__}</h3>"

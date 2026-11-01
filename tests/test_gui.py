@@ -26,6 +26,8 @@ def window(tmp_path, monkeypatch):
     from PySide6.QtCore import QSettings
     from threedn00b.gui.main_window import APP_NAME, MainWindow
     QSettings(APP_NAME, APP_NAME).clear()     # Qt keeps the settings file of the first test
+    from threedn00b import slicers
+    monkeypatch.setattr(slicers, "find_slicers", lambda: [])   # whatever this computer has
     w = MainWindow()
     w.show()
     app.processEvents()
@@ -847,6 +849,44 @@ def test_plastic_estimate_and_wall_fix(window):
     assert window.project.wall == 2.0
     window.undo_stack.undo()
     assert window.project.wall == 1.8
+
+
+def test_export_opens_in_the_slicer(window, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog, QMessageBox
+    from threedn00b import slicers
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: str(tmp_path)))
+    found = [slicers.Slicer("prusaslicer", "PrusaSlicer", ("prusa-slicer", "%F")),
+             slicers.Slicer("orcaslicer", "OrcaSlicer", ("orca-slicer", "%F"))]
+    monkeypatch.setattr(slicers, "find_slicers", lambda: found)
+    opened = []
+    monkeypatch.setattr(slicers, "launch", lambda slicer, files: opened.append((slicer.key, files)) or True)
+    buttons = []
+
+    def press_open(box):                         # the "Open in …" button is the default one
+        buttons.append(box.defaultButton().text())
+        box.defaultButton().click()
+    monkeypatch.setattr(QMessageBox, "exec", press_open)
+    window.refresh_slicers()
+    assert window.export_form.isRowVisible(window.slicer_combo) and window.slicer_hint.isHidden()
+    window.slicer_combo.setCurrentIndex(1)
+    window.slicer_combo.activated.emit(1)
+    assert window.settings.value("slicer") == "orcaslicer"
+    window.refresh_slicers()                     # remembered
+    assert window.slicer_combo.currentData() == "orcaslicer"
+    window.export_button.click()
+    assert buttons == ["Open in OrcaSlicer"]
+    assert opened == [("orcaslicer", [tmp_path / "my-box-body.stl"])]
+    # Without a slicer: just say where the files are.
+    monkeypatch.setattr(slicers, "find_slicers", lambda: [])
+    window.refresh_slicers()
+    assert not window.export_form.isRowVisible(window.slicer_combo)
+    assert "No slicer found" in window.slicer_hint.text()
+    shown = []
+    monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda *a, **k: shown.append(a[2])))
+    monkeypatch.setattr(QMessageBox, "question",               # replace the files from before
+                        staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes))
+    window.export_button.click()
+    assert "Open these in your slicer" in shown[0] and len(opened) == 1
 
 
 def test_fit_test_card(window, tmp_path, monkeypatch):

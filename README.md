@@ -8,7 +8,7 @@ Software for people getting into 3D printing and want to start with something ea
 sizes in millimetres, add holes and a lid, and export files your slicer can
 print. No sketches, no constraints, no feature trees.
 
-## What it can do (version 0.31.1)
+## What it can do (version 0.32.0)
 
 - **Templates** to start from, already sized to fit. Pick one under **What are you making?**
   in the Shape step, then change anything you like; Undo takes you back.
@@ -97,6 +97,11 @@ print. No sketches, no constraints, no feature trees.
   The box gets a column in each corner for the screws to cut their own thread
   into (or for heat-set inserts), and the app tells you how many screws you need
   and how long they can be.
+- Or a **lid held by magnets**: a flat lid that closes with a click, held by small
+  round magnets (5 × 2 to 12 × 3 mm) glued into pockets in a column in each corner
+  of the box and in the lid. The app makes the lid thick enough to cover them and
+  tells you how to put them in so every pair pulls together. It can have a tab or
+  a finger notch to lift it.
 - **Text**: names and labels on any wall, the bottom or the lid, **raised** (it
   stands out), **engraved** (cut in) or **cut through** (a hole in the shape of
   the letters, like a stencil: letters such as O and A keep their middle with thin
@@ -135,6 +140,10 @@ print. No sketches, no constraints, no feature trees.
   one file, laid out side by side, with the size in millimetres). Parts are flat
   side down and ready for your slicer (the lid comes out upside down, which is how
   it prints best). Every exported part is guaranteed to be watertight.
+- **Open in my slicer**: when PrusaSlicer, OrcaSlicer, Bambu Studio, UltiMaker Cura,
+  SuperSlicer or Creality Print is installed (as a package, Flatpak, Snap or
+  AppImage), the message after exporting has a button that opens the files in it.
+  Choose which one under Export; the choice is remembered.
 
 ## Install
 
@@ -145,7 +154,7 @@ libraries 3Dn00b needs; nothing is downloaded while installing.
 ### Debian, Ubuntu, Linux Mint (PC): the .deb
 
 ```bash
-sudo apt install ./3dn00b_0.31.1-1_amd64.deb
+sudo apt install ./3dn00b_0.32.0-1_amd64.deb
 ```
 
 3Dn00b appears in your applications menu, `.3dn00b` project files open in it, and
@@ -155,7 +164,7 @@ it needs. To remove it: `sudo apt remove 3dn00b`.
 ### Raspberry Pi 4 and 5, other ARM computers: the arm64 .deb
 
 ```bash
-sudo apt install ./3dn00b_0.31.1-1_arm64.deb
+sudo apt install ./3dn00b_0.32.0-1_arm64.deb
 ```
 
 For Raspberry Pi OS Trixie (the current one, since late 2025), Debian 13 and Ubuntu
@@ -166,7 +175,7 @@ enough; the 3D view uses the Pi's graphics chip.
 ### Fedora (and other RPM systems): the .rpm
 
 ```bash
-sudo dnf install ./3dn00b-0.31.1-1.x86_64.rpm
+sudo dnf install ./3dn00b-0.32.0-1.x86_64.rpm
 ```
 
 For Fedora 40 or newer and openSUSE Tumbleweed (use `sudo zypper install` there).
@@ -178,8 +187,8 @@ One file that runs without installing, on most Linux systems from the last few y
 16, Arch, Manjaro…). It brings its own Python too.
 
 ```bash
-chmod +x 3Dn00b-0.31.1-x86_64.AppImage
-./3Dn00b-0.31.1-x86_64.AppImage
+chmod +x 3Dn00b-0.32.0-x86_64.AppImage
+./3Dn00b-0.32.0-x86_64.AppImage
 ```
 
 Or right-click it in your file manager, allow it to run as a program, and
@@ -265,11 +274,12 @@ bottom (or jump with Ctrl+1 to Ctrl+6):
    are measured from the middle of the surface, so `0` means centred.
 3. **Posts** (optional): add screw posts for a circuit board.
 4. **Lid**: switch on **Add a lid** and choose its type: push-on, snap-on,
-   sliding, screwed down or threaded.
+   sliding, screwed down, held by magnets or threaded.
 5. **Text** (optional): click **Add text**, type it and choose where it goes,
    raised or engraved, and how big.
 6. **Export**: read the checks, fix anything marked in red, pick the file type
-   and click **Export for printing**. To try the fit first, export a **fit test**.
+   and click **Export for printing**, then **Open in** your slicer. To try the fit
+   first, export a **fit test**.
    Set **your printer and filament** once to check the size and see how much
    plastic it takes.
 
@@ -320,6 +330,7 @@ The code is split so each part can be tested on its own:
 | `threedn00b/picking.py` | Works out which wall or hole is under the mouse, and where a dragged hole goes |
 | `threedn00b/measure.py` | The measurements shown in the 3D view |
 | `threedn00b/userdata.py` | Your own templates (and where backups go) |
+| `threedn00b/slicers.py` | Finds the slicers installed on the computer and opens files in them |
 | `threedn00b/gui/` | The Qt (PySide6) window and the 3D preview (pyqtgraph) |
 
 See [docs/PRODUCT.md](docs/PRODUCT.md) for the product scope, the decisions
