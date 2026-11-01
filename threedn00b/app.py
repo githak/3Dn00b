@@ -19,6 +19,16 @@ Install it, then start 3Dn00b again:
 """
 
 
+def has_library(soname: str, name: str) -> bool:
+    """Can this library be loaded? Loading it finds copies that come with the app (an
+    AppImage's, through LD_LIBRARY_PATH) too, which find_library doesn't."""
+    try:
+        ctypes.CDLL(soname)
+        return True
+    except OSError:
+        return ctypes.util.find_library(name) is not None
+
+
 def check_display_libraries() -> str | None:
     """Return a friendly error message if Qt will fail to open a window.
 
@@ -31,7 +41,7 @@ def check_display_libraries() -> str | None:
     platform = os.environ.get("QT_QPA_PLATFORM", "")
     if platform and not platform.startswith("xcb"):
         return None
-    if ctypes.util.find_library("xcb-cursor"):
+    if has_library("libxcb-cursor.so.0", "xcb-cursor"):
         return None
     if not platform and os.environ.get("WAYLAND_DISPLAY"):
         os.environ["QT_QPA_PLATFORM"] = "wayland"

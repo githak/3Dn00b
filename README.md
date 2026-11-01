@@ -8,7 +8,7 @@ Software for people getting into 3D printing and want to start with something ea
 sizes in millimetres, add holes and a lid, and export files your slicer can
 print. No sketches, no constraints, no feature trees.
 
-## What it can do (version 0.30)
+## What it can do (version 0.30.1)
 
 - **Templates** to start from, already sized to fit. Pick one under **What are you making?**
   in the Shape step, then change anything you like; Undo takes you back.
@@ -132,34 +132,79 @@ print. No sketches, no constraints, no feature trees.
   side down and ready for your slicer (the lid comes out upside down, which is how
   it prints best). Every exported part is guaranteed to be watertight.
 
-## Install on Debian, Ubuntu and Linux Mint
+## Install
 
-Download `3dn00b_<version>-1_amd64.deb` from the
-[Releases page](https://github.com/githak/3Dn00b/releases) and install it:
+Download the file for your system from the
+[Releases page](https://github.com/githak/3Dn00b/releases). Each one carries the
+libraries 3Dn00b needs; nothing is downloaded while installing.
+
+### Debian, Ubuntu, Linux Mint (PC): the .deb
 
 ```bash
-sudo apt install ./3dn00b_0.30.0-1_amd64.deb
+sudo apt install ./3dn00b_0.30.1-1_amd64.deb
 ```
 
-That's all: 3Dn00b appears in your applications menu, `.3dn00b` project files open
-in it, and the examples are in `/usr/share/3dn00b/examples/`. Nothing is
-downloaded while installing; apt adds the few system libraries it needs.
-To remove it: `sudo apt remove 3dn00b`.
+3Dn00b appears in your applications menu, `.3dn00b` project files open in it, and
+the examples are in `/usr/share/3dn00b/examples/`. apt adds the few system libraries
+it needs. To remove it: `sudo apt remove 3dn00b`.
 
-| Works on | Tested automatically |
+### Raspberry Pi 4 and 5, other ARM computers: the arm64 .deb
+
+```bash
+sudo apt install ./3dn00b_0.30.1-1_arm64.deb
+```
+
+For Raspberry Pi OS Trixie (the current one, since late 2025), Debian 13 and Ubuntu
+24.04 or newer. The older Raspberry Pi OS Bookworm is too old for the Qt libraries
+3Dn00b uses on ARM; use a newer Raspberry Pi OS. A Raspberry Pi 4 or 5 is fast
+enough; the 3D view uses the Pi's graphics chip.
+
+### Fedora (and other RPM systems): the .rpm
+
+```bash
+sudo dnf install ./3dn00b-0.30.1-1.x86_64.rpm
+```
+
+For Fedora 40 or newer and openSUSE Tumbleweed (use `sudo zypper install` there).
+
+### Any other Linux: the AppImage
+
+One file that runs without installing, on most Linux systems from the last few years
+(glibc 2.34 or newer: Ubuntu 22.04, Debian 12, Fedora 35, Linux Mint 21, openSUSE Leap
+16, Arch, Manjaro…). It brings its own Python too.
+
+```bash
+chmod +x 3Dn00b-0.30.1-x86_64.AppImage
+./3Dn00b-0.30.1-x86_64.AppImage
+```
+
+Or right-click it in your file manager, allow it to run as a program, and
+double-click it. (Some systems need `libfuse2` for AppImages; without it, run it with
+`--appimage-extract-and-run`.)
+
+| Package | Works on | Tested automatically |
+| --- | --- | --- |
+| .deb (amd64) | Debian 12 and 13, Ubuntu 22.04 to 26.10, Mint 21 and 22, Pop!_OS, Zorin | Ubuntu 22.04, 24.04 and 26.04 |
+| .deb (arm64) | Raspberry Pi OS Trixie, Debian 13, Ubuntu 24.04 and newer | Ubuntu 24.04 and 26.04 (ARM, emulated) |
+| .rpm | Fedora 40 and newer, openSUSE Tumbleweed | builds and installs in Fedora 43's rpm; not yet run (see below) |
+| AppImage | most Linux systems with glibc 2.34 or newer | Ubuntu 22.04, 24.04 and 26.04 with only desktop basics |
+
+The .deb and .rpm contain their own copies of the libraries the distributions don't
+provide, for each Python version they use (3.10 to 3.14); a future Linux release with
+a newer Python needs a new package version. The AppImage has its own Python.
+
+To build them yourself (they download the libraries from PyPI):
+
+| Command | Writes |
 | --- | --- |
-| Debian 12 (bookworm) and 13 (trixie) | yes |
-| Ubuntu 22.04 to 26.10 (Python 3.10 to 3.14) | 22.04, 24.04 and 26.04 |
-| Linux Mint 21 and 22, Pop!_OS, Zorin and other Ubuntu-based systems | through Ubuntu |
+| `python3 packaging/build_deb.py` | `dist/3dn00b_<version>-1_amd64.deb` |
+| `python3 packaging/build_deb.py --arch arm64` | `dist/3dn00b_<version>-1_arm64.deb` |
+| `python3 packaging/build_rpm.py` | `dist/3dn00b-<version>-1.x86_64.rpm` (needs `rpmbuild`) |
+| `python3 packaging/build_appimage.py` | `dist/3Dn00b-<version>-x86_64.AppImage` (needs Docker) |
 
-The package is for 64-bit PCs (amd64) and contains its own copies of the
-libraries Debian doesn't provide, for Python 3.10 to 3.14. A future Linux release
-with a newer Python needs a new package version.
-
-To build the package yourself: `python3 packaging/build_deb.py` (it downloads the
-libraries from PyPI and writes `dist/3dn00b_<version>-1_amd64.deb`).
-`packaging/test_deb.sh dist/*.deb` installs it in clean Debian and Ubuntu
-containers (Docker) and runs a smoke test.
+`packaging/test_deb.sh`, `test_rpm.sh` and `test_appimage.sh` install or run them in
+clean containers (Docker) and run a smoke test; testing the arm64 package on a PC
+needs `qemu-user-static`.
 
 ## Run from source (any Linux)
 

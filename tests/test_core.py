@@ -299,6 +299,10 @@ def test_missing_xcb_cursor_gives_friendly_message(monkeypatch):
     from threedn00b import app
     monkeypatch.setattr(app.sys, "platform", "linux")
     monkeypatch.setattr(app.ctypes.util, "find_library", lambda name: None)
+
+    def cannot_load(name, *args, **kwargs):
+        raise OSError(name)
+    monkeypatch.setattr(app.ctypes, "CDLL", cannot_load)
     env = {}
     monkeypatch.setattr(app.os, "environ", env)   # keep the real environment untouched
     assert "sudo apt install libxcb-cursor0" in app.check_display_libraries()
@@ -310,6 +314,19 @@ def test_missing_xcb_cursor_gives_friendly_message(monkeypatch):
     # With the library present nothing changes.
     monkeypatch.setattr(app.ctypes.util, "find_library", lambda name: "libxcb-cursor.so.0")
     assert app.check_display_libraries() is None
+
+
+def test_library_that_comes_with_the_app_counts(monkeypatch):
+    """An AppImage brings libxcb-cursor along (found through LD_LIBRARY_PATH, which
+    find_library ignores): loading it works, so there's no complaint."""
+    from threedn00b import app
+    monkeypatch.setattr(app.sys, "platform", "linux")
+    monkeypatch.setattr(app.os, "environ", {})
+    monkeypatch.setattr(app.ctypes.util, "find_library", lambda name: None)
+    loaded = []
+    monkeypatch.setattr(app.ctypes, "CDLL", lambda name, *a, **k: loaded.append(name))
+    assert app.check_display_libraries() is None
+    assert loaded == ["libxcb-cursor.so.0"]
 
 
 # ---- dragging ------------------------------------------------------------
