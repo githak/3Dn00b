@@ -8,7 +8,7 @@ Software for people getting into 3D printing and want to start with something ea
 sizes in millimetres, add holes and a lid, and export files your slicer can
 print. No sketches, no constraints, no feature trees.
 
-## What it can do (version 0.30.1)
+## What it can do (version 0.31.1)
 
 - **Templates** to start from, already sized to fit. Pick one under **What are you making?**
   in the Shape step, then change anything you like; Undo takes you back.
@@ -22,9 +22,11 @@ print. No sketches, no constraints, no feature trees.
     Pi 5 with an M.2 HAT+ or AI HAT+, Pi 3 A+, Pi Zero / Zero 2 W, two Pi Zero 2 W
     stacked crosswise, Pi Pico / Pico 2 (also W), Arduino Uno R3 / R4, Mega 2560
     and Nano (Nano, Nano Every, Nano ESP32), ESP32-S3-DevKitC-1, 30-pin ESP32
-    DevKit, a half-size
+    DevKit, Orange Pi Zero 3, a half-size
     breadboard box, and a project box for your own board. Every board's holes and
-    sockets are checked against the maker's official drawings.
+    sockets are checked against the maker's official drawings, except the 30-pin
+    ESP32 and the Orange Pi Zero 3, whose makers publish none: measure your board
+    and set its hole spacing in the Posts step.
   - *Storage*: storage box, parts tray, screw sorter, 4 × 4 parts box, 3 × 3
     craft box, AA battery box, weekly pill box, business card box, dice box,
     guitar pick box, small screw-top tin, money box.
@@ -143,7 +145,7 @@ libraries 3Dn00b needs; nothing is downloaded while installing.
 ### Debian, Ubuntu, Linux Mint (PC): the .deb
 
 ```bash
-sudo apt install ./3dn00b_0.30.1-1_amd64.deb
+sudo apt install ./3dn00b_0.31.1-1_amd64.deb
 ```
 
 3Dn00b appears in your applications menu, `.3dn00b` project files open in it, and
@@ -153,7 +155,7 @@ it needs. To remove it: `sudo apt remove 3dn00b`.
 ### Raspberry Pi 4 and 5, other ARM computers: the arm64 .deb
 
 ```bash
-sudo apt install ./3dn00b_0.30.1-1_arm64.deb
+sudo apt install ./3dn00b_0.31.1-1_arm64.deb
 ```
 
 For Raspberry Pi OS Trixie (the current one, since late 2025), Debian 13 and Ubuntu
@@ -164,7 +166,7 @@ enough; the 3D view uses the Pi's graphics chip.
 ### Fedora (and other RPM systems): the .rpm
 
 ```bash
-sudo dnf install ./3dn00b-0.30.1-1.x86_64.rpm
+sudo dnf install ./3dn00b-0.31.1-1.x86_64.rpm
 ```
 
 For Fedora 40 or newer and openSUSE Tumbleweed (use `sudo zypper install` there).
@@ -176,8 +178,8 @@ One file that runs without installing, on most Linux systems from the last few y
 16, Arch, Manjaro…). It brings its own Python too.
 
 ```bash
-chmod +x 3Dn00b-0.30.1-x86_64.AppImage
-./3Dn00b-0.30.1-x86_64.AppImage
+chmod +x 3Dn00b-0.31.1-x86_64.AppImage
+./3Dn00b-0.31.1-x86_64.AppImage
 ```
 
 Or right-click it in your file manager, allow it to run as a program, and

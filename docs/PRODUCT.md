@@ -366,8 +366,19 @@ Defaults I chose myself, which are easy to change:
   an opening for each USB plug (11 mm wide, 2.4 mm of wall between them), a hole for
   wires at the pins' level, and 7.5 mm of room past the antenna. A test checks that
   nothing printed is where the board, its sockets, antenna or headers are, and that the
-  guides hold each corner. Not done: the Orange Pi Zero 3: www.orangepi.org closes the
-  connection from this environment, so its drawing couldn't be read.
+  guides hold each corner.
+- Orange Pi Zero 3 (0.31.1): www.orangepi.org doesn't answer this environment, so the
+  user manual (v1.1 and v1.3) came from Orange Pi's manual server (paperless.orangepi.net,
+  its public guest login, as orangepi.net, Orange Pi's distributor, says). It has no
+  dimension drawing: only the size, 55 x 50 mm (marked on a photo; its spec table says
+  85 x 56, which is wrong), four 3.0 mm holes, and photos showing the holes near the
+  corners and all the sockets (micro HDMI, USB-C, USB-A, Ethernet) along one 55 mm edge.
+  The owner chose a "measure your board" template, like the 30-pin ESP32 case: the custom
+  4-hole board at 55 x 50 mm with M2.5 screws and a hole spacing of 50 x 45 mm estimated
+  from the photo (about 2.5 mm from the edges), which the description says to measure;
+  one opening along the socket edge (49 mm wide, from 2 mm below the board's top to 15 mm
+  above it, for the Ethernet socket) that fits the sockets wherever they are on it; 4 mm
+  of room at that edge, 14 mm for the parts on top, and an air vent in the lid.
 - Push-on lid that follows the box size, with fit presets.
 - Plain-language checks covering impossible sizes, thin walls, holes off the
   edge, holes behind the lid lip, overlapping or too-close holes, a lid that
@@ -385,8 +396,8 @@ STL import and editing.
 
 ## Postponed (candidates for later, in rough priority order)
 
-Picked by the project owner and still open: the Orange Pi Zero 3 board (once Orange Pi's
-drawing can be reached).
+Picked by the project owner and still open: an Orange Pi Zero 3 board with its real hole
+and socket positions, if Orange Pi publishes a drawing.
 
 Each addition must pass the brief's test: does it make a common beginner task
 much easier, without CAD vocabulary, and without making the interface busier?

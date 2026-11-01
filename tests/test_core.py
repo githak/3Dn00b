@@ -2640,3 +2640,21 @@ def test_fit_test_keeps_the_guides_on_the_floor():
     b = geometry.build_body(p).bounding_box()
     guide = geometry.guide_solid(p, p.mounts[0]).translate([-(b[0] + b[3]) / 2, -(b[1] + b[4]) / 2, 0])
     assert geometry.overlap_volume(guide, test) == pytest.approx(guide.volume(), rel=0.01)
+
+
+def test_orange_pi_zero3_case_is_set_up_for_measuring():
+    """Orange Pi's manual gives the size and the 3 mm holes only: the case uses the custom
+    board, sized to it, and one opening along the socket edge."""
+    p = templates.from_template("orange-pi-zero3")
+    m = p.mounts[0]
+    assert mounts.is_custom(m) and mounts.holes_on_board(m)
+    assert (m.board_width, m.board_depth, m.screw) == (55.0, 50.0, "M2.5")
+    assert "measure" in templates.TEMPLATES["orange-pi-zero3"].description
+    # The opening spans the front (socket) edge, from below the board's top to above an
+    # Ethernet socket's 13.5 mm, and the edge is close enough to the wall for the plugs.
+    top = mounts.board_bottom(p, m) + mounts.BOARD_THICKNESS
+    opening = next(h for h in p.holes if h.surface == FRONT)
+    z0 = p.outer_height / 2 + opening.v - opening.height / 2
+    assert z0 <= top - 1.5 and z0 + opening.height >= top + 14.0
+    assert opening.width >= 55.0 - 6.0 - 1e-9 and abs(opening.u - m.u) < 1e-9
+    assert 1.0 <= _edge_gap(p, m, "front") <= 5.0
