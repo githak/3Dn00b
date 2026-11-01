@@ -18,6 +18,7 @@ from threedn00b.gui.main_window import TAB_CHECK, TAB_TEXT  # noqa: E402
 @pytest.fixture
 def window(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))      # templates, backups
     from threedn00b.gui.viewer import prepare_opengl
     if QApplication.instance() is None:
         prepare_opengl()
@@ -892,3 +893,133 @@ def test_drag_text(window):
     assert window.project.labels[0].u < label.u - 5
     window.undo_stack.undo()
     assert window.project.labels[0].u == label.u
+
+
+
+def test_recent_designs(window, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog
+    first, second = tmp_path / "first.3dn00b", tmp_path / "second.3dn00b"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (str(first), "")))
+    window.width_spin.setValue(90)
+    assert window.save_project()
+    project_io.save_project(project_io.load_project(first), second)
+    window.open_path(second)
+    assert window.recent_files() == [second, first]           # newest first
+    window._fill_recent_menu()
+    texts = [a.text() for a in window.recent_menu.actions() if a.text()]
+    assert texts[0].startswith("second") and texts[1].startswith("first")
+    assert texts[-1] == "Clear the list"
+    first.unlink()
+    window._fill_recent_menu()                                # gone files are forgotten
+    assert window.recent_files() == [second]
+    window.width_spin.setValue(95)
+    window.save_project()                                     # saving makes it the newest
+    assert window.recent_files() == [second]
+    window.recent_menu.actions()[-1].trigger()                # Clear the list
+    window._fill_recent_menu()
+    assert window.recent_files() == []
+    assert not window.recent_menu.actions()[0].isEnabled()    # "No recent designs"
+
+
+def test_save_and_start_from_my_template(window, monkeypatch):
+    from PySide6.QtWidgets import QInputDialog, QMessageBox
+    from threedn00b import userdata
+    from threedn00b.gui.main_window import MANAGE_TEMPLATES, MyTemplatesDialog
+    monkeypatch.setattr(QInputDialog, "getText", staticmethod(lambda *a, **k: ("Screw box", True)))
+    window.width_spin.setValue(111)
+    assert window.save_as_my_template()
+    combo = window.template_combo
+    keys = [combo.itemData(i) for i in range(combo.count())]
+    assert combo.itemText(1) == "My templates" and keys[2] == "my:Screw box"
+    assert MANAGE_TEMPLATES in keys
+    window.width_spin.setValue(70)
+    combo.activated.emit(2)                                   # start from it
+    assert window.project.width == 111 and window.project.template == "my:Screw box"
+    assert "your “Screw box” template" in window.template_note.text()
+    window._on_shape_clicked(CYLINDER)                        # starts over, like a template
+    assert window.project.shape == CYLINDER and window.project.holes == []
+    window.undo_stack.undo()
+    assert window.project.width == 111
+    # Saving again under the same name asks first.
+    monkeypatch.setattr(QMessageBox, "question",
+                        staticmethod(lambda *a, **k: QMessageBox.StandardButton.No))
+    assert not window.save_as_my_template()
+    monkeypatch.setattr(QMessageBox, "question",
+                        staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes))
+    dialog = MyTemplatesDialog(window)
+    assert dialog.list.count() == 1 and dialog.remove_button.isEnabled()
+    dialog.remove()
+    assert dialog.list.count() == 0 and userdata.my_templates() == []
+    dialog.accept()
+    window._fill_template_combo()
+    assert "My templates" not in [combo.itemText(i) for i in range(combo.count())]
+
+
+def test_backup_and_recovery(window, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    from threedn00b.gui.autosave import leftover_backups
+    from threedn00b.userdata import autosave_dir
+    window.width_spin.setValue(101)
+    assert window._autosave_timer.isActive()                  # a backup is on its way
+    window._write_autosave()
+    assert window.autosave.path.exists()
+    assert leftover_backups() == []                           # this window's own: not offered
+    # A backup left by a 3Dn00b that crashed (no lock), from a saved file.
+    lost = default_design(width=133.0)
+    file = tmp_path / "lost.3dn00b"
+    project_io.save_project(lost, file)
+    import json
+    left = autosave_dir() / "crashed.autosave"
+    left.write_text(json.dumps({"saved_at": 1.0, "file": str(file),
+                                "project": project_io.to_dict(lost)}))
+    window.undo_stack.setClean()
+    assert not window.autosave.path.exists()                  # saved: no backup needed
+    monkeypatch.setattr(QMessageBox, "exec", lambda box: box.defaultButton().click())
+    assert window.offer_recovery(leftover_backups())          # Recover
+    assert window.project.width == 133.0 and window.path == file
+    assert not window.undo_stack.isClean()                    # still has to be saved
+    assert not left.exists() and window.autosave.path.exists()
+    # Throwing a backup away deletes it.
+    left.write_text(json.dumps({"saved_at": 1.0, "file": None,
+                                "project": project_io.to_dict(lost)}))
+    monkeypatch.setattr(QMessageBox, "exec", lambda box: 0)
+    assert not window.offer_recovery(leftover_backups())
+    assert not left.exists()
+    window.close_autosave()                                   # closing normally
+    assert not window.autosave.path.exists()
+
+
+def default_design(**kw):
+    from threedn00b.model import default_project
+    p = default_project(BOX)
+    for k, v in kw.items():
+        setattr(p, k, v)
+    return p
+
+
+def test_sizes_in_the_3d_view(window):
+    from threedn00b.gui.viewer import MeasureLabel
+    viewer = window.viewer
+    window.rebuild()
+
+    def labels():
+        return [i.text for i in viewer._measure_items if isinstance(i, MeasureLabel)]
+    assert labels() == ["80 mm", "60 mm", "40 mm"]            # on by default
+    window.add_hole()
+    window.rebuild()
+    assert labels() == ["80 mm", "60 mm", "40 mm", "40 mm", "20 mm"]   # and the hole's place
+    window.sizes_action.trigger()                             # Ctrl+M
+    assert labels() == [] and window.settings.value("view/sizes", type=bool) is False
+    window.sizes_action.trigger()
+    assert len(labels()) == 5
+    image = viewer.grabFramebuffer()
+    assert not image.isNull()
+
+
+def test_delete_key_removes_text_on_the_text_step(window):
+    window.add_hole()
+    window.add_label()
+    assert window.tabs.currentIndex() == TAB_TEXT
+    window._delete_selected()
+    assert window.project.labels == [] and len(window.project.holes) == 1

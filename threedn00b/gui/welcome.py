@@ -58,6 +58,12 @@ def _select_nothing(window) -> None:
     window.select_label(None)
 
 
+def _measure_first_hole(window) -> None:
+    """A hole selected, so its measurements show too."""
+    _select_nothing(window)
+    _select_first_hole(window)
+
+
 def _demo_text(window) -> None:
     """Engrave a name on the example's lid (once), and select it."""
     from ..model import LID
@@ -84,9 +90,11 @@ def _model_area(window) -> QRect:
 
 
 def _plain_view(window) -> None:
-    """How every tour picture starts: solid, with the lid, from the usual angle."""
+    """How every tour picture starts: solid, with the lid and the sizes, from the usual
+    angle. (Sizes is set on the view only: the action would save the choice.)"""
     window.see_through_action.setChecked(False)
     window.show_lid_action.setChecked(True)
+    window.viewer.show_sizes = True
     window.viewer.reset_view(window.project)
 
 
@@ -120,8 +128,10 @@ PAGES = (
              4, lambda w: [w.add_text_card, w.label_card], _demo_text),
     TourPage("See it in 3D",
              "The preview updates as you type. Drag to turn it, scroll to zoom and middle-drag "
-             "to move it. The buttons in the corner show it from the front, the top or the side.",
-             0, lambda w: [w.viewer], _select_nothing, show_step=False),
+             "to move it. The buttons in the corner show it from the front, the top or the side, "
+             "and Sizes shows the measurements, including how far the selected hole is from "
+             "the edges (Ctrl+M).",
+             0, lambda w: [w.viewer], _measure_first_hole, show_step=False),
     TourPage("See inside",
              "Turn on See-through to look through the walls and the lid: the outlines of holes "
              "and boards show on top, so you can check where everything sits against the walls. "
@@ -165,6 +175,27 @@ def visible_rect(widget: QWidget, window: QWidget) -> QRect:
     return rect
 
 
+def grab_window(window) -> QPixmap:
+    """A screenshot of the main window.
+
+    QWidget.grab() leaves out what the 3D view paints as text (the measurements), so
+    the 3D view is grabbed on its own and its floating buttons are drawn on top again.
+    """
+    shot = window.grab()
+    viewer = getattr(window, "viewer", None)
+    if viewer is None or not viewer.isVisible():
+        return shot
+    frame = viewer.grabFramebuffer()
+    top_left = viewer.mapTo(window, QPoint(0, 0))
+    painter = QPainter(shot)
+    painter.drawImage(QRect(top_left, viewer.size()), frame)
+    for child in viewer.findChildren(QWidget, options=Qt.FindChildOption.FindDirectChildrenOnly):
+        if child.isVisible():
+            child.render(painter, top_left + child.pos())
+    painter.end()
+    return shot
+
+
 def highlight(shot: QPixmap, rects: list[QRect]) -> QPixmap:
     """Darken the screenshot except the given areas, and outline those in the accent colour."""
     out = QPixmap(shot)
@@ -190,7 +221,7 @@ def highlight(shot: QPixmap, rects: list[QRect]) -> QPixmap:
 def capture_tour(pages=PAGES) -> list[QPixmap]:
     """Screenshots of an example design (a Raspberry Pi case), one per tour page."""
     from .main_window import MainWindow, release_window
-    demo = MainWindow(templates.from_template("pi"))
+    demo = MainWindow(templates.from_template("pi"), autosave=False)
     demo.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)   # never seen
     demo.resize(SHOT_SIZE)
     demo.show()
@@ -203,7 +234,7 @@ def capture_tour(pages=PAGES) -> list[QPixmap]:
             page.prepare(demo)
             for _ in range(3):
                 app.processEvents()
-            shots.append(highlight(demo.grab(), page.rects(demo)))
+            shots.append(highlight(grab_window(demo), page.rects(demo)))
     finally:
         demo.undo_stack.setClean()
         demo.hide()

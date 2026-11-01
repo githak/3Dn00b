@@ -246,6 +246,29 @@ Defaults I chose myself, which are easy to change:
     surface (with a fix), letters under 5 mm, engraving that leaves under 0.8 mm,
     text running into holes or other text. Text is its own step, between Lid and
     Export, and the welcome tour has a page about it. Project format 15.
+- Files, own templates and measurements (0.28), the second group the project owner
+  picked:
+  - Recent designs: the arrow next to Open lists the last 8 opened or saved
+    designs (files that are gone are dropped), with "Clear the list".
+  - Automatic backup and recovery: 3 seconds after a change, unsaved designs are
+    written to ~/.local/share/3dn00b/autosave; saving or closing normally removes
+    the copy. Each window holds a lock on its backup (Qt's QLockFile; a lock whose
+    program has died counts as gone), so only backups of a 3Dn00b that crashed are
+    offered at the next start, newest first: Recover (it stays unsaved, with its
+    file name if the file still exists) or Throw away. Older ones wait for the next
+    start; damaged ones are never deleted unasked.
+  - Own templates: "Save as my template…" under the template list saves the design
+    as a project file in ~/.local/share/3dn00b/templates; they appear first in the
+    list under "My templates", with "Rename or remove my templates…". A design
+    started from one remembers it, so Box and Round container start over as with
+    the built-in templates.
+  - Measurements: a Sizes toggle in the 3D view (Ctrl+M, on by default, remembered):
+    the outside width, depth (or diameter) and height, with the height with the lid
+    on, as lines with labels on small dark tags; and for the selected hole, how far
+    its middle is from the left edge and the bottom of its wall (from the left and
+    the front on the bottom and the lid), in the selection colour. The numbers are
+    drawn with QPainter, which QWidget.grab() leaves out, so the welcome tour's
+    screenshots put the 3D view's own picture in.
 - Push-on lid that follows the box size, with fit presets.
 - Plain-language checks covering impossible sizes, thin walls, holes off the
   edge, holes behind the lid lip, overlapping or too-close holes, a lid that
@@ -265,13 +288,11 @@ STL import and editing.
 
 Picked by the project owner, in this order (each group once the one before works):
 
-1. Recent files, autosave and recovery; saving a design as your own template;
-   measurements in the 3D view.
-2. More boards, checked against the makers' drawings (Pico 2 W, Arduino Nano,
+1. More boards, checked against the makers' drawings (Pico 2 W, Arduino Nano,
    Orange Pi Zero, ESP32-S3 DevKit, Raspberry Pi 500 …).
-3. A cable notch in the rim; mounting options (keyhole slots, screw tabs);
+2. A cable notch in the rim; mounting options (keyhole slots, screw tabs);
    holes for heat-set inserts.
-4. Packages for other systems (arm64 such as the Raspberry Pi, Flatpak or
+3. Packages for other systems (arm64 such as the Raspberry Pi, Flatpak or
    AppImage, Fedora).
 
 Each addition must pass the brief's test: does it make a common beginner task

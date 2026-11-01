@@ -8,12 +8,15 @@ Software for people getting into 3D printing and want to start with something ea
 sizes in millimetres, add holes and a lid, and export files your slicer can
 print. No sketches, no constraints, no feature trees.
 
-## What it can do (version 0.27)
+## What it can do (version 0.28)
 
 - **Templates** to start from, already sized to fit. Pick one under **What are you making?**
   in the Shape step, then change anything you like; Undo takes you back.
   Choosing **Box** or **Round container** after a template starts over with a
   plain one (for your own designs, those buttons just change the shape).
+  **Save as my template…** keeps your own design in the list (under *My
+  templates*), to start new designs from it; rename or remove them from the
+  same list.
   - *Cases for boards* (posts, openings for the sockets, a lid): Raspberry Pi
     3 / 4 / 5 (also with a 30 mm fan or a GPIO ribbon-cable slot in the lid),
     Pi 3 A+, Pi Zero / Zero 2 W, two Pi Zero 2 W stacked crosswise, Pi Pico,
@@ -98,8 +101,15 @@ print. No sketches, no constraints, no feature trees.
   have to fit: the top of the box with the edge of the lid, and the walls with
   the openings (with the screw posts on an open floor, so you can screw the
   board on and try the plugs). It takes a fraction of the plastic and time.
+- **Measurements in the 3D view** (the **Sizes** button, Ctrl+M): the outside
+  size, the height with the lid on, and how far the selected hole is from the
+  edges of its wall (or from the left and the front, on the bottom and the lid).
 - **Undo / redo** for every change.
-- **Save and reopen** editable projects (`.3dn00b` files, plain JSON).
+- **Save and reopen** editable projects (`.3dn00b` files, plain JSON). The arrow
+  next to **Open** lists your recent designs.
+- **Automatic backup**: while a design has unsaved changes, a copy is kept every
+  few seconds. If 3Dn00b or the computer stops unexpectedly, the next start
+  offers to bring your design back.
 - **Export for printing** as **STL** (one file per part) or **3MF** (all parts in
   one file, laid out side by side, with the size in millimetres). Parts are flat
   side down and ready for your slicer (the lid comes out upside down, which is how
@@ -111,7 +121,7 @@ Download `3dn00b_<version>-1_amd64.deb` from the
 [Releases page](https://github.com/githak/3Dn00b/releases) and install it:
 
 ```bash
-sudo apt install ./3dn00b_0.27.0-1_amd64.deb
+sudo apt install ./3dn00b_0.28.0-1_amd64.deb
 ```
 
 That's all: 3Dn00b appears in your applications menu, `.3dn00b` project files open
@@ -202,10 +212,13 @@ In the 3D view: drag a hole, a board or text to move it, drag anywhere else to t
 scroll or right-drag to zoom, middle-drag to pan, and double-click a wall to
 add a hole. Each drag is one step for Undo. The buttons in its top right corner
 show it from the front, the top or the side (Ctrl+0 for the normal view), hide or
-show the lid (Ctrl+L), and turn on **See-through** (Ctrl+T): the walls and the lid
+show the lid (Ctrl+L), turn on **See-through** (Ctrl+T): the walls and the lid
 become transparent and the outlines of holes and boards show on top, so you can
-check where everything sits against the walls. With **Top** you look straight
-down into the box.
+check where everything sits against the walls, and show or hide the **Sizes**
+(Ctrl+M). With **Top** you look straight down into the box.
+
+Your own templates and the automatic backups are kept in `~/.local/share/3dn00b/`.
+Templates there are ordinary project files, so you can copy them to another computer.
 
 ## Examples
 
@@ -236,6 +249,8 @@ The code is split so each part can be tested on its own:
 | `threedn00b/printers.py` | Printer build sizes, nozzles, filament densities |
 | `threedn00b/text.py` | Reads letter shapes from the bundled font (DejaVu Sans Bold) for text |
 | `threedn00b/picking.py` | Works out which wall or hole is under the mouse, and where a dragged hole goes |
+| `threedn00b/measure.py` | The measurements shown in the 3D view |
+| `threedn00b/userdata.py` | Your own templates (and where backups go) |
 | `threedn00b/gui/` | The Qt (PySide6) window and the 3D preview (pyqtgraph) |
 
 See [docs/PRODUCT.md](docs/PRODUCT.md) for the product scope, the decisions

@@ -9,11 +9,11 @@ import pyqtgraph.opengl as gl
 from OpenGL import GL
 from pyqtgraph.opengl import shaders
 from pyqtgraph import Vector
-from PySide6.QtCore import QCoreApplication, QPoint, Qt, Signal
-from PySide6.QtGui import QSurfaceFormat, QVector4D
+from PySide6.QtCore import QCoreApplication, QPoint, QRectF, Qt, Signal
+from PySide6.QtGui import QColor, QFont, QPainter, QSurfaceFormat, QVector3D, QVector4D
 from PySide6.QtWidgets import QLabel
 
-from .. import geometry, mounts
+from .. import geometry, measure, mounts
 from . import theme
 from ..model import (BOTTOM, LID, RECT, SIDE, VENT, Hole, Project, hole_center_3d,
                      corner_rounding, surface_frame, vent_openings)
@@ -68,6 +68,10 @@ BLEND = (GL.GL_SRC_ALPHA, GL.GL_ONE_MINUS_SRC_ALPHA)
 GHOST_OPTIONS = {GL.GL_DEPTH_TEST: True, GL.GL_BLEND: True, GL.GL_CULL_FACE: False,
                  "glBlendFunc": BLEND, "glDepthMask": (GL.GL_FALSE,)}
 ON_TOP_OPTIONS = {GL.GL_DEPTH_TEST: False, GL.GL_BLEND: True, "glBlendFunc": BLEND}
+# Measurements (the Sizes button): the outside size in grey, the selected hole's place in pink.
+SIZE_LINE_COLOR = (0.62, 0.67, 0.76, 0.9)
+SIZE_TEXT_COLOR = theme.TEXT
+HOLE_MEASURE_TEXT = "#ff9cc9"
 # Camera presets: (elevation, azimuth) in degrees. The front of the object faces -y.
 VIEWS = {"3d": (28.0, -62.0), "front": (6.0, -90.0), "top": (89.9, -90.0), "side": (6.0, 0.0)}
 
@@ -90,6 +94,28 @@ class GhostMesh(gl.GLMeshItem):
     def paint(self):
         super().paint()
         GL.glDepthMask(GL.GL_TRUE)      # the next frame must be able to clear the depth buffer
+
+
+class MeasureLabel(gl.GLTextItem):
+    """A measurement's text on a small dark tag, so it reads over the model and the grid."""
+
+    def paint(self):
+        if not self.text:
+            return
+        self.setupGLState()
+        point = self.compute_projection().map(QVector3D(*self.pos)).toPointF()
+        painter = QPainter(self.view())
+        painter.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.TextAntialiasing)
+        painter.setFont(self.font)
+        metrics = painter.fontMetrics()
+        width, height = metrics.horizontalAdvance(self.text) + 12, metrics.height() + 4
+        rect = QRectF(point.x() - width / 2, point.y() - height / 2, width, height)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(BACKGROUND[0], BACKGROUND[1], BACKGROUND[2], 225))
+        painter.drawRoundedRect(rect, 5, 5)
+        painter.setPen(self.color)
+        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, self.text)
+        painter.end()
 
 
 class Viewer(gl.GLViewWidget):
@@ -115,6 +141,8 @@ class Viewer(gl.GLViewWidget):
         self._marker_items: list = []
         self._mount_items: list = []
         self._label_items: list = []
+        self._measure_items: list = []
+        self.show_sizes = True
         self._grid = gl.GLGridItem()
         self._grid.setColor(GRID_COLOR)
         self.addItem(self._grid)
@@ -191,6 +219,7 @@ class Viewer(gl.GLViewWidget):
         self._mesh_items.append(item)
 
     def set_hole_markers(self, project: Project, selected_id: str | None, problem_ids: set):
+        self.set_measurements(project, project.hole(selected_id) if selected_id else None)
         for item in self._marker_items:
             self.removeItem(item)
         self._marker_items.clear()
@@ -207,6 +236,41 @@ class Viewer(gl.GLViewWidget):
                 if hole.surface == LID:
                     ring = ring + np.array([0, 0, self._lid_offset])
                 self._marker_items.append(self._outline(ring, color, width))
+
+    def set_measurements(self, project: Project, hole: Hole | None = None):
+        """The outside size, and where the selected hole is (when Sizes is on)."""
+        for item in self._measure_items:
+            self.removeItem(item)
+        self._measure_items.clear()
+        if not self.show_sizes or "body" not in self._solids:
+            return
+        groups = [(measure.size_measures(project), SIZE_LINE_COLOR, SIZE_TEXT_COLOR)]
+        if hole is not None and hole.surface in project.surfaces() and (
+                hole.surface != LID or "lid" in self._solids):
+            groups.append((measure.hole_measures(project, hole, self._lid_offset),
+                           SELECTED_COLOR, HOLE_MEASURE_TEXT))
+        font = QFont(self.font())
+        font.setPointSizeF(max(8.5, font.pointSizeF() * 0.95))
+        for measures, line_color, text_color in groups:
+            segments = []
+            for m in measures:
+                segments += [m.start, m.end]
+                for a, b in m.marks:
+                    segments += [a, b]
+            if not segments:
+                continue
+            lines = gl.GLLinePlotItem(pos=np.array(segments, dtype=float), mode="lines",
+                                      color=line_color, width=1.5, antialias=True,
+                                      glOptions=ON_TOP_OPTIONS if self.see_through else "translucent")
+            lines.setDepthValue(11)
+            self.addItem(lines)
+            self._measure_items.append(lines)
+            for m in measures:
+                label = MeasureLabel(pos=np.array(m.middle, dtype=float), text=m.text,
+                                     color=QColor(text_color), font=font)
+                label.setDepthValue(20)              # drawn last, over everything
+                self.addItem(label)
+                self._measure_items.append(label)
 
     def set_label_markers(self, project: Project, selected_id: str | None, problem_ids: set):
         """A frame around the selected text, and around text with a problem."""

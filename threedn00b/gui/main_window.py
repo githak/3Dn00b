@@ -10,18 +10,18 @@ from html import escape
 from pathlib import Path
 from types import SimpleNamespace
 
-from PySide6.QtCore import QLocale, QRect, QSettings, QSize, Qt, QTimer
+from PySide6.QtCore import QDateTime, QLocale, QRect, QSettings, QSize, Qt, QTimer
 from PySide6.QtGui import (QAction, QColor, QIcon, QKeySequence, QPainter, QShortcut,
                            QTextDocument, QUndoCommand, QUndoStack)
-from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox,
+from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog,
                                QDoubleSpinBox, QFileDialog, QFormLayout, QFrame,
-                               QHBoxLayout, QLabel, QLineEdit, QListWidget,
+                               QHBoxLayout, QInputDialog, QLabel, QLineEdit, QListWidget,
                                QListView, QListWidgetItem, QMainWindow, QMessageBox,
                                QMenu, QPushButton, QRadioButton, QScrollArea, QSizePolicy, QSpinBox,
                                QSplitter, QStyle, QStyledItemDelegate, QTabWidget, QToolBar,
                                QToolButton, QVBoxLayout, QWidget)
 
-from .. import (APP_NAME, __version__, geometry, mounts, picking, printers, project_io,
+from .. import (APP_NAME, __version__, geometry, mounts, picking, printers, project_io, userdata,
                 templates, validation)
 from ..model import (ALONG_U, ALONG_V, BOTTOM, BOX, CYLINDER, FIT_LABELS, FIT_PRESETS,
                      FRONT, HOLE_DIAMETER_RANGE, HOLE_KIND_LABELS, INSIDE, LID, MIN_EDGE,
@@ -32,6 +32,7 @@ from ..model import (ALONG_U, ALONG_V, BOTTOM, BOX, CYLINDER, FIT_LABELS, FIT_PR
                      has_set_sizes, hole_limits, resized_sizes,
                      ENGRAVED, LABEL_DEPTH_RANGE, LABEL_SIZE_RANGE, RAISED, Label, clamp_label)
 from . import theme
+from .autosave import Autosave, Backup
 from .viewer import Viewer
 
 COMMON_HOLES = [
@@ -328,8 +329,13 @@ def set_quietly(widget, value):
     widget.blockSignals(False)
 
 
+AUTOSAVE_DELAY = 3000      # ms after the last change before the backup is written
+MANAGE_TEMPLATES = "manage-my-templates"     # the last entry of "My templates"
+RECENT_MAX = 8
+
+
 class MainWindow(QMainWindow):
-    def __init__(self, project: Project | None = None):
+    def __init__(self, project: Project | None = None, autosave: bool = True):
         super().__init__()
         theme.apply(QApplication.instance())
         self.project = project or default_project()
@@ -343,6 +349,12 @@ class MainWindow(QMainWindow):
         self.issues: list[validation.Issue] = []
         self.undo_stack = QUndoStack(self)
         self.undo_stack.cleanChanged.connect(self._update_title)
+        # A backup of unsaved changes, for getting them back after a crash.
+        self.autosave = Autosave() if autosave else None
+        self._autosave_timer = QTimer(self, singleShot=True, interval=AUTOSAVE_DELAY)
+        self._autosave_timer.timeout.connect(self._write_autosave)
+        self.undo_stack.indexChanged.connect(self._schedule_autosave)
+        self.undo_stack.cleanChanged.connect(self._schedule_autosave)
         self.settings = QSettings(APP_NAME, APP_NAME)
 
         self._rebuild_timer = QTimer(self, singleShot=True, interval=60)
@@ -458,8 +470,12 @@ class MainWindow(QMainWindow):
             menu.addAction(label, lambda t=template: self.new_project(t))
         new.setMenu(menu)
         bar.widgetForAction(new).setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
-        action("Open", "open", self.open_project, QKeySequence.StandardKey.Open,
-               "Open a project file")
+        open_action = action("Open", "open", self.open_project, QKeySequence.StandardKey.Open,
+                             "Open a project file (the arrow lists recent designs)")
+        self.recent_menu = QMenu(self)
+        self.recent_menu.aboutToShow.connect(self._fill_recent_menu)
+        open_action.setMenu(self.recent_menu)
+        bar.widgetForAction(open_action).setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
         action("Save", "save", self.save_project, QKeySequence.StandardKey.Save,
                "Save an editable project file")
         save_as = QAction("Save As…", self)
@@ -518,7 +534,7 @@ class MainWindow(QMainWindow):
         help_button.setCursor(Qt.CursorShape.PointingHandCursor)
         bar.addWidget(help_button)
         delete = QAction(self, shortcut=QKeySequence.StandardKey.Delete)
-        delete.triggered.connect(self.remove_selected_hole)
+        delete.triggered.connect(self._delete_selected)
         self.addAction(delete)
 
     def _build_rail(self) -> QWidget:
@@ -592,7 +608,15 @@ class MainWindow(QMainWindow):
             "(Ctrl+T)")
         self.see_through_action.setShortcut(QKeySequence("Ctrl+T"))
         self.see_through_action.toggled.connect(self._on_see_through)
-        for act in (self.show_lid_action, self.see_through_action):
+        self.sizes_action = QAction(theme.icon("ruler", theme.MUTED, checked=theme.ACCENT_TEXT),
+                                    "Sizes", self, checkable=True)
+        self.sizes_action.setToolTip("Show the measurements: the outside size, and where the "
+                                     "selected hole is (Ctrl+M)")
+        self.sizes_action.setShortcut(QKeySequence("Ctrl+M"))
+        self.sizes_action.setChecked(self.settings.value("view/sizes", True, type=bool))
+        self.viewer.show_sizes = self.sizes_action.isChecked()
+        self.sizes_action.toggled.connect(self._on_sizes)
+        for act in (self.show_lid_action, self.see_through_action, self.sizes_action):
             self.addAction(act)                 # so the shortcuts work anywhere in the window
             button = QToolButton()
             button.setDefaultAction(act)
@@ -625,21 +649,7 @@ class MainWindow(QMainWindow):
             row.addWidget(btn)
         lay.addLayout(row)
         self.template_combo = QComboBox()
-        self.template_combo.addItem(theme.icon("template", theme.MUTED),
-                                    "…or start from a template", None)
-        for heading, keys in templates.GROUPS:
-            # A heading that can't be picked, then the group's templates.
-            self.template_combo.addItem(heading, None)
-            item = self.template_combo.model().item(self.template_combo.count() - 1)
-            item.setEnabled(False)
-            font = item.font()
-            font.setBold(True)
-            item.setFont(font)
-            for key in keys:
-                t = templates.TEMPLATES[key]
-                self.template_combo.addItem("    " + t.label, key)
-                self.template_combo.setItemData(self.template_combo.count() - 1, t.description,
-                                                Qt.ItemDataRole.ToolTipRole)
+        self._fill_template_combo()
         self.template_combo.setToolTip("Ready-made boxes, sized to fit: you can change "
                                        "everything afterwards.")
         self.template_combo.activated.connect(self._on_template)
@@ -648,6 +658,13 @@ class MainWindow(QMainWindow):
         lay.addWidget(self.template_combo)
         self.template_note = hint("")
         lay.addWidget(self.template_note)
+        self.save_template_button = icon_button("Save as my template…", "template",
+                                                tip="Keep this design in the template list, to "
+                                                    "start new designs from it")
+        self.save_template_button.setObjectName("flat")
+        self.save_template_button.setIcon(theme.icon("template", theme.MUTED))
+        self.save_template_button.clicked.connect(self.save_as_my_template)
+        lay.addWidget(self.save_template_button, 0, Qt.AlignmentFlag.AlignLeft)
         form = form_layout()
         self.name_edit = QLineEdit()
         self.name_edit.setPlaceholderText("Give it a name")
@@ -868,7 +885,8 @@ class MainWindow(QMainWindow):
         self.hole_v.valueChanged.connect(lambda v: self._edit_hole("Move hole", "v", v))
         form.addRow(self.u_label, self.hole_u)
         form.addRow(self.v_label, self.hole_v)
-        form.addRow("", hint("Measured from the middle of the surface. 0 = centred."))
+        form.addRow("", hint("Measured from the middle of the surface. 0 = centred. With "
+                             "Sizes on, the 3D view shows how far it is from the edges."))
         buttons = QHBoxLayout()
         center = icon_button("Centre it", "center")
         center.clicked.connect(self._center_hole)
@@ -1373,7 +1391,7 @@ class MainWindow(QMainWindow):
             set_quietly(btn, shape == p.shape)
         set_quietly(self.name_edit, p.name)
         if p.template:
-            self.template_note.setText(f"Based on the {self._template_label()}. Choose Box or "
+            self.template_note.setText(f"Based on {self._template_label()}. Choose Box or "
                                        "Round container to start over with a plain one.")
         self.template_note.setVisible(bool(p.template))
         for shape, btn in self.shape_buttons.items():
@@ -1490,10 +1508,89 @@ class MainWindow(QMainWindow):
             ui.rest.setText(f"the rest: {sizes[-1]:.1f} mm")
             theme.set_level(ui.rest, "ok" if sizes[-1] >= 3 else "")
 
+    def _fill_template_combo(self):
+        """The template list: the user's own templates first, then the built-in ones."""
+        combo = self.template_combo
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem(theme.icon("template", theme.MUTED), "…or start from a template", None)
+
+        def heading(text):
+            # A heading that can't be picked, then the group's templates.
+            combo.addItem(text, None)
+            item = combo.model().item(combo.count() - 1)
+            item.setEnabled(False)
+            font = item.font()
+            font.setBold(True)
+            item.setFont(font)
+
+        mine = userdata.my_templates()
+        if mine:
+            heading("My templates")
+            for t in mine:
+                combo.addItem("    " + t.name, userdata.MY_TEMPLATE + t.name)
+                combo.setItemData(combo.count() - 1, f"Your own template, saved in {t.path.parent}",
+                                  Qt.ItemDataRole.ToolTipRole)
+            combo.addItem("    Rename or remove my templates…", MANAGE_TEMPLATES)
+        for title, keys in templates.GROUPS:
+            heading(title)
+            for key in keys:
+                t = templates.TEMPLATES[key]
+                combo.addItem("    " + t.label, key)
+                combo.setItemData(combo.count() - 1, t.description, Qt.ItemDataRole.ToolTipRole)
+        combo.setCurrentIndex(0)
+        combo.blockSignals(False)
+
+    def save_as_my_template(self) -> bool:
+        """Keep the design as an own template, to start new designs from."""
+        name, ok = QInputDialog.getText(self, "Save as my template",
+                                        "Name of the template (it will be in the template list):",
+                                        text=self.project.name)
+        name = name.strip()
+        if not ok or not name:
+            return False
+        existing = userdata.find_template(name)
+        if existing is not None and QMessageBox.question(
+                self, APP_NAME, f"You already have a template called “{existing.name}”. "
+                                "Replace it?") != QMessageBox.StandardButton.Yes:
+            return False
+        try:
+            userdata.save_template(self.project, name)
+        except OSError as exc:
+            QMessageBox.warning(self, APP_NAME, f"Couldn't save the template:\n{exc}")
+            return False
+        self._fill_template_combo()
+        self.statusBar().showMessage(f"Saved “{name}” as your template. Start from it under "
+                                     "“…or start from a template”.", 8000)
+        return True
+
+    def manage_my_templates(self):
+        dialog = MyTemplatesDialog(self)
+        dialog.exec()
+        self._fill_template_combo()
+
     def _on_template(self, index: int):
         key = self.template_combo.itemData(index)
         self.template_combo.setCurrentIndex(0)
         if key is None:
+            return
+        if key == MANAGE_TEMPLATES:
+            self.manage_my_templates()
+            return
+        if key.startswith(userdata.MY_TEMPLATE):
+            name = key[len(userdata.MY_TEMPLATE):]
+            mine = userdata.find_template(name)
+            if mine is None:
+                self._fill_template_combo()
+                return
+            try:
+                project = userdata.load_template(mine)
+            except project_io.ProjectFileError as exc:
+                QMessageBox.warning(self, APP_NAME, str(exc))
+                return
+            self._replace_project(f"Start from “{mine.name}”", project)
+            self.statusBar().showMessage(f"Started from your template “{mine.name}”. "
+                                         "Undo goes back to what you had.", 10000)
             return
         template = templates.TEMPLATES[key]
         self._replace_project(f"Start from “{template.label}”", templates.from_template(key))
@@ -1508,7 +1605,7 @@ class MainWindow(QMainWindow):
         what = "box" if shape == BOX else "round container"
         before = self._template_label()
         self._replace_project(f"Start a plain {what}", default_project(shape))
-        self.statusBar().showMessage(f"Started a plain {what}. Undo brings back the {before}.",
+        self.statusBar().showMessage(f"Started a plain {what}. Undo brings back {before}.",
                                      10000)
 
     def _replace_project(self, label: str, fresh: Project):
@@ -1519,8 +1616,12 @@ class MainWindow(QMainWindow):
         self.rebuild()
 
     def _template_label(self) -> str:
-        template = templates.TEMPLATES.get(self.project.template)
-        return f"“{template.label}” template" if template else "template"
+        """“the “Pi case” template” or “your “Screw box” template”."""
+        key = self.project.template
+        if key.startswith(userdata.MY_TEMPLATE):
+            return f"your “{key[len(userdata.MY_TEMPLATE):]}” template"
+        template = templates.TEMPLATES.get(key)
+        return f"the “{template.label}” template" if template else "the template"
 
     def _refresh_dividers(self):
         p, d = self.project, self.project.dividers
@@ -2066,6 +2167,13 @@ class MainWindow(QMainWindow):
         self.label_text.setFocus()
         self.label_text.selectAll()
 
+    def _delete_selected(self):
+        """The Delete key: removes the selected text on the Text step, else the selected hole."""
+        if self.tabs.currentIndex() == TAB_TEXT and self.selected_label_id:
+            self.remove_selected_label()
+        else:
+            self.remove_selected_hole()
+
     def remove_selected_label(self):
         label_id = self.selected_label_id
         if label_id is None or not self.project.label(label_id):
@@ -2425,9 +2533,12 @@ class MainWindow(QMainWindow):
             project = project_io.load_project(path)
         except project_io.ProjectFileError as exc:
             QMessageBox.warning(self, APP_NAME, str(exc))
+            if not path.exists():
+                self._forget_recent(path)
             return
         self.settings.setValue("last_dir", str(path.parent))
         self._load(project, path)
+        self._add_recent(path)
 
     def save_project(self) -> bool:
         if self.path is None:
@@ -2438,6 +2549,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, APP_NAME, f"Couldn't save the project:\n{exc}")
             return False
         self.undo_stack.setClean()
+        self._add_recent(self.path)
         self.statusBar().showMessage(f"Saved {self.path.name}", 4000)
         self._update_title()
         return True
@@ -2455,6 +2567,103 @@ class MainWindow(QMainWindow):
         self.path = path
         self.settings.setValue("last_dir", str(path.parent))
         return self.save_project()
+
+    # ---- recent designs ------------------------------------------------------
+    def recent_files(self) -> list[Path]:
+        value = self.settings.value("recent_files", [])
+        if isinstance(value, str):
+            value = [value]
+        return [Path(v) for v in (value or []) if v]
+
+    def _set_recent(self, paths: list[Path]) -> None:
+        self.settings.setValue("recent_files", [str(p) for p in paths[:RECENT_MAX]])
+
+    def _add_recent(self, path: Path) -> None:
+        path = Path(path).absolute()
+        self._set_recent([path] + [p for p in self.recent_files() if p != path])
+
+    def _forget_recent(self, path: Path) -> None:
+        path = Path(path).absolute()
+        self._set_recent([p for p in self.recent_files() if p != path])
+
+    def _fill_recent_menu(self) -> None:
+        menu = self.recent_menu
+        menu.clear()
+        existing = [p for p in self.recent_files() if p.exists()]
+        self._set_recent(existing)                      # forget files that are gone
+        if not existing:
+            menu.addAction("No recent designs").setEnabled(False)
+            return
+        home = str(Path.home())
+        for path in existing:
+            folder = str(path.parent)
+            if folder.startswith(home):
+                folder = "~" + folder[len(home):]
+            act = menu.addAction(theme.icon("open", theme.MUTED), f"{path.stem}    {folder}")
+            act.setToolTip(str(path))
+            act.triggered.connect(lambda _=False, p=path: self.open_recent(p))
+        menu.addSeparator()
+        menu.addAction("Clear the list", lambda: self._set_recent([]))
+
+    def open_recent(self, path: Path) -> None:
+        if not self._confirm_discard():
+            return
+        if not path.exists():
+            self._forget_recent(path)
+            QMessageBox.warning(self, APP_NAME, f"{path.name} isn't there any more.\n\n{path.parent}")
+            return
+        self.open_path(path)
+
+    # ---- automatic backups ---------------------------------------------------
+    def _schedule_autosave(self, *_):
+        if self.autosave is None:
+            return
+        if self.undo_stack.isClean():
+            self._autosave_timer.stop()
+            self.autosave.clear()                       # saved: no backup needed
+        else:
+            self._autosave_timer.start()
+
+    def _write_autosave(self):
+        if self.autosave is not None and not self.undo_stack.isClean():
+            self.autosave.write(self.project, self.path)
+
+    def close_autosave(self):
+        self._autosave_timer.stop()
+        if self.autosave is not None:
+            self.autosave.close()
+
+    def offer_recovery(self, backups: list[Backup]) -> bool:
+        """After a crash: offer the newest backup. Older ones are kept for next time."""
+        if not backups:
+            return False
+        backup, rest = backups[0], backups[1:]
+        for other in rest:
+            other.keep()
+        when = QLocale().toString(QDateTime.fromSecsSinceEpoch(int(backup.saved_at)),
+                                  QLocale.FormatType.ShortFormat)
+        name = backup.file.name if backup.file else backup.project.name
+        box = QMessageBox(self)
+        box.setWindowTitle("Recover your design?")
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setText(f"<b>3Dn00b didn't close properly last time.</b><br><br>Your unsaved changes "
+                    f"to “{escape(name)}” (from {escape(when)}) can be recovered.")
+        box.setInformativeText("If you throw them away, they can't be brought back.")
+        recover = box.addButton("Recover", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("Throw away", QMessageBox.ButtonRole.DestructiveRole)
+        box.setDefaultButton(recover)
+        box.exec()
+        if box.clickedButton() is not recover:
+            backup.discard()
+            return False
+        file = backup.file if backup.file and backup.file.exists() else None
+        self._load(backup.project, file)
+        self.undo_stack.resetClean()                    # it still has to be saved
+        self._update_title()
+        backup.discard()
+        self._write_autosave()                          # now it's this window's backup
+        self.statusBar().showMessage(f"Recovered “{name}”. Save it to keep it.", 10000)
+        return True
 
     def _on_format_changed(self, _index=None):
         fmt = self.format_combo.currentData()
@@ -2567,15 +2776,101 @@ class MainWindow(QMainWindow):
         self.viewer.show_lid = on
         self.rebuild()
 
+    def _on_sizes(self, on):
+        self.viewer.show_sizes = on
+        self.settings.setValue("view/sizes", on)
+        self.viewer.set_measurements(self.project, self.project.hole(self.selected_id)
+                                     if self.selected_id else None)
+
     def _on_see_through(self, on):
         self.viewer.see_through = on
         self.rebuild()
 
     def closeEvent(self, event):
         if self._confirm_discard():
+            self.close_autosave()
             event.accept()
         else:
             event.ignore()
+
+
+class MyTemplatesDialog(QDialog):
+    """Rename or remove the user's own templates."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setWindowTitle("My templates")
+        self.setMinimumWidth(420)
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+        self.list = QListWidget()
+        self.list.setMinimumHeight(200)
+        layout.addWidget(self.list)
+        row = QHBoxLayout()
+        self.rename_button = icon_button("Rename…", "template")
+        self.remove_button = icon_button("Remove", "trash", "danger")
+        close = QPushButton("Close")
+        self.rename_button.clicked.connect(self.rename)
+        self.remove_button.clicked.connect(self.remove)
+        close.clicked.connect(self.accept)
+        row.addWidget(self.rename_button)
+        row.addWidget(self.remove_button)
+        row.addStretch()
+        row.addWidget(close)
+        layout.addLayout(row)
+        layout.addWidget(hint(f"Your templates are kept in {userdata.templates_dir()}. They are "
+                              "ordinary project files, so you can copy them to another computer."))
+        self.list.currentRowChanged.connect(self._update_buttons)
+        self.refresh()
+
+    def refresh(self, select: str | None = None):
+        self.templates = userdata.my_templates()
+        self.list.clear()
+        for t in self.templates:
+            self.list.addItem(QListWidgetItem(theme.icon("box" if t.shape == BOX else "cylinder",
+                                                         theme.MUTED), t.name))
+        names = [t.name for t in self.templates]
+        self.list.setCurrentRow(names.index(select) if select in names else 0 if names else -1)
+        self._update_buttons()
+
+    def selected(self):
+        row = self.list.currentRow()
+        return self.templates[row] if 0 <= row < len(self.templates) else None
+
+    def _update_buttons(self, *_):
+        for button in (self.rename_button, self.remove_button):
+            button.setEnabled(self.selected() is not None)
+
+    def rename(self):
+        t = self.selected()
+        if t is None:
+            return
+        name, ok = QInputDialog.getText(self, "Rename template", "New name:", text=t.name)
+        name = name.strip()
+        if not ok or not name or name == t.name:
+            return
+        other = userdata.find_template(name)
+        if other is not None and other.path != t.path and QMessageBox.question(
+                self, APP_NAME, f"You already have a template called “{other.name}”. "
+                                "Replace it?") != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            userdata.rename_template(t, name)
+        except (OSError, project_io.ProjectFileError) as exc:
+            QMessageBox.warning(self, APP_NAME, f"Couldn't rename it:\n{exc}")
+        self.refresh(name)
+
+    def remove(self):
+        t = self.selected()
+        if t is None or QMessageBox.question(
+                self, APP_NAME, f"Remove your template “{t.name}”? Designs you started from it "
+                                "keep working.") != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            userdata.remove_template(t)
+        except OSError as exc:
+            QMessageBox.warning(self, APP_NAME, f"Couldn't remove it:\n{exc}")
+        self.refresh()
 
 
 def _set_position(hole: Hole, pos) -> None:
@@ -2590,6 +2885,7 @@ def release_window(window: MainWindow) -> None:
     "leaked instance" warnings in the terminal.
     """
     window._rebuild_timer.stop()
+    window.close_autosave()
     window.parts = None
     window.viewer.release_geometry()
     window.undo_stack.clear()
@@ -2602,7 +2898,11 @@ def main_window_app(argv) -> int:
     if len(argv) > 1:
         window.open_path(Path(argv[1]))
     window.show()
-    if window.welcome_due():
+    from .autosave import leftover_backups
+    backups = leftover_backups()
+    if backups:                                       # it crashed last time
+        QTimer.singleShot(400, lambda: window.offer_recovery(backups))
+    elif window.welcome_due():
         QTimer.singleShot(400, window.show_welcome)   # once the window is on screen
     code = app.exec()
     release_window(window)
