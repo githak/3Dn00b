@@ -8,7 +8,7 @@ Software for people getting into 3D printing and want to start with something ea
 sizes in millimetres, add holes and a lid, and export files your slicer can
 print. No sketches, no constraints, no feature trees.
 
-## What it can do (version 0.28)
+## What it can do (version 0.29)
 
 - **Templates** to start from, already sized to fit. Pick one under **What are you making?**
   in the Shape step, then change anything you like; Undo takes you back.
@@ -19,9 +19,11 @@ print. No sketches, no constraints, no feature trees.
   same list.
   - *Cases for boards* (posts, openings for the sockets, a lid): Raspberry Pi
     3 / 4 / 5 (also with a 30 mm fan or a GPIO ribbon-cable slot in the lid),
-    Pi 3 A+, Pi Zero / Zero 2 W, two Pi Zero 2 W stacked crosswise, Pi Pico,
-    Arduino Uno and Mega 2560, 30-pin ESP32 DevKit, a half-size breadboard box,
-    and a project box for your own board.
+    Pi 5 with an M.2 HAT+ or AI HAT+, Pi 3 A+, Pi Zero / Zero 2 W, two Pi Zero 2 W
+    stacked crosswise, Pi Pico / Pico 2 (also W), Arduino Uno R3 / R4, Mega 2560
+    and Nano (Nano, Nano Every, Nano ESP32), 30-pin ESP32 DevKit, a half-size
+    breadboard box, and a project box for your own board. Every board's holes and
+    sockets are checked against the maker's official drawings.
   - *Storage*: storage box, parts tray, screw sorter, 4 × 4 parts box, 3 × 3
     craft box, AA battery box, weekly pill box, business card box, dice box,
     guitar pick box, small screw-top tin, money box.
@@ -60,7 +62,8 @@ print. No sketches, no constraints, no feature trees.
   with other holes, and always keeps a safe distance from the edges. Common
   sizes are built in (M3/M4 screws, cables).
 - **Screw posts for circuit boards**: pick a board (Raspberry Pi Zero / Zero 2 W,
-  3 / 4 / 5, 3 A+, Pico, Arduino Uno or Mega 2560, or your own board with 1, 2 or 4 holes) and all its posts
+  3 / 4 / 5, 3 A+, Pico / Pico 2, Arduino Uno R3 / R4, Mega 2560 / Giga R1, Nano,
+  or your own board with 1, 2 or 4 holes) and all its posts
   appear in the right pattern. Choose the screw size (M1 to M4) and how tall the
   posts are; the screw cuts its own thread into the post. Drag the board's green
   outline to move all its posts together, or turn it in 90° steps. The app checks
@@ -80,7 +83,9 @@ print. No sketches, no constraints, no feature trees.
   The box gets a column in each corner for the screws to cut their own thread
   into, and the app tells you how many screws you need and how long they can be.
 - **Text**: names and labels on any wall, the bottom or the lid, **raised** (it
-  stands out) or **engraved** (cut in), in the size you choose. Text on a round
+  stands out), **engraved** (cut in) or **cut through** (a hole in the shape of
+  the letters, like a stencil: letters such as O and A keep their middle with thin
+  bridges), in the size you choose. Text on a round
   container wraps around it. Letters from all European languages work (æ, ø, å,
   ä, ö, ü, é, ł, ž …). Drag text in the 3D view to move it. The app warns about
   text that's too small to print clearly, raised text on the lid or the bottom
@@ -104,6 +109,7 @@ print. No sketches, no constraints, no feature trees.
 - **Measurements in the 3D view** (the **Sizes** button, Ctrl+M): the outside
   size, the height with the lid on, and how far the selected hole is from the
   edges of its wall (or from the left and the front, on the bottom and the lid).
+  The size lines move to the sides facing you as you turn the view.
 - **Undo / redo** for every change.
 - **Save and reopen** editable projects (`.3dn00b` files, plain JSON). The arrow
   next to **Open** lists your recent designs.
@@ -121,7 +127,7 @@ Download `3dn00b_<version>-1_amd64.deb` from the
 [Releases page](https://github.com/githak/3Dn00b/releases) and install it:
 
 ```bash
-sudo apt install ./3dn00b_0.28.0-1_amd64.deb
+sudo apt install ./3dn00b_0.29.0-1_amd64.deb
 ```
 
 That's all: 3Dn00b appears in your applications menu, `.3dn00b` project files open

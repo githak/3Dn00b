@@ -30,7 +30,8 @@ from ..model import (ALONG_U, ALONG_V, BOTTOM, BOX, CYLINDER, FIT_LABELS, FIT_PR
                      SNAP, THREADED, TRAY_TEMPLATE, WALL_RANGE, Hole, Project,
                      clamp_hole, compartment_depths, compartment_widths, default_project,
                      has_set_sizes, hole_limits, resized_sizes,
-                     ENGRAVED, LABEL_DEPTH_RANGE, LABEL_SIZE_RANGE, RAISED, Label, clamp_label)
+                     CUT_THROUGH, ENGRAVED, LABEL_DEPTH_RANGE, LABEL_SIZE_RANGE, RAISED, Label,
+                     clamp_label)
 from . import theme
 from .autosave import Autosave, Backup
 from .viewer import Viewer
@@ -87,7 +88,8 @@ STEPS = (("shape", "Shape", "Shape and size"), ("holes", "Holes", "Holes, openin
          ("posts", "Posts", "Screw posts for circuit boards"), ("lid", "Lid", "The lid"),
          ("text", "Text", "Text on the outside: names and labels"),
          ("check", "Export", "Check the design and export it for printing"))
-LABEL_STYLE_TEXTS = {RAISED: "Raised (stands out)", ENGRAVED: "Engraved (cut in)"}
+LABEL_STYLE_TEXTS = {RAISED: "Raised (stands out)", ENGRAVED: "Engraved (cut in)",
+                     CUT_THROUGH: "Cut through (a hole, like a stencil)"}
 
 
 class SnapshotCommand(QUndoCommand):
@@ -1009,7 +1011,7 @@ class MainWindow(QMainWindow):
         form.addRow(self.lid_style_hint)
         self.lid_screw = QComboBox()
         for key in SCREWS:
-            if key != "M1":
+            if key not in ("M1", "M1.6"):           # too small to hold a lid down
                 self.lid_screw.addItem(f"{key} screws", key)
         self.lid_screw.activated.connect(
             lambda _: self.edit("Change lid screws",
@@ -1112,6 +1114,10 @@ class MainWindow(QMainWindow):
         self.label_style.activated.connect(
             lambda _: self._edit_label("Change text style", "style", self.label_style.currentData()))
         form.addRow("Style", self.label_style)
+        self.label_style_hint = hint("The letters go right through, so light shines through "
+                                     "them. Letters like O and A keep their middle with thin "
+                                     "bridges.")
+        form.addRow("", self.label_style_hint)
         self.label_size = spin(*LABEL_SIZE_RANGE, step=0.5)
         self.label_size.setToolTip("Height of the capital letters")
         self.label_size.valueChanged.connect(lambda v: self._edit_label("Change letter size", "size", v))
@@ -2087,7 +2093,7 @@ class MainWindow(QMainWindow):
         for i, label in enumerate(p.labels):
             where = SURFACE_LABELS.get(label.surface, label.surface)
             text = label.text.strip() or "(empty)"
-            style = "raised" if label.style == RAISED else "engraved"
+            style = {RAISED: "raised", ENGRAVED: "engraved"}.get(label.style, "cut through")
             item = QListWidgetItem(self._list_icon("text", label_id=label.id), f"{text} · {where} · {style}")
             self.label_list.addItem(item)
             if label.id == self.selected_label_id:
@@ -2117,6 +2123,8 @@ class MainWindow(QMainWindow):
         set_quietly(self.label_size, label.size)
         set_quietly(self.label_depth, label.depth)
         self.label_depth_name.setText("Stands out" if label.style == RAISED else "Cut in")
+        self.label_form.setRowVisible(self.label_depth, label.style != CUT_THROUGH)
+        self.label_style_hint.setVisible(label.style == CUT_THROUGH)
         set_quietly(self.label_u, label.u)
         set_quietly(self.label_v, label.v)
         side, flat = label.surface == SIDE, label.surface in (BOTTOM, LID)
@@ -2207,7 +2215,7 @@ class MainWindow(QMainWindow):
             if t.surface == surface:
                 return
             t.surface, t.u, t.v = surface, 0.0, 0.0
-            if surface in (LID, BOTTOM):
+            if surface in (LID, BOTTOM) and t.style == RAISED:
                 t.style = ENGRAVED          # raised text there would need supports
             pos = clamp_label(p, t)
             if pos:

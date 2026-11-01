@@ -1023,3 +1023,37 @@ def test_delete_key_removes_text_on_the_text_step(window):
     assert window.tabs.currentIndex() == TAB_TEXT
     window._delete_selected()
     assert window.project.labels == [] and len(window.project.holes) == 1
+
+
+def test_cut_through_text_in_the_text_step(window):
+    from threedn00b.model import CUT_THROUGH, LID
+    window.add_label()
+    style = window.label_style
+    style.setCurrentIndex(style.findData(CUT_THROUGH))
+    style.activated.emit(style.currentIndex())
+    assert window.project.labels[0].style == CUT_THROUGH
+    assert not window.label_depth.isVisibleTo(window)            # it goes right through
+    assert window.label_style_hint.isVisibleTo(window)
+    window.rebuild()
+    assert "cut through" in window.label_list.item(0).text()
+    window.lid_check.setChecked(True)
+    window.rebuild()
+    surface = window.label_surface
+    surface.setCurrentIndex(surface.findData(LID))
+    surface.activated.emit(surface.currentIndex())
+    assert window.project.labels[0].style == CUT_THROUGH          # stays cut through on the lid
+
+
+def test_size_lines_follow_the_view(window):
+    from threedn00b.gui.viewer import MeasureLabel
+    viewer = window.viewer
+    window.rebuild()
+
+    def width_label_y():
+        return next(i.pos[1] for i in viewer._measure_items
+                    if isinstance(i, MeasureLabel) and i.text == "80 mm")
+    assert width_label_y() < 0                                     # along the front
+    viewer.setCameraPosition(azimuth=100)                          # look from behind
+    assert width_label_y() > 0                                     # now along the back
+    viewer.orbit(-160, 0)                                          # turn round with the mouse
+    assert width_label_y() < 0

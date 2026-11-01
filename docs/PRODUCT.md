@@ -269,6 +269,32 @@ Defaults I chose myself, which are easy to change:
     the front on the bottom and the lid), in the selection colour. The numbers are
     drawn with QPainter, which QWidget.grab() leaves out, so the welcome tour's
     screenshots put the 3D view's own picture in.
+- Follow-ups asked for after trying 0.28 (0.28.1): the size lines go along the sides
+  that face the camera (front or back, left or right, worked out from the view's
+  azimuth) and move when the view turns past a side; the height stands at the far
+  end of the width line, beside the object. And a third text style, cut through:
+  the letters go right through the surface (its thickness plus 0.1 mm, so nothing
+  behind it is touched), with stencil bridges (1.2 mm, or a tenth of the letter
+  height) up and down through every closed middle so O, A, B, 8, ø … keep it.
+  Project format 16.
+- More boards (0.29), the third group, each checked against the maker's own drawing:
+  the Pico 2 and Pico 2 W datasheets show the Pico's board and holes, so the Pico board
+  and template now name them (with a note about the W's antenna). The Uno R4 Minima and
+  R4 WiFi datasheets show the Uno R3's holes; the R4's USB-C sits at 37.7 mm (the R3's
+  USB B at 37.8) but lower, so the Uno case's USB opening now reaches 2 mm below the top
+  of the board, and its jack at 7.8 mm is within the jack opening. The Giga R1 WiFi has
+  the Mega's six holes (its sockets differ, so the Mega case says so). New: the Arduino
+  Nano board (Nano, Nano Every and Nano ESP32 datasheets: 43.18 x 17.78 mm, holes 1.65 to
+  1.8 mm, 40.64 x 15.24 apart) with M1.6 screws (new size; not offered for lids) and an
+  Arduino Nano case (10 mm posts clear the header pins, 8.2 mm on the Nano drawing; the
+  USB end has room for the mini USB's 1.9 mm). And a Raspberry Pi 5 case for the M.2 HAT+
+  or AI HAT+ (product briefs: 16 mm spacers, the flat cable loops 5 mm past the SD card
+  edge, at 21 to 39 mm, around the Pi 5's PCIe socket at 25 to 35 mm): 6 mm of room on
+  that side, 38 mm tall inside, and an air vent over the HAT.
+  Not done: the Raspberry Pi 500 is a keyboard computer, so it doesn't go in a box; the
+  CM5 IO Board is a large development board with many sockets, not a beginner's board.
+  The ESP32-S3 DevKit and the Orange Pi Zero need Espressif's and Orange Pi's drawings,
+  whose websites this environment can't reach yet.
 - Push-on lid that follows the box size, with fit presets.
 - Plain-language checks covering impossible sizes, thin walls, holes off the
   edge, holes behind the lid lip, overlapping or too-close holes, a lid that
@@ -288,8 +314,8 @@ STL import and editing.
 
 Picked by the project owner, in this order (each group once the one before works):
 
-1. More boards, checked against the makers' drawings (Pico 2 W, Arduino Nano,
-   Orange Pi Zero, ESP32-S3 DevKit, Raspberry Pi 500 …).
+1. The ESP32-S3 DevKit and Orange Pi Zero 3, checked against Espressif's and Orange
+   Pi's drawings (once their websites can be reached).
 2. A cable notch in the rim; mounting options (keyhole slots, screw tabs);
    holes for heat-set inserts.
 3. Packages for other systems (arm64 such as the Raspberry Pi, Flatpak or

@@ -46,19 +46,28 @@ BOARDS = {
     "rpi-zero": Board("Raspberry Pi Zero / Zero W / Zero 2 W", (65.0, 30.0),
                       _from_corner(65, 30, [(3.5, 3.5), (61.5, 3.5), (3.5, 26.5), (61.5, 26.5)]),
                       "M2.5", parts_height=4.0, flat=True, short="Pi Zero"),
-    "pico": Board("Raspberry Pi Pico / Pico W / Pico 2", (51.0, 21.0),
+    # Pico 2 and Pico 2 W checked against their datasheets: the same board and holes.
+    "pico": Board("Raspberry Pi Pico / Pico W / Pico 2 / Pico 2 W", (51.0, 21.0),
                   _from_corner(51, 21, [(2.0, 4.8), (49.0, 4.8), (2.0, 16.2), (49.0, 16.2)]),
                   "M2", parts_height=4.0, flat=True, short="Pico"),
-    "uno": Board("Arduino Uno", (68.6, 53.3),
+    # Uno R4 Minima and R4 WiFi checked against their datasheets: the same holes as the R3.
+    "uno": Board("Arduino Uno R3 / R4", (68.6, 53.3),
                  _from_corner(68.6, 53.3, [(13.97, 2.54), (15.24, 50.8), (66.04, 7.62),
                                            (66.04, 35.56)]),
                  "M3", parts_height=11.0, tall_parts="USB and power sockets",
                  short="Arduino Uno"),
-    "mega": Board("Arduino Mega 2560", (101.6, 53.3),
+    # The Giga R1 WiFi (datasheet) has these six holes too, plus small ones it doesn't need.
+    "mega": Board("Arduino Mega 2560 / Giga R1 WiFi", (101.6, 53.3),
                   _from_corner(101.6, 53.3, [(13.97, 2.54), (15.24, 50.8), (66.04, 7.62),
                                              (66.04, 35.56), (90.17, 50.8), (96.52, 2.54)]),
                   "M3", parts_height=11.0, tall_parts="USB and power sockets",
                   short="Arduino Mega"),
+    # Arduino Nano, Nano Every and Nano ESP32 (datasheets): 43.18 x 17.78 mm, holes 1.65 to
+    # 1.8 mm across, 1.27 mm from the edges. The USB socket is at one end (x = 0 here).
+    "nano": Board("Arduino Nano / Nano Every / Nano ESP32", (43.18, 17.78),
+                  _from_corner(43.18, 17.78, [(1.27, 1.27), (41.91, 1.27), (1.27, 16.51),
+                                              (41.91, 16.51)]),
+                  "M1.6", parts_height=4.0, tall_parts="USB socket", short="Arduino Nano"),
     "custom": Board("Custom board (4 holes)", None, (), "M3", parts_height=10.0,
                     tall_parts="parts", short="custom board"),
     "custom2": Board("Custom board (2 holes)", None, (), "M3", parts_height=10.0,

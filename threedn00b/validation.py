@@ -20,7 +20,7 @@ from .model import (SIDE_LABELS, ALONG_V, BACK, BOTTOM, BOX, CYLINDER, FRONT, LE
                     has_set_sizes, divider_positions, divider_top,
                     has_dividers, has_frame,
                     hole_edge_clearance, hole_limits, inside_fillet, lip_outer_offset, lip_wall, opening_gap,
-                    point_near_opening, ENGRAVED, LABEL_DEPTH_RANGE, LABEL_MIN_SIZE, RAISED, RECT,
+                    point_near_opening, CUT_THROUGH, ENGRAVED, LABEL_DEPTH_RANGE, LABEL_MIN_SIZE, RAISED, RECT,
                     Label, clamp_label, label_half_extents, label_limits, label_thickness)
 
 ERROR, WARNING, INFO = "error", "warning", "info"
@@ -113,6 +113,12 @@ def _check_labels(p: Project) -> list[Issue]:
             out.append(Issue(WARNING, f"{name} stands out from the {where}. {why}",
                              "Engraved text prints neatly here.", fix_values={"style": ENGRAVED},
                              fix_label="Engrave it instead", label_id=here))
+        if label.style == CUT_THROUGH and label.surface in (FRONT, BACK, LEFT, RIGHT, SIDE) \
+                and label.size > 20 + 1e-6:
+            out.append(Issue(INFO, f"{name} is cut through the wall in big letters. Their top "
+                             "edges print as bridges over the gaps.",
+                             "That's normally fine; if they sag, make the letters smaller.",
+                             label_id=here))
         if label.style == ENGRAVED:
             thickness = label_thickness(p, label.surface)
             left = thickness - label.depth
@@ -561,6 +567,10 @@ def _check_mounts(p: Project) -> list[Issue]:
         if m.screw == "M1":
             out.append(Issue(WARNING, f"{name}: holes for M1 screws are tiny ({screw.pilot} mm) and "
                              "may close up when printed.", "You may need to drill them out.",
+                             mount_id=m.id))
+        elif m.screw == "M1.6":
+            out.append(Issue(INFO, f"{name}: holes for M1.6 screws are small ({screw.pilot} mm).",
+                             "If a screw won't go in, open the hole up with a 1.3 mm drill.",
                              mount_id=m.id))
         if m.length > 6 * screw.post:
             out.append(Issue(WARNING, f"{name}: the posts are tall and thin and may snap.",

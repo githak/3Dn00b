@@ -41,34 +41,47 @@ def _offset(project: Project) -> float:
     return max(6.0, 0.1 * max(project.outer_width, project.outer_depth))
 
 
-def size_measures(project: Project) -> list[Measure]:
-    """The outside size: width and depth (or diameter) along the bottom, and the height."""
+def facing_sides(azimuth: float) -> tuple[int, int]:
+    """Which sides face a camera at this azimuth (degrees, as in the 3D view):
+    (+1 right or -1 left, +1 back or -1 front)."""
+    a = np.radians(azimuth)
+    return (1 if np.cos(a) >= 0 else -1), (1 if np.sin(a) >= 0 else -1)
+
+
+def size_measures(project: Project, facing: tuple[int, int] = (1, -1)) -> list[Measure]:
+    """The outside size: width and depth (or diameter) along the bottom, and the height.
+
+    `facing` says which sides you look at (see facing_sides()): the lines go along
+    those sides, so they're in front of the object however it's turned. The height
+    stands at the far end of the width line, beside the object rather than in front.
+    """
+    sx, sy = facing
     w, d, h = project.outer_width, project.outer_depth, project.outer_height
     off = _offset(project)
     out = []
-    y = -d / 2 - off
+    y = sy * (d / 2 + off)
     width_text = mm(w) if project.shape == BOX else "⌀ " + mm(w)
+    near = d / 2 + 1.0 if project.shape == BOX else 1.0
     out.append(Measure((-w / 2, y, 0.0), (w / 2, y, 0.0), width_text,
-                       [((sx * w / 2, -d / 2 - 1.0 if project.shape == BOX else -1.0, 0.0),
-                         (sx * w / 2, y - 1.5, 0.0)) for sx in (-1, 1)]))
+                       [((ex * w / 2, sy * near, 0.0), (ex * w / 2, y + sy * 1.5, 0.0))
+                        for ex in (-1, 1)]))
     if project.shape == BOX:
-        x = w / 2 + off
+        x = sx * (w / 2 + off)
         out.append(Measure((x, -d / 2, 0.0), (x, d / 2, 0.0), mm(d),
-                           [((w / 2 + 1.0, sy * d / 2, 0.0), (x + 1.5, sy * d / 2, 0.0))
-                            for sy in (-1, 1)]))
-    # The height, at the front left (where the usual view sees it); with a lid, also
-    # the height with the lid on.
+                           [((sx * (w / 2 + 1.0), ey * d / 2, 0.0), (x + sx * 1.5, ey * d / 2, 0.0))
+                            for ey in (-1, 1)]))
+    # The height; with a lid, also the height with the lid on.
     text = mm(h)
     if project.lid.enabled and project.closed_height > h + 0.05:
         text += f" ({mm(project.closed_height)} with the lid)"
     if project.shape == BOX:
-        x, y = -w / 2 - off, -d / 2
-        marks = [((-w / 2 - 1.0, y, z), (x - 1.5, y, z)) for z in (0.0, h)]
+        x, y = -sx * (w / 2 + off), sy * d / 2
+        marks = [((-sx * (w / 2 + 1.0), y, z), (x - sx * 1.5, y, z)) for z in (0.0, h)]
     else:
-        r, k = w / 2, 0.5 ** 0.5                   # out from the middle at 45°, to the front left
-        x, y = -(r + off) * k, -(r + off) * k
-        marks = [((-(r + 1.0) * k, -(r + 1.0) * k, z), (-(r + off + 1.5) * k, -(r + off + 1.5) * k, z))
-                 for z in (0.0, h)]
+        r, k = w / 2, 0.5 ** 0.5                   # out from the middle at 45°
+        x, y = -sx * (r + off) * k, sy * (r + off) * k
+        marks = [((-sx * (r + 1.0) * k, sy * (r + 1.0) * k, z),
+                  (-sx * (r + off + 1.5) * k, sy * (r + off + 1.5) * k, z)) for z in (0.0, h)]
     out.append(Measure((x, y, 0.0), (x, y, h), text, marks))
     return out
 

@@ -124,6 +124,7 @@ class Screw:
 # plastic; posts are wide enough to leave a strong wall around the hole.
 SCREWS = {
     "M1": Screw(pilot=0.9, post=3.5, nominal=1.0),
+    "M1.6": Screw(pilot=1.3, post=4.0, nominal=1.6),      # Arduino Nano holes are 1.65 to 1.8 mm
     "M2": Screw(pilot=1.7, post=5.0, nominal=2.0),
     "M2.5": Screw(pilot=2.2, post=6.0, nominal=2.5),
     "M3": Screw(pilot=2.6, post=7.0, nominal=3.0),
@@ -220,9 +221,10 @@ class Mount:
     parts_height: float = -1.0
 
 
-# Text on the outside of a surface: standing out (raised) or cut in (engraved).
-RAISED, ENGRAVED = "raised", "engraved"
-LABEL_STYLE_LABELS = {RAISED: "Raised", ENGRAVED: "Engraved"}
+# Text on the outside of a surface: standing out (raised), cut in (engraved), or cut
+# right through, like a stencil.
+RAISED, ENGRAVED, CUT_THROUGH = "raised", "engraved", "cut"
+LABEL_STYLE_LABELS = {RAISED: "Raised", ENGRAVED: "Engraved", CUT_THROUGH: "Cut through"}
 LABEL_SIZE_RANGE = (2.0, 80.0)     # height of the capital letters (mm)
 LABEL_DEPTH_RANGE = (0.2, 3.0)
 LABEL_MARGIN = 1.0                 # keep this far from the edges of the surface
@@ -236,7 +238,8 @@ class Label:
     surface: str = FRONT
     style: str = RAISED
     size: float = 8.0              # height of the capital letters (mm)
-    depth: float = 0.6             # how far it stands out, or is cut in (mm)
+    depth: float = 0.6             # how far it stands out, or is cut in (mm); not used
+                                   # for text cut right through
     u: float = 0.0                 # where its middle is, measured like a hole's position
     v: float = 0.0
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])

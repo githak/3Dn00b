@@ -12,7 +12,7 @@ import struct
 from functools import lru_cache
 from pathlib import Path
 
-from manifold3d import CrossSection, FillRule
+from manifold3d import CrossSection, FillRule, OpType
 
 FONT_PATH = Path(__file__).parent / "fonts" / "DejaVuSans-Bold-subset.ttf"
 CURVE_STEP = 0.35      # mm: curves are made of straight pieces about this long
@@ -284,3 +284,43 @@ def text_size(text: str, size: float) -> tuple[float, float, float, float]:
         return 0.0, 0.0, 0.0, 0.0
     b = shape.bounds()
     return b[0], b[1], b[2], b[3]
+
+
+def _area(points) -> float:
+    """Signed area of an outline: positive around the outside, negative around a hole."""
+    n = len(points)
+    return 0.5 * sum(points[i][0] * points[(i + 1) % n][1] - points[(i + 1) % n][0] * points[i][1]
+                     for i in range(n))
+
+
+def bridge_width(size: float) -> float:
+    """How wide the stencil bridges are for letters `size` mm tall."""
+    return max(1.2, 0.1 * size)
+
+
+def stencil(shape: CrossSection, bridge: float) -> CrossSection:
+    """Letters cut right through would lose their closed middles (the inside of O, A,
+    B, 8 …). Leave a bridge of plastic up and down through each middle, like a
+    stencil, so the middle stays joined to the rest."""
+    for _ in range(4):
+        middles = [p for p in shape.to_polygons() if _area(p) < 0]
+        if not middles:
+            break
+        pieces = [(piece, piece.bounds()) for piece in shape.decompose()]
+        bars = []
+        for middle in middles:
+            xs = [x for x, _ in middle]
+            ys = [y for _, y in middle]
+            cx = (min(xs) + max(xs)) / 2
+            # The letter around this middle: the smallest piece whose bounds hold it.
+            around = [b for _, b in pieces if b[0] <= min(xs) and b[2] >= max(xs)
+                      and b[1] <= min(ys) and b[3] >= max(ys)]
+            if not around:
+                continue
+            b = min(around, key=lambda r: (r[2] - r[0]) * (r[3] - r[1]))
+            bars.append(CrossSection.square([bridge, b[3] - b[1] + 2.0])
+                        .translate([cx - bridge / 2, b[1] - 1.0]))
+        if not bars:
+            break
+        shape = shape - CrossSection.batch_boolean(bars, OpType.Add)
+    return shape

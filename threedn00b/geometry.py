@@ -12,7 +12,7 @@ from dataclasses import dataclass
 import numpy as np
 from manifold3d import CrossSection, Error, JoinType, Manifold, OpType
 
-from .model import (RAISED, TAB_REACH, TAB_WIDTH, ANGLED, BACK, BOTTOM, BOX, CAP_TOP_GAP, CYLINDER, FRAME_RIM, FRONT, LEFT,
+from .model import (CUT_THROUGH, RAISED, TAB_REACH, TAB_WIDTH, ANGLED, BACK, BOTTOM, BOX, CAP_TOP_GAP, CYLINDER, FRAME_RIM, FRONT, LEFT,
                     LID, RIGHT, ROUND, SCREWED, SCREWS, SIDE, SLIDING, SNAP_BUMP, SNAP_RIDGE, THREADED, THREAD_DEPTH,
                     THREAD_PITCH, VENT, Hole, Project, corner_rounding, divider_fillet,
                     divider_positions, divider_top, floor_inset, frame_thickness,
@@ -563,12 +563,14 @@ def _cut_lid_holes(project: Project, lid: Manifold) -> Manifold:
 
 
 LABEL_EMBED = 0.3       # raised text reaches this far into the surface, so they join
+LABEL_THROUGH = 0.1     # text cut through goes this much further than the surface is thick
 
 
 def label_solid(project: Project, label) -> Manifold | None:
     """The text as a solid on the outside of its surface: what is added (raised
     text) or cut away (engraved text)."""
-    from .text import outline
+    from .model import label_thickness
+    from .text import bridge_width, outline, stencil
     if label.surface not in project.surfaces():
         return None
     shape = outline(label.text, label.size)
@@ -576,6 +578,13 @@ def label_solid(project: Project, label) -> Manifold | None:
         return None
     if label.style == RAISED:
         z0, z1 = -LABEL_EMBED, label.depth
+    elif label.style == CUT_THROUGH:
+        # Right through the surface (and no further), with bridges so the middles of
+        # letters like O and A don't fall out.
+        shape = stencil(shape, bridge_width(label.size))
+        if shape.is_empty():
+            return None
+        z0, z1 = -(label_thickness(project, label.surface) + LABEL_THROUGH), 1.0
     else:
         z0, z1 = -label.depth, 1.0
     slab = Manifold.extrude(shape, z1 - z0).translate([0.0, 0.0, z0])
