@@ -87,6 +87,12 @@ def test_slicers_dont_get_the_appimage_libraries():
     env["LD_LIBRARY_PATH"] = "/tmp/.mount_3Dn00b/usr/lib"
     assert "LD_LIBRARY_PATH" not in clean_environment(env)
     assert clean_environment({"LD_LIBRARY_PATH": "/opt/lib"}) == {"LD_LIBRARY_PATH": "/opt/lib"}
+    # The AppImage's launcher remembers the path as it was before it added its own.
+    env = {"LD_LIBRARY_PATH": "/real/mount/usr/lib:/opt/lib", "THREEDN00B_LD_LIBRARY_PATH": "/opt/lib",
+           "APPDIR": "/tmp/link-to-mount"}
+    assert clean_environment(env) == {"LD_LIBRARY_PATH": "/opt/lib", "APPDIR": "/tmp/link-to-mount"}
+    env["THREEDN00B_LD_LIBRARY_PATH"] = ""
+    assert "LD_LIBRARY_PATH" not in clean_environment(env)
 
 
 def test_launch_opens_the_files(tmp_path, monkeypatch):

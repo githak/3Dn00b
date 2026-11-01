@@ -187,6 +187,13 @@ def clean_environment(env: dict[str, str]) -> dict[str, str]:
     3Dn00b's AppImage sets for itself, which would make another program load the wrong
     libraries."""
     env = dict(env)
+    if "THREEDN00B_LD_LIBRARY_PATH" in env:          # set by the AppImage: what it was before
+        before = env.pop("THREEDN00B_LD_LIBRARY_PATH")
+        if before:
+            env["LD_LIBRARY_PATH"] = before
+        else:
+            env.pop("LD_LIBRARY_PATH", None)
+        return {k: v for k, v in env.items() if k not in ("PYTHONHOME", "PYTHONPATH")}
     appdir = env.get("APPDIR")
     if appdir and "LD_LIBRARY_PATH" in env:
         kept = [p for p in env["LD_LIBRARY_PATH"].split(":") if p and not p.startswith(appdir)]
