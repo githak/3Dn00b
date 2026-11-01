@@ -1848,12 +1848,20 @@ ZERO = [("front", 12.4, 1.6, 11.5, 6.5, 0.6), ("front", 41.4, 1.3, 10.5, 6.5, 1.
 ZERO_CAMERA = [("right", 15.0, 1.0, 12.0, 2.0, 0.0)]
 PICO = [("left", 10.5, 1.3, 10.5, 6.5, 1.3)]
 UNO = [("left", 37.78, 5.5, 12.0, 11.0, 6.4), ("left", 7.62, 6.5, 10.0, 10.0, 1.5)]
+# Uno R4 Minima / WiFi drawings: USB-C at 37.7 (3 mm tall, 0.5 mm out), the jack at 7.8 (1.9 out).
+UNO_R4 = [("left", 37.7, 1.6, 12.5, 6.5, 0.5), ("left", 7.8, 6.5, 10.0, 10.0, 1.9)]
+# The Nano family's USB socket, in the middle of one end: the Nano's mini USB (3.75 mm tall,
+# 1.9 mm out), the Nano Every's micro USB (1.6 mm out) and the Nano ESP32's USB-C.
+NANO = [("left", 8.89, 1.9, 11.0, 7.0, 1.9)]
+NANO_EVERY = [("left", 8.89, 1.3, 10.5, 6.5, 1.6)]
+NANO_ESP32 = [("left", 8.89, 1.6, 12.5, 6.5, 1.5)]
 MEGA = [("left", 38.6, 5.5, 12.0, 11.0, 6.4), ("left", 7.62, 6.5, 10.0, 10.0, 1.5)]
 
 BOARD_SOCKETS = {
     "pi": [PI3 + PI_SD, PI4 + PI_SD, PI5 + PI_SD], "pi-gpio": [PI3 + PI_SD, PI4 + PI_SD, PI5 + PI_SD],
     "pi5-fan": [PI5 + PI_SD], "pi-3a": [PI3A], "pi-zero": [ZERO + ZERO_CAMERA],
-    "pi-zero-stack": [ZERO], "pico": [PICO], "arduino": [UNO], "mega": [MEGA],
+    "pi-zero-stack": [ZERO], "pico": [PICO], "arduino": [UNO, UNO_R4], "mega": [MEGA],
+    "pi5-hat": [PI5 + PI_SD], "nano": [NANO, NANO_EVERY, NANO_ESP32],
 }
 
 
@@ -2291,3 +2299,26 @@ def test_cut_through_text_round_trip_and_checks(tmp_path):
     assert issues == []                                # no "raised" or "too deep" warnings
     p.labels = [Label("BIG", FRONT, CUT_THROUGH, size=24)]
     assert any("bridges" in i.message for i in validation.check(p) if i.label_id)
+
+
+
+def test_pi5_hat_case_has_room_for_the_hat():
+    """M.2 HAT+ / AI HAT+ product briefs: 16 mm spacers, and a flat cable looping 5 mm out
+    past the Pi 5's SD card edge."""
+    from threedn00b.model import lid_ceiling
+    p = templates.from_template("pi5-hat")
+    m = p.mounts[0]
+    assert _edge_gap(p, m, "left") >= 5.5
+    hat_top = mounts.board_bottom(p, m) + mounts.BOARD_THICKNESS + 16.0 + 1.6
+    assert lid_ceiling(p) - hat_top >= 6.0                 # header pins and an SSD on top
+    assert not validation.has_errors(validation.check(p))
+
+
+def test_board_names_say_what_they_fit():
+    assert "Pico 2 W" in mounts.BOARDS["pico"].name
+    assert "R4" in mounts.BOARDS["uno"].name and "Giga" in mounts.BOARDS["mega"].name
+    nano = mounts.BOARDS["nano"]
+    assert nano.size == (43.18, 17.78) and nano.screw == "M1.6"
+    xs = sorted({round(x, 2) for x, _ in nano.holes})
+    ys = sorted({round(y, 2) for _, y in nano.holes})
+    assert xs[1] - xs[0] == pytest.approx(40.64) and ys[1] - ys[0] == pytest.approx(15.24)

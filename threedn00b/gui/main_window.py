@@ -1011,7 +1011,7 @@ class MainWindow(QMainWindow):
         form.addRow(self.lid_style_hint)
         self.lid_screw = QComboBox()
         for key in SCREWS:
-            if key != "M1":
+            if key not in ("M1", "M1.6"):           # too small to hold a lid down
                 self.lid_screw.addItem(f"{key} screws", key)
         self.lid_screw.activated.connect(
             lambda _: self.edit("Change lid screws",

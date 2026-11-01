@@ -107,6 +107,28 @@ def pi_case(fan: bool = False, gpio: bool = False) -> Project:
     return p
 
 
+def pi5_hat_case() -> Project:
+    """A Raspberry Pi 5 with an M.2 HAT+ or AI HAT+ on top.
+
+    From their product briefs: the HAT is 65 x 56.5 mm with the Pi's four holes, on a
+    16 mm stacking header and spacers, and its flat cable loops 5 mm past the HAT's
+    edge (between 21 and 39 mm along it) to the Pi 5's PCIe socket, which the Pi 5
+    drawing puts on the SD card edge at 25 to 35 mm. So the case is taller, with more
+    room on that side, and an air vent over the HAT (the AI HAT+ needs air).
+    """
+    room = dict(PI_ROOM, left=6.0)
+    p = _box("Raspberry Pi 5 case for a HAT", 85 + room["left"] + room["right"],
+             56 + room["front"] + room["back"], 38.0)
+    m = _board(p, "rpi-ab", 6.0, u=(room["left"] - room["right"]) / 2,
+               v=(room["front"] - room["back"]) / 2)
+    m.parts_height = 16.0 + 1.6 + 6.0       # spacers, the HAT, and the header pins above it
+    pi_openings(p, m)
+    x, y = _floor_point(m, 31.0, 28.0)
+    p.holes.append(Hole(surface=LID, kind=VENT, width=40.0, height=16.0, u=x, v=y,
+                        rounding=1.0))
+    return p
+
+
 def pi_openings(p: Project, m: Mount) -> None:
     """All the openings a Raspberry Pi 3 B+ / 4 / 5 on posts `m` needs."""
     top = _top(p, m)
@@ -134,6 +156,24 @@ def pico_case() -> Project:
     top = _top(p, m)
     _opening(p, *_facing(p, m, 0, 10.5), top - 3.0, top + 5.0, 11.5, rounding=2.0)  # micro USB
     # A hole for the wires to whatever the Pico controls.
+    p.holes.append(Hole(surface=RIGHT, diameter=6.0, v=top + 2.0 - p.outer_height / 2))
+    return p
+
+
+def nano_case() -> Project:
+    """An Arduino Nano, Nano Every or Nano ESP32 (43.18 x 17.78 mm, from their datasheets).
+
+    The USB socket (mini USB, micro USB or USB-C) is in the middle of one end and sticks
+    out up to 1.9 mm (the Nano's mini USB). Tall posts leave room for the pin headers
+    soldered underneath, which reach 8.2 mm below the board on the Nano's drawing.
+    """
+    w, d = mounts.BOARDS["nano"].size
+    usb_room, room = 2.5, 1.5
+    p = _box("Arduino Nano case", w + usb_room + room, d + 2 * room, 24.0, corner=2.5)
+    m = _board(p, "nano", 10.0, u=(usb_room - room) / 2, v=0.0)
+    top = _top(p, m)
+    _opening(p, *_facing(p, m, 0, d / 2), top - 3.5, top + 5.5, 13.0, rounding=2.0)  # USB
+    # A hole for the wires to whatever the Nano controls.
     p.holes.append(Hole(surface=RIGHT, diameter=6.0, v=top + 2.0 - p.outer_height / 2))
     return p
 
@@ -235,16 +275,18 @@ def pi_3a_case() -> Project:
 
 
 def arduino_case(board: str = "uno") -> Project:
-    # USB B socket at 37.8 (Uno) or about 38.6 (Mega) and power jack at 7.6 on the left
-    # edge (Arduino datasheets). The USB socket sticks out 6.4 mm, so the board sits 7 mm
+    # USB B socket at 37.8 (Uno R3) or about 38.6 (Mega), USB-C at 37.7 (Uno R4), and the
+    # power jack at 7.6 (7.8 on the R4) on the left edge (Arduino datasheets). The USB socket sticks out 6.4 mm, so the board sits 7 mm
     # in to let it drop into place.
     w, d = mounts.BOARDS[board].size
     name = "Arduino Mega case" if board == "mega" else "Arduino Uno case"
     p = _box(name, w + 7.0 + 1.9, d + 3.7, 26.0)
     m = _board(p, board, 5.0, u=(7.0 - 1.9) / 2, v=0.0)
     top = _top(p, m)
+    # USB B (Uno R3 and Mega), or USB-C (Uno R4, at 37.7, lower: its plug reaches 1.7 mm
+    # below the top of the board).
     _, y = _floor_point(m, 0, 38.2)
-    _opening(p, LEFT, y, top - 0.5, top + 12.0, 14.0)               # USB B (Uno and Mega)
+    _opening(p, LEFT, y, top - 2.0, top + 12.0, 14.0)
     # The jack sits 4.6 mm back from the wall, so the plug's moulded part goes into it.
     _, y = _floor_point(m, 0, 7.62)
     _opening(p, LEFT, y, top - 0.5, top + 12.0, 11.5, rounding=3.0)  # power jack
@@ -459,6 +501,10 @@ TEMPLATES = {
                         "Like the Pi 3 / 4 / 5 case, with a 30 mm fan in the lid blowing onto "
                         "the processor. The fan's wires go to the Pi's 5 V and ground pins.",
                         lambda: pi_case(fan=True)),
+    "pi5-hat": Template("Raspberry Pi 5 case for an M.2 HAT+ or AI HAT+",
+                        "Like the Pi 3 / 4 / 5 case, taller for a HAT on its 16 mm spacers, "
+                        "with room beside the SD card for the HAT's flat cable and an air vent "
+                        "over the HAT.", pi5_hat_case),
     "pi-gpio": Template("Raspberry Pi 3 / 4 / 5 case with GPIO slot",
                         "Like the Pi 3 / 4 / 5 case, with a slot in the lid over the 40-pin "
                         "header for a ribbon cable.", lambda: pi_case(gpio=True)),
@@ -472,15 +518,23 @@ TEMPLATES = {
     "pi-3a": Template("Raspberry Pi 3 A+ case",
                       "Posts, openings for power, HDMI, audio, USB and the SD card, and a lid "
                       "with an air vent.", pi_3a_case),
-    "arduino": Template("Arduino Uno case",
-                        "Posts for the board and openings for the USB and power plugs. Make it "
-                        "taller if you add a shield.", arduino_case),
+    "arduino": Template("Arduino Uno R3 / R4 case",
+                        "Posts for the board and openings for the USB plug (USB B on the R3, "
+                        "USB-C on the R4) and the power plug. Make it taller if you add a "
+                        "shield.", arduino_case),
     "mega": Template("Arduino Mega 2560 case",
                      "Posts for all six holes and openings for the USB and power plugs. Make it "
-                     "taller if you add a shield.", lambda: arduino_case("mega")),
-    "pico": Template("Raspberry Pi Pico case",
-                     "Posts tall enough for pin headers underneath, an opening for the USB plug "
-                     "and a hole for wires.", pico_case),
+                     "taller if you add a shield. (The Giga R1 WiFi fits the posts, but its "
+                     "sockets are different: add openings to suit.)", lambda: arduino_case("mega")),
+    "nano": Template("Arduino Nano case",
+                     "For the Arduino Nano, Nano Every, Nano ESP32 and other boards of the same "
+                     "size: tall posts leave room for the pins underneath, an opening for the "
+                     "USB plug and a hole for wires.", nano_case),
+    "pico": Template("Raspberry Pi Pico / Pico 2 case",
+                     "Fits the Pico, Pico W, Pico 2 and Pico 2 W: posts tall enough for pin "
+                     "headers underneath, an opening for the USB plug and a hole for wires. On "
+                     "a W, the antenna is at the end away from the USB plug: keep metal away "
+                     "from it.", pico_case),
     "esp32": Template("ESP32 DevKit case",
                       "For the common 30-pin ESP32 boards. Boards differ: measure yours and "
                       "change the board size and hole spacing in the Posts tab.", esp32_case),
@@ -537,8 +591,9 @@ TEMPLATES = {
 }
 # How the list is grouped in the app: (heading, template keys).
 GROUPS = (
-    ("Cases for boards", ("pi", "pi-gpio", "pi5-fan", "pi-3a", "pi-zero", "pi-zero-stack", "pico",
-                          "arduino", "mega", "esp32", "breadboard", "project-box")),
+    ("Cases for boards", ("pi", "pi-gpio", "pi5-fan", "pi5-hat", "pi-3a", "pi-zero",
+                          "pi-zero-stack", "pico", "arduino", "mega", "nano", "esp32",
+                          "breadboard", "project-box")),
     ("Storage", ("storage", "tray", "sorter", "parts", "craft", "batteries", "pills", "cards",
                  "dice", "picks", "tin", "money")),
     ("Around the house", ("desk", "remotes", "charging", "tea", "plant-pot", "pencil-cup",

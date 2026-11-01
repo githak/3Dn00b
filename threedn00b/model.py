@@ -124,6 +124,7 @@ class Screw:
 # plastic; posts are wide enough to leave a strong wall around the hole.
 SCREWS = {
     "M1": Screw(pilot=0.9, post=3.5, nominal=1.0),
+    "M1.6": Screw(pilot=1.3, post=4.0, nominal=1.6),      # Arduino Nano holes are 1.65 to 1.8 mm
     "M2": Screw(pilot=1.7, post=5.0, nominal=2.0),
     "M2.5": Screw(pilot=2.2, post=6.0, nominal=2.5),
     "M3": Screw(pilot=2.6, post=7.0, nominal=3.0),

@@ -568,6 +568,10 @@ def _check_mounts(p: Project) -> list[Issue]:
             out.append(Issue(WARNING, f"{name}: holes for M1 screws are tiny ({screw.pilot} mm) and "
                              "may close up when printed.", "You may need to drill them out.",
                              mount_id=m.id))
+        elif m.screw == "M1.6":
+            out.append(Issue(INFO, f"{name}: holes for M1.6 screws are small ({screw.pilot} mm).",
+                             "If a screw won't go in, open the hole up with a 1.3 mm drill.",
+                             mount_id=m.id))
         if m.length > 6 * screw.post:
             out.append(Issue(WARNING, f"{name}: the posts are tall and thin and may snap.",
                              "Use shorter posts or a bigger screw size.", mount_id=m.id))
