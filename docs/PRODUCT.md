@@ -379,6 +379,35 @@ Defaults I chose myself, which are easy to change:
   one opening along the socket edge (49 mm wide, from 2 mm below the board's top to 15 mm
   above it, for the Ethernet socket) that fits the sockets wherever they are on it; 4 mm
   of room at that edge, 14 mm for the parts on top, and an air vent in the lid.
+- Magnetic lid and Open in my slicer (0.32), the sixth group (the project owner had no
+  preference among the three ideas left, so the two small ones came first; languages
+  are still open):
+  - Lid held by magnets: a new lid type, flat like the screwed lid, with the same
+    corner columns in the box. Each column has a pocket in its top and the lid a
+    matching pocket underneath, for round neodymium magnets (5 x 2, 6 x 2, 6 x 3,
+    8 x 2, 8 x 3, 10 x 2, 10 x 3, 12 x 3 mm). Pockets are 0.3 mm wider than the magnet
+    (printed holes come out smaller) and 0.2 mm deeper (glue); the column keeps 1.2 mm
+    around a pocket and the lid 0.8 mm over it. Choosing magnets raises the lid
+    thickness to cover them (an error with a fix button otherwise). Checks: a box too
+    small or too shallow for the columns, engraved or cut-through text over a pocket,
+    holes in the lid too close to a pocket, and holes and boards in the columns' way.
+    An info line says how many magnets to buy and how to glue them so each pair
+    attracts (box magnets all the same way up, then each lid magnet stuck on its
+    partner, marked, and glued in mark-down). The lid can have the tab and the
+    finger notch. The fit test's lid ring keeps the corners with the pockets. New
+    template "Box with magnetic lid" (90 x 60 x 40 mm, 6 x 3 mm magnets, finger notch).
+    Project format 18.
+  - Open in my slicer: threedn00b/slicers.py finds PrusaSlicer, OrcaSlicer, Bambu
+    Studio, UltiMaker Cura, SuperSlicer and Creality Print from their menu entries
+    (.desktop files in the XDG data folders, Flatpak and Snap exports: the Exec line,
+    with the file codes replaced by the files and Flatpak's file forwarding kept), then
+    their programs on the PATH, then executable AppImages in ~/Applications,
+    ~/AppImages, ~/Downloads and ~/.local/bin. The Export card gets an "Open in" choice
+    (remembered), or a hint when none is found; the message after exporting (and after
+    a fit test) has an "Open in …" button. The slicer starts on its own, without the
+    library path 3Dn00b's AppImage sets for itself (it would load the wrong libraries).
+    Tested with a real PrusaSlicer: found through its menu entry and started with the
+    exported body and lid.
 - Push-on lid that follows the box size, with fit presets.
 - Plain-language checks covering impossible sizes, thin walls, holes off the
   edge, holes behind the lid lip, overlapping or too-close holes, a lid that
@@ -397,7 +426,8 @@ STL import and editing.
 ## Postponed (candidates for later, in rough priority order)
 
 Picked by the project owner and still open: an Orange Pi Zero 3 board with its real hole
-and socket positions, if Orange Pi publishes a drawing.
+and socket positions, if Orange Pi publishes a drawing. Suggested and not yet picked:
+Norwegian and other languages.
 
 Each addition must pass the brief's test: does it make a common beginner task
 much easier, without CAD vocabulary, and without making the interface busier?

@@ -835,7 +835,7 @@ def test_parts_height_can_be_changed():
 
 # ---- screwed-down lid --------------------------------------------------------
 
-from threedn00b.model import SCREWED, lid_screw_positions  # noqa: E402
+from threedn00b.model import SCREWED, lid_column_positions  # noqa: E402
 
 
 def screwed_box(**kw):
@@ -846,9 +846,9 @@ def screwed_box(**kw):
 
 def test_screw_columns_sit_in_the_corners():
     p = screwed_box(corner_radius=0)              # inside 76 x 56, M3 column radius 3.5
-    assert sorted(lid_screw_positions(p)) == [(-34.5, -24.5), (-34.5, 24.5), (34.5, -24.5), (34.5, 24.5)]
+    assert sorted(lid_column_positions(p)) == [(-34.5, -24.5), (-34.5, 24.5), (34.5, -24.5), (34.5, 24.5)]
     p = screwed_box(corner_radius=15)             # inside corner radius 13: tangent to the curve
-    x, y = lid_screw_positions(p)[0]
+    x, y = lid_column_positions(p)[0]
     arc_centre = (-(38 - 13), -(28 - 13))
     assert math.dist((x, y), arc_centre) == pytest.approx(13 - 3.5)
 
@@ -865,7 +865,7 @@ def test_screwed_lid_geometry(shape, corner):
     assert body.bounding_box() == pytest.approx(geometry.build_body(default_project(shape)).bounding_box())
     assert lid.bounding_box()[2] == pytest.approx(p.outer_height)        # flat: no lip
     assert geometry.overlap_volume(body, lid) < 1e-6
-    for x, y in lid_screw_positions(p):
+    for x, y in lid_column_positions(p):
         # Pilot hole from the top, 16 mm deep; the lid's hole goes right through.
         assert body.ray_cast([x, y, 200], [x, y, -5])[0].position[2] == pytest.approx(p.outer_height - 16)
         assert not lid.ray_cast([x, y, 200], [x, y, p.outer_height - 0.5])
@@ -2658,3 +2658,106 @@ def test_orange_pi_zero3_case_is_set_up_for_measuring():
     assert z0 <= top - 1.5 and z0 + opening.height >= top + 14.0
     assert opening.width >= 55.0 - 6.0 - 1e-9 and abs(opening.u - m.u) < 1e-9
     assert 1.0 <= _edge_gap(p, m, "front") <= 5.0
+
+
+# ---- lids held by magnets ---------------------------------------------------
+
+from threedn00b.model import (MAGNET_SIZES, MAGNETS, has_finger_notch, has_lid_tab,  # noqa: E402
+                              magnet_lid_thickness, magnet_pocket)
+
+
+def magnet_box(shape=BOX, **kw):
+    p = default_project(shape)
+    p.lid.enabled, p.lid.style = True, MAGNETS
+    for k, v in kw.items():
+        setattr(p.lid, k, v)
+    p.lid.thickness = max(p.lid.thickness, magnet_lid_thickness(p))
+    return p
+
+
+@pytest.mark.parametrize("shape,magnet", [(BOX, "6x3"), (BOX, "10x2"), (CYLINDER, "8x3")])
+def test_magnet_lid_has_matching_pockets(shape, magnet):
+    p = magnet_box(shape, magnet=magnet)
+    parts = geometry.build_parts(p)
+    body, lid = parts.body, parts.lid
+    for solid in (body, lid):
+        assert geometry.piece_count(solid) == 1 and _edges_shared_twice(solid)
+    assert geometry.overlap_volume(body, lid) < 1e-6
+    assert lid.bounding_box()[2] == pytest.approx(p.outer_height)        # flat: no lip
+    h = p.outer_height
+    d, depth = magnet_pocket(p)
+    m = MAGNET_SIZES[magnet]
+    assert (d, depth) == pytest.approx((m.diameter + 0.3, m.thickness + 0.2))
+    positions = lid_column_positions(p)
+    assert len(positions) == 4
+    for x, y in positions:
+        # A pocket in the top of each column, as wide and deep as the magnet needs ...
+        down = body.ray_cast([x, y, h + 5], [x, y, -5])[0].position[2]
+        assert down == pytest.approx(h - depth, abs=0.01)
+        edge = x + (d / 2 - 0.1) * (1 if x < 0 else -1)          # just inside the pocket's rim
+        assert body.ray_cast([edge, y, h + 5], [edge, y, -5])[0].position[2] == pytest.approx(h - depth, abs=0.05)
+        rim = x + (d / 2 + 0.2) * (1 if x < 0 else -1)           # the column around it
+        assert body.ray_cast([rim, y, h + 5], [rim, y, -5])[0].position[2] == pytest.approx(h, abs=0.01)
+        # ... and one right above it in the lid, with plastic left over it.
+        up = lid.ray_cast([x, y, h - 1], [x, y, h + 20])[0].position[2]
+        assert up == pytest.approx(h + depth, abs=0.01)
+        assert p.lid.thickness - depth >= 0.8 - 1e-9
+    assert not validation.has_errors(validation.check(p, parts))
+
+
+def test_magnet_lid_checks():
+    p = default_project(BOX)
+    p.lid.enabled, p.lid.style, p.lid.magnet, p.lid.thickness = True, MAGNETS, "8x3", 2.0
+    issue = next(i for i in validation.check(p) if "too thin for 8 × 3 mm magnets" in i.message)
+    assert issue.level == "error" and issue.fix_values == {"lid.thickness": 4.0}
+    p.lid.thickness = 4.0
+    issues = validation.check(p)
+    assert not validation.has_errors(issues)
+    assert any("8 round magnets of 8 × 3 mm" in i.message for i in issues)
+    small = magnet_box(magnet="12x3")
+    small.width = small.depth = 30.0                 # 26 mm inside; columns need 32
+    assert any("too small for the corner columns" in i.message for i in validation.check(small))
+    shallow = magnet_box(magnet="10x3")
+    shallow.height = 6.0                             # 4 mm inside for a 3.2 mm pocket
+    assert any("too shallow" in i.message for i in validation.check(shallow))
+
+
+def test_magnet_lid_conflicts():
+    p = magnet_box()
+    x, y = lid_column_positions(p)[0]
+    p.labels = [Label(text="AB", surface=LID, style=CUT_THROUGH, size=6, u=x + 3, v=y + 3)]
+    assert "over a magnet's pocket" in messages(validation.check(p))
+    p.labels[0].style = RAISED
+    assert "over a magnet's pocket" not in messages(validation.check(p))
+    p.labels = []
+    p.holes = [Hole(LID, 4, x + 4, y + 4)]
+    assert "too close to a pocket in the lid" in messages(validation.check(p))
+    p.holes = [Hole(FRONT, 6, x + 3.0, 0)]           # where the column meets the front wall
+    issue = next(i for i in validation.check(p) if i.hole_id)
+    assert "magnet column" in issue.message
+
+
+def test_magnet_lid_can_have_a_tab_and_notch():
+    p = magnet_box()
+    plain = geometry.build_lid(p).bounding_box()
+    p.lid.opening = "both"
+    assert has_lid_tab(p) and has_finger_notch(p)
+    with_tab = geometry.build_lid(p).bounding_box()
+    assert with_tab[1] < plain[1] - 4.0                     # the tab sticks out at the front
+    body = geometry.build_body(p)
+    front = -p.outer_depth / 2 + p.wall / 2
+    hit = body.ray_cast([0, front, p.outer_height + 5], [0, front, 0])[0].position[2]
+    assert hit < p.outer_height - 2.0                       # the notch in the wall's top
+    assert not validation.has_errors(validation.check(p))
+
+
+def test_magnet_lid_round_trip(tmp_path):
+    p = magnet_box(magnet="10x3")
+    path = tmp_path / "magnets.3dn00b"
+    project_io.save_project(p, path)
+    assert project_io.load_project(path) == p
+    data = project_io.to_dict(p)
+    assert data["version"] >= 18
+    data["project"]["lid"]["magnet"] = "7x7"
+    with pytest.raises(project_io.ProjectFileError):
+        project_io.from_dict(data)

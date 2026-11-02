@@ -48,6 +48,8 @@ APPRUN = """\
 #!/bin/sh
 # Start 3Dn00b with its own Python and libraries.
 HERE="$(dirname "$(readlink -f "$0")")"
+# Remember the library path as it was, for the programs 3Dn00b starts (a slicer).
+export THREEDN00B_LD_LIBRARY_PATH="${LD_LIBRARY_PATH-}"
 export LD_LIBRARY_PATH="$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 unset PYTHONHOME PYTHONPATH
 exec "$HERE/usr/python/bin/python3" -I "$HERE/usr/lib/3dn00b/launch.py" "$@"

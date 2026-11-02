@@ -120,8 +120,9 @@ PAGES = (
              "3D view to move the posts together.",
              2, lambda w: [w.add_posts_card, w.mount_card], _select_first_board),
     TourPage("Choose a lid",
-             "Push-on, snap-on, sliding, screwed down or threaded. For tight lids, add a tab or a "
-             "finger notch so they're easy to open.", 3, lambda w: [w.lid_card]),
+             "Push-on, snap-on, sliding, screwed down, held by magnets or threaded. For tight "
+             "lids, add a tab or a finger notch so they're easy to open.", 3,
+             lambda w: [w.lid_card]),
     TourPage("Add text",
              "Put a name or a label on the walls, the lid or the bottom: raised so it stands "
              "out, engraved (cut in), or cut right through like a stencil. Engraved text prints "

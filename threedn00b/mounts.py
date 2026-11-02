@@ -10,7 +10,7 @@ import math
 from dataclasses import dataclass
 
 from .model import (SCREWS, Mount, Project, flat_clearance, has_lip, lid_column_radius, post_diameter,
-                    lid_screw_positions, lip_outer_offset, lip_wall)
+                    lid_column_positions, lip_outer_offset, lip_wall)
 
 BOARD_THICKNESS = 1.6     # standard circuit board thickness
 STACK_AIR = 1.0           # extra room between a board's tallest part and the board above
@@ -273,7 +273,7 @@ COLUMN_ROOM = 0.5      # room kept between a board and a lid screw column
 def column_clearance(project: Project, m: Mount, u: float | None = None,
                      v: float | None = None) -> float:
     """Room (mm) between the set and the lid's screw columns (large if there are none)."""
-    columns = lid_screw_positions(project)
+    columns = lid_column_positions(project)
     if not columns:
         return 1e9
     du = 0.0 if u is None else u - m.u

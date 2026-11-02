@@ -26,6 +26,8 @@ def window(tmp_path, monkeypatch):
     from PySide6.QtCore import QSettings
     from threedn00b.gui.main_window import APP_NAME, MainWindow
     QSettings(APP_NAME, APP_NAME).clear()     # Qt keeps the settings file of the first test
+    from threedn00b import slicers
+    monkeypatch.setattr(slicers, "find_slicers", lambda: [])   # whatever this computer has
     w = MainWindow()
     w.show()
     app.processEvents()
@@ -467,6 +469,26 @@ def test_lid_type_controls(window):
     assert window.project.lid.style == "push"
 
 
+def test_magnet_lid_controls(window):
+    window.lid_check.setChecked(True)
+    form = window.lid_form
+    window.lid_thickness.setValue(2.0)
+    window.lid_style.setCurrentIndex(window.lid_style.findData("magnets"))
+    window.lid_style.activated.emit(window.lid_style.currentIndex())
+    lid = window.project.lid
+    assert lid.style == "magnets" and lid.thickness == 4.0          # thick enough for 6 x 3
+    assert form.isRowVisible(window.lid_magnet) and not form.isRowVisible(window.fit_combo)
+    assert form.isRowVisible(window.lid_opening) and not form.isRowVisible(window.lid_screw)
+    window.lid_magnet.setCurrentIndex(window.lid_magnet.findData("6x2"))
+    window.lid_magnet.activated.emit(window.lid_magnet.currentIndex())
+    assert window.project.lid.magnet == "6x2" and window.project.lid.thickness == 4.0
+    assert not validation_errors(window)
+    assert "superglue" in window.lid_tip.text()
+    window.undo_stack.undo()
+    window.undo_stack.undo()
+    assert window.project.lid.style == "push" and window.project.lid.thickness == 2.0
+
+
 def test_snap_and_sliding_lid_controls(window):
     window.lid_check.setChecked(True)
     form = window.lid_form
@@ -827,6 +849,44 @@ def test_plastic_estimate_and_wall_fix(window):
     assert window.project.wall == 2.0
     window.undo_stack.undo()
     assert window.project.wall == 1.8
+
+
+def test_export_opens_in_the_slicer(window, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog, QMessageBox
+    from threedn00b import slicers
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: str(tmp_path)))
+    found = [slicers.Slicer("prusaslicer", "PrusaSlicer", ("prusa-slicer", "%F")),
+             slicers.Slicer("orcaslicer", "OrcaSlicer", ("orca-slicer", "%F"))]
+    monkeypatch.setattr(slicers, "find_slicers", lambda: found)
+    opened = []
+    monkeypatch.setattr(slicers, "launch", lambda slicer, files: opened.append((slicer.key, files)) or True)
+    buttons = []
+
+    def press_open(box):                         # the "Open in …" button is the default one
+        buttons.append(box.defaultButton().text())
+        box.defaultButton().click()
+    monkeypatch.setattr(QMessageBox, "exec", press_open)
+    window.refresh_slicers()
+    assert window.export_form.isRowVisible(window.slicer_combo) and window.slicer_hint.isHidden()
+    window.slicer_combo.setCurrentIndex(1)
+    window.slicer_combo.activated.emit(1)
+    assert window.settings.value("slicer") == "orcaslicer"
+    window.refresh_slicers()                     # remembered
+    assert window.slicer_combo.currentData() == "orcaslicer"
+    window.export_button.click()
+    assert buttons == ["Open in OrcaSlicer"]
+    assert opened == [("orcaslicer", [tmp_path / "my-box-body.stl"])]
+    # Without a slicer: just say where the files are.
+    monkeypatch.setattr(slicers, "find_slicers", lambda: [])
+    window.refresh_slicers()
+    assert not window.export_form.isRowVisible(window.slicer_combo)
+    assert "No slicer found" in window.slicer_hint.text()
+    shown = []
+    monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda *a, **k: shown.append(a[2])))
+    monkeypatch.setattr(QMessageBox, "question",               # replace the files from before
+                        staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes))
+    window.export_button.click()
+    assert "Open these in your slicer" in shown[0] and len(opened) == 1
 
 
 def test_fit_test_card(window, tmp_path, monkeypatch):

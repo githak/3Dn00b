@@ -13,9 +13,10 @@ from dataclasses import dataclass
 from . import geometry, mounts, printers, text
 from .model import (SIDE_LABELS, ALONG_V, BACK, BOTTOM, BOX, CYLINDER, FRONT, LEFT, LID, MIN_EDGE, RIGHT,
                     SCREWS, SIDE, SNAP_BUMP, SURFACE_LABELS, VENT, Hole, Project, has_lip,
-                    THREADED, has_screw_lid, has_sliding_lid, has_snap_lid, has_threaded_lid,
+                    THREADED, MAGNETS, MAGNET_SIZES, has_corner_columns, has_magnet_lid, has_screw_lid,
+                    has_sliding_lid, lid_column_radius, magnet_lid_thickness, magnet_pocket, has_snap_lid, has_threaded_lid,
                     slide_engage, slide_groove, thread_sizes,
-                    lid_ceiling, lid_pilot_depth, lid_screw_positions, wall_corner_zone, clamp_hole, comfortable_margin,
+                    lid_ceiling, lid_pilot_depth, lid_column_positions, wall_corner_zone, clamp_hole, comfortable_margin,
                     compartment_depths, compartment_size, compartment_widths, divider_fillet,
                     has_set_sizes, divider_positions, divider_top,
                     has_dividers, has_frame,
@@ -259,6 +260,8 @@ def _check_lid(p: Project) -> list[Issue]:
         return []
     if has_screw_lid(p):
         return _check_screw_lid(p)
+    if has_magnet_lid(p):
+        return _check_magnet_lid(p)
     if has_sliding_lid(p):
         return _check_sliding_lid(p)
     if p.lid.style == THREADED:
@@ -349,17 +352,65 @@ def _check_sliding_lid(p: Project) -> list[Issue]:
     return out
 
 
+def _columns_crowded(p: Project, r: float) -> bool:
+    """Do the four corner columns (radius r) leave too little room between them?"""
+    positions = lid_column_positions(p)
+    if p.shape == CYLINDER:
+        return math.dist(positions[0], positions[1]) < 2 * r + 1
+    return min(p.inner_width, p.inner_depth) < 4 * r + 2
+
+
+def _magnet_label(p: Project) -> str:
+    m = MAGNET_SIZES[p.lid.magnet]
+    return f"{m.diameter:g} × {m.thickness:g} mm"
+
+
+def _check_magnet_lid(p: Project) -> list[Issue]:
+    out = []
+    lid = p.lid
+    positions = lid_column_positions(p)
+    size = _magnet_label(p)
+    pocket_d, pocket_depth = magnet_pocket(p)
+    if _columns_crowded(p, lid_column_radius(p)):
+        out.append(Issue(ERROR, f"The box is too small for the corner columns that hold {size} "
+                         "magnets.", "Make the box bigger, or use smaller magnets or a push-on lid."))
+    if p.inner_height < pocket_depth + 1.0:
+        out.append(Issue(ERROR, f"The box is too shallow for the magnets' pockets "
+                         f"({_mm(pocket_depth)} deep).", "Make the box taller."))
+    needed = round(magnet_lid_thickness(p), 2)
+    if lid.thickness < needed - 1e-6:
+        out.append(Issue(ERROR, f"The lid is too thin for {size} magnets: it needs to be at least "
+                         f"{_mm(needed)} thick to cover them.", "Make the lid thicker, or use "
+                         "thinner magnets.", fix_values={"lid.thickness": needed},
+                         fix_label=f"Make the lid {_mm(needed)} thick"))
+    n = len(positions)
+    out.append(Issue(INFO, f"You need {2 * n} round magnets of {size}: {n} in the box's corners "
+                     f"and {n} in the lid.",
+                     "Glue the box's magnets in first, all with the same side up. Then stick a "
+                     "magnet onto each one, mark its top, and glue it into the lid with that mark "
+                     "facing down into the pocket, so each pair pulls together."))
+    # Text cut deep into the lid would break into a pocket.
+    for label in p.labels:
+        if label.surface != LID or label.style == RAISED or not label.text.strip():
+            continue
+        deep = label.style == CUT_THROUGH or label.depth > lid.thickness - pocket_depth - 0.4
+        hx, hy = label_half_extents(label)
+        near = any(abs(label.u - x) < hx + pocket_d / 2 + 0.5 and abs(label.v - y) < hy + pocket_d / 2 + 0.5
+                   for x, y in positions)
+        if deep and near:
+            out.append(Issue(WARNING, f"{label_name(p, label)} is over a magnet's pocket and would "
+                             "cut into it.", "Move the text away from the corner, or make it raised.",
+                             label_id=label.id))
+    out += _column_conflicts(p, "magnet columns", pocket_d)
+    return out
+
+
 def _check_screw_lid(p: Project) -> list[Issue]:
     out = []
     lid = p.lid
     screw = SCREWS[lid.screw]
-    r = screw.post / 2
-    positions = lid_screw_positions(p)
-    if p.shape == CYLINDER:
-        crowded = math.dist(positions[0], positions[1]) < 2 * r + 1
-    else:
-        crowded = min(p.inner_width, p.inner_depth) < 4 * r + 2
-    if crowded:
+    positions = lid_column_positions(p)
+    if _columns_crowded(p, screw.post / 2):
         out.append(Issue(ERROR, "The box is too small for the lid's screw columns.",
                          "Make the box bigger, or use smaller screws or a push-on lid."))
     depth = lid_pilot_depth(p)
@@ -389,7 +440,17 @@ def _check_screw_lid(p: Project) -> list[Issue]:
         out.append(Issue(INFO, f"The lid needs {len(positions)} {lid.screw} screws, up to {longest:g} mm "
                          "long. They cut their own thread into the corner columns.",
                          "Don't overtighten them, or the thread in the plastic can strip."))
-    # Things that would run into the screw columns.
+    out += _column_conflicts(p, "screw columns", screw.clearance)
+    return out
+
+
+def _column_conflicts(p: Project, what: str, lid_hole: float) -> list[Issue]:
+    """Holes and boards that would run into the lid's corner columns (`what`), and lid
+    holes too close to the holes or pockets (`lid_hole` across) above them."""
+    out = []
+    positions = lid_column_positions(p)
+    r = lid_column_radius(p)
+    in_lid = "pocket" if p.lid.style == MAGNETS else "screw hole"
     for hole in p.holes:
         name = hole_name(p, hole)
         hu, _ = hole.half_extents
@@ -399,23 +460,23 @@ def _check_screw_lid(p: Project) -> list[Issue]:
                 angle = math.degrees(math.atan2(x, -y))
                 arc = math.radians(abs((hole.u - angle + 180.0) % 360.0 - 180.0)) * inner_r
                 if arc - hu - r < MIN_EDGE:
-                    out.append(Issue(ERROR, f"{name} runs into one of the lid's screw columns.",
+                    out.append(Issue(ERROR, f"{name} runs into one of the lid's {what}.",
                                      "Turn it so it sits between two columns.", hole.id))
                     break
         elif hole.surface == BOTTOM:
             if any(point_near_opening(p, hole, x, y, r) for x, y in positions):
-                out.append(Issue(WARNING, f"{name} is under one of the lid's screw columns.",
+                out.append(Issue(WARNING, f"{name} is under one of the lid's {what}.",
                                  "Move it away from the corner.", hole.id))
         elif hole.surface == LID:
             for x, y in positions:
-                screw_hole = Hole(LID, diameter=screw.clearance, u=x, v=y)
-                if opening_gap(p, hole, screw_hole) < 1.0:
-                    out.append(Issue(WARNING, f"{name} is too close to a screw hole in the lid.",
+                column_hole = Hole(LID, diameter=lid_hole, u=x, v=y)
+                if opening_gap(p, hole, column_hole) < 1.0:
+                    out.append(Issue(WARNING, f"{name} is too close to a {in_lid} in the lid.",
                                      "Move it away from the corner.", hole.id))
                     break
     for m in p.mounts:
         if mounts.column_clearance(p, m) < mounts.COLUMN_ROOM - 1e-6:
-            out.append(Issue(ERROR, f"{mount_name(p, m)} runs into one of the lid's screw columns.",
+            out.append(Issue(ERROR, f"{mount_name(p, m)} runs into one of the lid's {what}.",
                              "Move it away from the corner.", mount_id=m.id,
                              fix=mounts.clamp_mount(p, m, m.u, m.v),
                              fix_label="Move to the nearest spot that fits"))
@@ -463,7 +524,8 @@ def _check_holes(p: Project) -> list[Issue]:
             out.append(Issue(ERROR, f"{name} is behind the lid's lip, so the lid would cover it from inside.",
                              "Move the hole lower, or make the lid's lip shorter.", hole.id, fix, fix_label))
         elif clearance < MIN_EDGE and _near_screw_column(p, hole):
-            out.append(Issue(ERROR, f"{name} runs into the lid's screw column in the corner.",
+            kind = "magnet" if has_magnet_lid(p) else "screw"
+            out.append(Issue(ERROR, f"{name} runs into the lid's {kind} column in the corner.",
                              "Move it further from the corner or make it smaller.", hole.id, fix,
                              fix_label))
         elif clearance < MIN_EDGE:
@@ -866,8 +928,8 @@ def _check_vent(hole: Hole, name: str) -> list[Issue]:
 
 
 def _near_screw_column(p: Project, hole: Hole) -> bool:
-    """Is a wall hole stopped by a screw column (rather than by the wall's end)?"""
-    if not has_screw_lid(p) or hole.surface not in (FRONT, BACK, LEFT, RIGHT):
+    """Is a wall hole stopped by a corner column (rather than by the wall's end)?"""
+    if not has_corner_columns(p) or hole.surface not in (FRONT, BACK, LEFT, RIGHT):
         return False
     span = p.inner_width if hole.surface in (FRONT, BACK) else p.inner_depth
     reach = abs(hole.u) + hole.half_extents[0]
