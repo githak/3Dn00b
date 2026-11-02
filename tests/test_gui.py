@@ -566,7 +566,8 @@ def test_about_box(window, monkeypatch):
     assert len(shown) == 1
     text = shown[0]
     assert "3Dn00b" in text and "beginners" in text
-    assert text.endswith("<p><br>Vibe-coded by TheSpork, 2026</p>")   # last, after a blank line
+    url = "https://github.com/githak/3Dn00b"                           # last, after a blank line
+    assert text.endswith(f'<p><br>Vibe-coded by Hakon Sporck<br><a href="{url}">{url}</a></p>')
 
 
 def test_inside_corner_controls(window):
