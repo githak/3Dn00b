@@ -408,6 +408,9 @@ Defaults I chose myself, which are easy to change:
     library path 3Dn00b's AppImage sets for itself (it would load the wrong libraries).
     Tested with a real PrusaSlicer: found through its menu entry and started with the
     exported body and lid.
+- 0.32.1: the About box says "Vibe-coded by Hakon Sporck" with a link to the project page
+  (github.com/githak/3Dn00b). Before the repository went public, the workflows were made
+  read-only except the job that publishes a release.
 - Push-on lid that follows the box size, with fit presets.
 - Plain-language checks covering impossible sizes, thin walls, holes off the
   edge, holes behind the lid lip, overlapping or too-close holes, a lid that
