@@ -93,6 +93,7 @@ LID_STYLE_HINTS = {
               "with a thread. Only for round containers.",
 }
 CHECK_TAB_TITLE = "6 Check && Export"
+PROJECT_URL = "https://github.com/githak/3Dn00b"
 LABEL_WIDTH = 120            # the field labels of every card line up
 HOLE_ICONS = {ROUND: "round-hole", RECT: "rect-hole", VENT: "vent", NOTCH: "notch"}
 # The steps in the rail: (icon, label, tooltip). Same order as the TAB_* pages.
@@ -2959,7 +2960,7 @@ class MainWindow(QMainWindow):
                 "posts and a lid, and export files for your slicer. No CAD knowledge "
                 "needed: the app checks your design and explains problems in plain words.</p>"
                 "<p>Free software under the GNU GPL version 3.</p>"
-                "<p><br>Vibe-coded by TheSpork, 2026</p>")
+                f"<p><br>Vibe-coded by Hakon Sporck<br><a href=\"{PROJECT_URL}\">{PROJECT_URL}</a></p>")
 
     def show_about(self):
         box = QMessageBox(self)
