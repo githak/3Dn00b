@@ -18,6 +18,7 @@ from .model import (CUT_THROUGH, INSERTS, RAISED, TAB_REACH, TAB_WIDTH, ANGLED, 
                     divider_positions, divider_top, floor_inset, frame_thickness,
                     has_dividers, has_finger_notch, has_frame, has_lid_tab, has_lip, has_magnet_lid, has_screw_lid, has_sliding_lid,
                     has_snap_lid, has_threaded_lid, inside_fillet, lid_ceiling, lid_pilot_depth, magnet_pocket,
+                    divider_place, is_divider_surface,
                     notch_size, SIDE_ANGLES, side_span,
                     lid_column_radius, lid_column_positions, lid_top_z, lip_outer_offset, lip_wall, notch_v,
                     slide_engage,
@@ -208,7 +209,7 @@ def build_body(project: Project) -> Manifold:
     if tabs is not None:
         body = body + tabs
     openings = [h for h in project.holes if h.surface != LID] + keyhole_openings(project)
-    cutters = [_hole_cutter(project, hole) for hole in openings]
+    cutters = [_hole_cutter(project, hole) for hole in openings] + [fan_openings(project, lid=False)]
     cutters = [c for c in cutters if c is not None]
     if cutters:
         body = body - Manifold.batch_boolean(cutters, OpType.Add)
@@ -256,39 +257,84 @@ def guide_solid(project: Project, m) -> Manifold | None:
     return Manifold.extrude(outline, height).translate([0.0, 0.0, project.bottom - 0.01])
 
 
+def _screw_posts(m) -> list[Manifold]:
+    """A set's screw posts standing on z = 0 (reaching 0.01 mm below it, so they join
+    what they stand on), each with its pilot hole, or insert hole, from the free end."""
+    from . import mounts
+    screw = mounts.SCREWS[m.screw]
+    r, pilot = mounts.post_radius(m), screw.pilot / 2
+    insert = INSERTS.get(m.screw) if m.inserts else None
+    posts = []
+    for x, y in mounts.post_positions(m):
+        post = Manifold.cylinder(m.length + 0.01, r, -1.0, _circle_segments(r, 0.5, 24, 96))
+        hole = Manifold.cylinder(m.length + 1.0, pilot, -1.0, _circle_segments(pilot, 0.4, 16, 48))
+        hole = hole.translate([0.0, 0.0, 0.01])
+        if insert is not None:
+            # The insert's hole from the end (never deeper than the post), the screw's
+            # own hole beyond it for the screw's tip.
+            depth = min(insert.depth, m.length - 0.6)
+            ir = insert.hole / 2
+            hole = hole + Manifold.cylinder(depth + 1.0, ir, -1.0, _circle_segments(ir, 0.4, 16, 64)) \
+                .translate([0.0, 0.0, m.length + 0.01 - depth])
+        posts.append((post - hole).translate([x, y, -0.01]))
+    return posts
+
+
 def build_posts(project: Project) -> Manifold | None:
     """Screw posts on the floor, each with a pilot hole down to the floor; for a board
-    without screw holes, plain supports and its corner guides."""
+    without screw holes, plain supports and its corner guides. (Posts under the lid are
+    part of the lid: see build_lid_posts.)"""
     from . import mounts
     posts = []
     for m in project.mounts:
-        screw = mounts.SCREWS[m.screw]
-        r, pilot = mounts.post_radius(m), screw.pilot / 2
-        if m.length <= 0:
+        if m.length <= 0 or mounts.on_lid(m):
             continue
         if mounts.has_guides(m):
+            r = mounts.post_radius(m)
             for x, y in mounts.post_positions(m):
                 support = Manifold.cylinder(m.length + 0.01, r, -1.0, _circle_segments(r, 0.5, 24, 96))
                 posts.append(support.translate([x, y, project.bottom - 0.01]))
             posts.append(guide_solid(project, m))
             continue
-        insert = INSERTS.get(m.screw) if m.inserts else None
-        for x, y in mounts.post_positions(m):
-            post = Manifold.cylinder(m.length + 0.01, r, -1.0, _circle_segments(r, 0.5, 24, 96))
-            hole = Manifold.cylinder(m.length + 1.0, pilot, -1.0, _circle_segments(pilot, 0.4, 16, 48))
-            hole = hole.translate([0.0, 0.0, 0.01])
-            if insert is not None:
-                # The insert's hole from the top (never deeper than the post), the screw's
-                # own hole below it for the screw's tip.
-                depth = min(insert.depth, m.length - 0.6)
-                ir = insert.hole / 2
-                hole = hole + Manifold.cylinder(depth + 1.0, ir, -1.0, _circle_segments(ir, 0.4, 16, 64)) \
-                    .translate([0.0, 0.0, m.length + 0.01 - depth])
-            posts.append((post - hole).translate([x, y, project.bottom - 0.01]))
+        posts += [post.translate([0.0, 0.0, project.bottom]) for post in _screw_posts(m)]
     if not posts:
         return None
     # Never poke out through the walls.
     return Manifold.batch_boolean(posts, OpType.Add) ^ _prism(footprint(project), project.outer_height, 0.0)
+
+
+def build_lid_posts(project: Project) -> Manifold | None:
+    """Screw posts hanging from the underside of the lid (the lid is printed upside down,
+    so they print standing up). Boards without screw holes can't hang there."""
+    from . import mounts
+    posts = []
+    for m in project.mounts:
+        if m.length <= 0 or not mounts.on_lid(m) or mounts.has_guides(m):
+            continue
+        posts += [post.mirror([0.0, 0.0, 1.0]).translate([0.0, 0.0, project.outer_height])
+                  for post in _screw_posts(m)]
+    if not posts:
+        return None
+    return Manifold.batch_boolean(posts, OpType.Add) ^ _prism(footprint(project), project.outer_height + 1.0, 0.0)
+
+
+def fan_openings(project: Project, lid: bool) -> Manifold | None:
+    """The round air openings of the fans on the floor (lid=False) or under the lid."""
+    from . import mounts
+    cutters = []
+    for m in project.mounts:
+        d = mounts.fan_opening(m)
+        if d <= 0 or mounts.on_lid(m) != lid:
+            continue
+        r = d / 2
+        if lid:
+            t = project.lid.thickness
+            z0, length = project.outer_height - 1.0, t + 2.0
+        else:
+            z0, length = -1.0, project.bottom + 2.0
+        cutters.append(Manifold.cylinder(length, r, -1.0, _circle_segments(r, 0.4, 32, 128))
+                       .translate([m.u, m.v, z0]))
+    return Manifold.batch_boolean(cutters, OpType.Add) if cutters else None
 
 
 def build_tabs(project: Project) -> Manifold | None:
@@ -572,9 +618,9 @@ def build_lid(project: Project) -> Manifold | None:
         holes = [Manifold.cylinder(lid_opts.thickness + 2.0, d / 2, -1.0, _circle_segments(d / 2, 0.4, 16, 48))
                  .translate([x, y, h - 1.0]) for x, y in lid_column_positions(project)]
         lid = lid - Manifold.batch_boolean(holes, OpType.Add)
-        return _cut_lid_holes(project, lid)
+        return _finish_lid(project, lid)
     if has_magnet_lid(project):
-        return _cut_lid_holes(project, lid - _magnet_pockets(project, h, upward=True))
+        return _finish_lid(project, lid - _magnet_pockets(project, h, upward=True))
     lip_out_inset = project.wall + lip_outer_offset(project)
     # The lip reaches 0.01 mm into the plate so the union is a single solid.
     lip_outer = _prism(footprint(project, lip_out_inset), lid_opts.lip_height + 0.01,
@@ -595,6 +641,17 @@ def build_lid(project: Project) -> Manifold | None:
                            if h.kind == NOTCH and h.surface in project.surfaces()) if c is not None]
     if notches:
         lid = lid - Manifold.batch_boolean(notches, OpType.Add)
+    return _finish_lid(project, lid)
+
+
+def _finish_lid(project: Project, lid: Manifold) -> Manifold:
+    """A lid that lifts off: its posts underneath, fan openings, holes and text."""
+    posts = build_lid_posts(project)
+    if posts is not None:
+        lid = lid + posts
+    fans = fan_openings(project, lid=True)
+    if fans is not None:
+        lid = lid - fans
     return _cut_lid_holes(project, lid)
 
 
@@ -750,7 +807,29 @@ def _notch_lid_cutter(project: Project, hole: Hole) -> Manifold | None:
     return cutter ^ below
 
 
+def _divider_notch_cutter(project: Project, hole: Hole) -> Manifold | None:
+    """A cable notch down from the top of a divider, right through it."""
+    place = divider_place(project, hole.surface)
+    if place is None:
+        return None
+    shape = _notch_shape(project, hole)
+    outline = _opening_outline(shape)
+    if outline is None:
+        return None
+    length = project.dividers.thickness + 2.0
+    # Made with u along X and v up (Z), cutting through along Y; turned for a divider
+    # that runs from front to back.
+    cutter = Manifold.extrude(outline, length).translate([0.0, 0.0, -length / 2]).rotate([90.0, 0.0, 0.0])
+    zc = project.outer_height / 2 + shape.v
+    axis, at = place
+    if axis == "x":
+        return cutter.rotate([0.0, 0.0, 90.0]).translate([at, shape.u, zc])
+    return cutter.translate([shape.u, at, zc])
+
+
 def _hole_cutter(project: Project, hole: Hole) -> Manifold | None:
+    if hole.kind == NOTCH and is_divider_surface(hole.surface):
+        return _divider_notch_cutter(project, hole)
     if hole.kind == NOTCH:
         if hole.surface not in WALL_SURFACES:
             return None
@@ -868,7 +947,8 @@ def fit_test_openings_band(project: Project) -> tuple[float, float] | None:
             z = project.outer_height / 2 + hole.v
             reach = hole.half_extents[1] + (FRAME_RIM if has_frame(project, hole) else 0.0)
             zs += [z - reach, z + reach]
-    tops = [mounts.holder_top(project, m) for m in project.mounts if m.length > 0]
+    tops = [mounts.holder_top(project, m) for m in project.mounts
+            if m.length > 0 and not mounts.on_lid(m)]
     if not zs and not tops:
         return None
     z0 = 0.0 if tops else max(project.bottom, min(zs) - FIT_MARGIN)
@@ -898,7 +978,7 @@ def _floor_middle(project: Project) -> Manifold:
         return Manifold()
     keep = []
     for m in project.mounts:
-        if m.length <= 0:
+        if m.length <= 0 or mounts.on_lid(m):
             continue
         r = mounts.post_radius(m)
         for x, y in mounts.post_positions(m):

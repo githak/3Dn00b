@@ -111,13 +111,14 @@ PAGES = (
     TourPage("Add holes, openings and vents",
              "Round holes for cables and screws, rectangles for USB plugs and switches, air "
              "vents, and cable notches in the top of a wall so a cable can come out with the lid "
-             "on. Double-click a wall in the 3D view to put a hole right there, and drag it to "
-             "move it. Common sizes are built in.",
+             "on (or in a divider, from one compartment to the next). Double-click a wall in the "
+             "3D view to put a hole right there, and drag it to move it. Common sizes are built "
+             "in.",
              1, lambda w: [w.add_holes_card, w.hole_card], _select_first_hole),
     TourPage("Screw posts for circuit boards",
-             "Choose a board and all its posts appear in the right pattern, ready for the screws "
-             "to cut their own thread. An outline shows where the board will sit; drag it in the "
-             "3D view to move the posts together.",
+             "Choose a board (or a fan) and all its posts appear in the right pattern, ready for "
+             "the screws to cut their own thread, on the floor or under the lid. An outline shows "
+             "where the board will sit; drag it in the 3D view to move the posts together.",
              2, lambda w: [w.add_posts_card, w.mount_card], _select_first_board),
     TourPage("Choose a lid",
              "Push-on, snap-on, sliding, screwed down, held by magnets or threaded. For tight "

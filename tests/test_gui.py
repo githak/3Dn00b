@@ -400,6 +400,47 @@ def test_board_without_screw_holes_hides_the_screw_controls(window):
     assert form.labelForField(window.post_length).text() == "Post length"
 
 
+def test_posts_under_the_lid_controls(window):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from threedn00b.model import BOTTOM, LID
+    window.width_spin.setValue(110)
+    window.depth_spin.setValue(80)
+    window.height_spin.setValue(60)
+    assert not window.project.lid.enabled
+    window.board_combo.setCurrentIndex(window.board_combo.findData("rpi-zero"))
+    window.mount_where.setCurrentIndex(window.mount_where.findData(LID))
+    QTest.mouseClick(window.add_posts_button, Qt.MouseButton.LeftButton)
+    window.rebuild()
+    p = window.project
+    assert p.lid.enabled and p.mounts[0].surface == LID         # the lid was turned on for it
+    assert "under the lid" in window.mount_list.item(0).text()
+    assert "hangs under the lid" in window.mount_info.text()
+    assert window.mount_surface.currentData() == LID
+    assert not validation_errors(window)
+    window.mount_surface.setCurrentIndex(window.mount_surface.findData(BOTTOM))
+    window.mount_surface.activated.emit(window.mount_surface.currentIndex())
+    assert window.project.mounts[0].surface == BOTTOM
+    assert "rests on top of the posts" in window.mount_info.text()
+    window.undo_stack.undo()
+    assert window.project.mounts[0].surface == LID
+    window.undo_stack.undo()                                    # adding it, and the lid
+    assert not window.project.mounts and not window.project.lid.enabled
+
+
+def test_fan_under_the_lid(window):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from threedn00b.model import LID
+    window.lid_check.setChecked(True)
+    window.board_combo.setCurrentIndex(window.board_combo.findData("fan40"))
+    window.mount_where.setCurrentIndex(window.mount_where.findData(LID))
+    QTest.mouseClick(window.add_posts_button, Qt.MouseButton.LeftButton)
+    window.rebuild()
+    assert "opening of 36 mm" in window.mount_info.text()
+    assert not validation_errors(window)
+
+
 def test_drag_board_moves_all_posts_together(window):
     from PySide6.QtCore import QPoint
     window.width_spin.setValue(150)
@@ -487,6 +528,30 @@ def test_magnet_lid_controls(window):
     window.undo_stack.undo()
     window.undo_stack.undo()
     assert window.project.lid.style == "push" and window.project.lid.thickness == 2.0
+
+
+def test_cable_notch_in_a_divider(window):
+    from threedn00b.model import TRAY_TEMPLATE, default_project
+    window._load(default_project(TRAY_TEMPLATE), None)
+    window.rebuild()
+    window.add_notch_button.click()
+    window.rebuild()
+    hole = window.project.holes[0]
+    assert hole.kind == "notch" and hole.surface == "front"
+    surfaces = [window.surface_combo.itemData(i) for i in range(window.surface_combo.count())]
+    assert {"divider-x1", "divider-x2", "divider-y1"} <= set(surfaces)
+    window.surface_combo.setCurrentIndex(window.surface_combo.findData("divider-x1"))
+    window.surface_combo.activated.emit(window.surface_combo.currentIndex())
+    window.rebuild()
+    hole = window.project.holes[0]
+    assert hole.surface == "divider-x1"
+    assert "Front-to-back divider 1" in window.hole_list.item(0).text()
+    assert window.u_label.text() == "Front / back"
+    assert not validation_errors(window)
+    # A divider takes cable notches only: another shape goes back to a wall.
+    window.kind_combo.setCurrentIndex(window.kind_combo.findData("round"))
+    window.kind_combo.activated.emit(window.kind_combo.currentIndex())
+    assert window.project.holes[0].surface == "front"
 
 
 def test_snap_and_sliding_lid_controls(window):

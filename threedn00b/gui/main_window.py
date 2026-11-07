@@ -28,7 +28,8 @@ from ..model import (ALONG_U, ALONG_V, BOTTOM, BOX, CYLINDER, FIT_LABELS, FIT_PR
                      OUTSIDE, RECT, ROUND, SIDE, SIZE_RANGE, SURFACE_LABELS, VENT,
                      DIVIDER_RANGE, INSIDE_CORNER_LABELS, OPENING_LABELS, SIDE_LABELS, LID_STYLE_LABELS, SHARP, MAX_COMPARTMENTS, PUSH_ON, SCREWED, SCREWS, SLIDING,
                      SNAP, THREADED, TRAY_TEMPLATE, WALL_RANGE, Hole, Project, MAGNETS, MAGNET_SIZES,
-                     magnet_lid_thickness,
+                     magnet_lid_thickness, DIVIDER_PREFIX, divider_surfaces, hole_surfaces,
+                     is_divider_surface, surface_label,
                      clamp_hole, compartment_depths, compartment_widths, default_project,
                      has_set_sizes, hole_limits, resized_sizes,
                      CUT_THROUGH, ENGRAVED, LABEL_DEPTH_RANGE, LABEL_SIZE_RANGE, RAISED, Label,
@@ -96,6 +97,13 @@ CHECK_TAB_TITLE = "6 Check && Export"
 PROJECT_URL = "https://github.com/githak/3Dn00b"
 LABEL_WIDTH = 120            # the field labels of every card line up
 HOLE_ICONS = {ROUND: "round-hole", RECT: "rect-hole", VENT: "vent", NOTCH: "notch"}
+NOTCH_HINTS = {   # in a wall (False) or in a divider (True)
+    False: "A notch down from the top of the wall, round at the bottom, so a cable can come out "
+           "with the lid on. Make it a little wider than the cable. It can also go in a divider: "
+           "choose one under Where.",
+    True: "A notch down from the top of the divider, round at the bottom, so a cable can go from "
+          "one compartment to the next. Make it a little wider than the cable.",
+}
 # The steps in the rail: (icon, label, tooltip). Same order as the TAB_* pages.
 STEPS = (("shape", "Shape", "Shape and size"), ("holes", "Holes", "Holes, openings and vents"),
          ("posts", "Posts", "Screw posts for circuit boards"), ("lid", "Lid", "The lid"),
@@ -879,7 +887,8 @@ class MainWindow(QMainWindow):
                                            "A row of slots that lets air in and out")
         self.add_notch_button = icon_button("Cable notch", "notch", "tile",
                                             "A notch in the top of a wall, so a cable can come out "
-                                            "with the lid on")
+                                            "with the lid on, or in a divider, so it can go from "
+                                            "one compartment to the next")
         grid = QGridLayout()
         grid.setSpacing(8)
         for i, button in enumerate((self.add_hole_button, self.add_rect_button,
@@ -946,9 +955,7 @@ class MainWindow(QMainWindow):
         form.addRow("", self.common_sizes)
         self.measure_hint = hint("Plugs and switches vary: measure yours and add a little room.")
         form.addRow("", self.measure_hint)
-        self.notch_hint = hint("A notch down from the top of the wall, round at the bottom, so a "
-                               "cable can come out with the lid on. Make it a little wider than "
-                               "the cable.")
+        self.notch_hint = hint(NOTCH_HINTS[False])
         form.addRow("", self.notch_hint)
         self.hole_rounding = spin(0.0, 50.0, step=0.5)
         self.hole_rounding.setToolTip("Round corners are stronger: cracks start in sharp corners.\n"
@@ -986,7 +993,8 @@ class MainWindow(QMainWindow):
         return widget
 
     def _build_posts_tab(self):
-        widget, layout = page("Screw posts", "Posts hold a circuit board above the floor.")
+        widget, layout = page("Screw posts", "Posts hold a circuit board or a fan, on the floor or "
+                                             "under the lid.")
         box, lay = card("Add a board")
         self.add_posts_card = box
         lay.addWidget(hint("Pick a board to add all its posts at once, in the right pattern. "
@@ -999,10 +1007,18 @@ class MainWindow(QMainWindow):
         self.board_combo.setCurrentIndex(self.board_combo.findData("rpi-ab"))
         self.add_posts_button = icon_button("Add", "plus", "primary")
         # A lambda, because clicked() would otherwise pass its 'checked' flag.
-        self.add_posts_button.clicked.connect(lambda: self.add_mount(self.board_combo.currentData()))
+        self.add_posts_button.clicked.connect(
+            lambda: self.add_mount(self.board_combo.currentData(), self.mount_where.currentData()))
         row.addWidget(self.board_combo, 1)
         row.addWidget(self.add_posts_button)
         lay.addLayout(row)
+        self.mount_where = self._mount_surface_combo()
+        self.mount_where.setToolTip("Where the new posts go: standing on the floor, or hanging "
+                                    "under the lid (for a board or a fan on the inside of the lid)")
+        where_row = QHBoxLayout()
+        where_row.addWidget(QLabel("Put it"))
+        where_row.addWidget(self.mount_where, 1)
+        lay.addLayout(where_row)
         self.mount_list = QListWidget()
         self.mount_list.setMaximumHeight(120)
         self.mount_list.currentRowChanged.connect(self._on_mount_row_changed)
@@ -1014,6 +1030,11 @@ class MainWindow(QMainWindow):
         lay.addWidget(self.mount_problem)
         self.mount_box = QWidget()
         form = self.mount_form = form_layout(self.mount_box)
+        self.mount_surface = self._mount_surface_combo()
+        self.mount_surface.setToolTip("On the floor, or hanging under the lid")
+        self.mount_surface.activated.connect(
+            lambda _: self._move_mount_to(self.mount_surface.currentData()))
+        form.addRow("Where", self.mount_surface)
         self.screw_combo = QComboBox()
         for key, screw in mounts.SCREWS.items():
             self.screw_combo.addItem(f"{key} screw", key)
@@ -1809,7 +1830,7 @@ class MainWindow(QMainWindow):
         self.hole_list.clear()
         current = -1
         for i, hole in enumerate(p.holes):
-            where = SURFACE_LABELS.get(hole.surface, hole.surface)
+            where = surface_label(p, hole.surface)
             item = QListWidgetItem(self._list_icon(HOLE_ICONS[hole.kind], hole_id=hole.id),
                                    f"Hole {i + 1} · {where} · {hole.size_label}")
             self.hole_list.addItem(item)
@@ -1827,11 +1848,13 @@ class MainWindow(QMainWindow):
         self.surface_combo.clear()
         for s in p.surfaces():
             if hole is not None and hole.kind == NOTCH and s not in WALL_SURFACES:
-                continue                                  # a notch only goes in a wall
+                continue                                  # a notch only goes in a wall ...
             self.surface_combo.addItem(SURFACE_LABELS[s], s)
-        if hole is not None and hole.surface not in p.surfaces():
-            self.surface_combo.addItem(SURFACE_LABELS.get(hole.surface, hole.surface) + " (gone)",
-                                       hole.surface)
+        if hole is not None and hole.kind == NOTCH:
+            for s in divider_surfaces(p):                 # ... or in a divider
+                self.surface_combo.addItem(surface_label(p, s), s)
+        if hole is not None and hole.surface not in hole_surfaces(p):
+            self.surface_combo.addItem(surface_label(p, hole.surface) + " (gone)", hole.surface)
         self.surface_combo.blockSignals(False)
         if hole is None:
             self.u_label.setText("Left / right")
@@ -1872,6 +1895,7 @@ class MainWindow(QMainWindow):
         self.hole_form.setRowVisible(self.hole_strengthen, not flat and not is_notch)
         self.hole_form.setRowVisible(self.hole_v, not is_notch)      # always at the top
         self.hole_form.setRowVisible(self.notch_hint, is_notch)
+        self.notch_hint.setText(NOTCH_HINTS[is_divider_surface(hole.surface)])
         self.hole_form.labelForField(self.hole_height).setText("Depth" if is_notch else "Height")
         self.hole_height.setToolTip("Front to back" if hole.surface in (BOTTOM, LID) else "Up and down")
         if self._common_kind != hole.kind:
@@ -1884,7 +1908,8 @@ class MainWindow(QMainWindow):
             self.u_label.setText("Around")
             self.hole_u.setSuffix("°")
         else:
-            self.u_label.setText("Left / right")
+            along_y = hole.surface.startswith(DIVIDER_PREFIX + "x")   # runs from front to back
+            self.u_label.setText("Front / back" if along_y else "Left / right")
             self.hole_u.setSuffix(" mm")
         self.v_label.setText("Front / back" if hole.surface in (BOTTOM, LID) else "Up / down")
         limits = hole_limits(p, hole, MIN_EDGE)
@@ -1914,6 +1939,8 @@ class MainWindow(QMainWindow):
         for i, m in enumerate(p.mounts):
             count = len(mounts.post_positions(m))
             what = f"{count} supports" if mounts.has_guides(m) else f"{m.screw} × {count}"
+            if mounts.on_lid(m):
+                what += " · under the lid"
             self.mount_list.addItem(QListWidgetItem(
                 self._list_icon("posts", mount_id=m.id), f"Posts {i + 1} · {mounts.label(m)} · {what}"))
             if m.id == self.selected_mount_id:
@@ -1932,6 +1959,8 @@ class MainWindow(QMainWindow):
             for widget in (self.board_w, self.board_d, self.spacing_x, self.spacing_y):
                 self.mount_form.setRowVisible(widget, False)
             return
+        set_quietly(self.mount_surface, m.surface)
+        lid = mounts.on_lid(m)
         set_quietly(self.screw_combo, m.screw)
         set_quietly(self.mount_inserts, m.inserts)
         self.mount_inserts.setEnabled(m.screw in INSERTS or m.inserts)
@@ -1941,7 +1970,8 @@ class MainWindow(QMainWindow):
         self.mount_form.labelForField(self.post_length).setText(
             "Support height" if guided else "Post length")
         self.post_length.setToolTip("How high the supports hold the board above the floor"
-                                    if guided else "How high the posts stand above the floor")
+                                    if guided else "How far the posts reach down from the lid"
+                                    if lid else "How high the posts stand above the floor")
         is_custom = mounts.is_custom(m)
         labels, tips = CUSTOM_HOLE_LABELS.get(m.board, CUSTOM_HOLE_LABELS["custom"])
         for widget, text, tip in zip((self.spacing_x, self.spacing_y), labels, tips):
@@ -1968,12 +1998,20 @@ class MainWindow(QMainWindow):
                     "The green outline shows where it goes (it isn't printed).")
         else:
             info = f"Use {m.screw} screws up to {mounts.max_screw_length(m):g} mm long."
-        if mounts.board_size(m) and not guided:
-            info += (" The board rests on top of the posts; the green outline shows where it "
+        what = "fan" if mounts.BOARDS[m.board].fan else "board"
+        if mounts.board_size(m) and not guided and lid:
+            info += (f" The {what} hangs under the lid, screwed to the ends of the posts; the "
+                     "green outline shows where it goes (it isn't printed). The posts are printed "
+                     "with the lid.")
+        elif mounts.board_size(m) and not guided:
+            info += (f" The {what} rests on top of the posts; the green outline shows where it "
                      "goes (it isn't printed).")
-        if mounts.board_size(m):
-            info += (f" Another board can sit above this one if there is "
-                     f"{mounts.room_above(m):g} mm of room.")
+        if mounts.BOARDS[m.board].fan:
+            info += (f" The {'lid' if lid else 'floor'} gets a round opening of "
+                     f"{mounts.fan_opening(m):g} mm for it to blow through.")
+        if mounts.board_size(m) and not mounts.BOARDS[m.board].fan:
+            info += (f" Another board can {'hang below' if lid else 'sit above'} this one if "
+                     f"there is {mounts.room_above(m):g} mm of room.")
         if m.screw != mounts.BOARDS[m.board].screw and not (m.board == "single" or is_custom
                                                              or guided):
             info += f" This board is usually fixed with {mounts.BOARDS[m.board].screw} screws."
@@ -2135,7 +2173,9 @@ class MainWindow(QMainWindow):
         if surface is None:
             current = p.hole(self.selected_id) if self.selected_id else None
             surface = current.surface if current else (FRONT if p.shape == BOX else SIDE)
-        if kind == NOTCH and surface not in WALL_SURFACES:
+        if is_divider_surface(surface):
+            kind = NOTCH                                       # only notches go in a divider
+        if kind == NOTCH and surface not in WALL_SURFACES and not is_divider_surface(surface):
             surface = FRONT if p.shape == BOX else SIDE        # notches go in a wall
         if kind == NOTCH:
             size = picking.fitting_notch(p, surface)
@@ -2154,8 +2194,9 @@ class MainWindow(QMainWindow):
             hole = Hole(surface=surface, diameter=size or 0.0, u=u, v=v)
         if size is None:
             what = "a cable notch" if kind == NOTCH else "a hole"
-            self.statusBar().showMessage(f"There's no room for {what} on the "
-                                         f"{SURFACE_LABELS[surface].lower()}.", 5000)
+            where = surface_label(p, surface)
+            self.statusBar().showMessage(f"There's no room for {what} in "
+                                         f"{where[0].lower() + where[1:]}.", 5000)
             return
         # Start somewhere valid: keep the clicked spot if it is safe, else the nearest safe one.
         pos = clamp_hole(p, hole) or clamp_hole(p, hole, MIN_EDGE)
@@ -2198,7 +2239,15 @@ class MainWindow(QMainWindow):
             if h.surface == surface:
                 return
             h.surface, h.u, h.v = surface, 0.0, 0.0
+            if h.kind == NOTCH:
+                h.v = notch_v(p, h)
             pos = clamp_hole(p, h) or clamp_hole(p, h, MIN_EDGE)
+            if pos is None and h.kind == NOTCH:
+                size = picking.fitting_notch(p, surface)     # a divider may be lower than a wall
+                if size:
+                    h.width, h.height = size
+                    h.v = notch_v(p, h)
+                    pos = clamp_hole(p, h) or clamp_hole(p, h, MIN_EDGE)
             if pos:
                 h.u, h.v = pos
         self.edit("Move hole to another surface", change)
@@ -2228,6 +2277,8 @@ class MainWindow(QMainWindow):
                 return
             if h.kind == ROUND and h.rounding == 0:
                 h.rounding = NEW_HOLE_ROUNDING
+            if is_divider_surface(h.surface):
+                h.surface, h.u = (FRONT if p.shape == BOX else SIDE), 0.0   # a divider takes notches only
             h.kind = kind
             if kind == NOTCH:
                 if h.surface not in WALL_SURFACES:
@@ -2390,14 +2441,53 @@ class MainWindow(QMainWindow):
         self.edit("Move text to another surface", change)
 
     # ---- screw posts -----------------------------------------------------
-    def add_mount(self, board: str):
-        m = mounts.new_mount(self.project, board)
-        if mounts.clamp_mount(self.project, m, m.u, m.v) is None:
+    @staticmethod
+    def _mount_surface_combo() -> QComboBox:
+        combo = QComboBox()
+        combo.addItem("On the floor", BOTTOM)
+        combo.addItem("Under the lid", LID)
+        return combo
+
+    def add_mount(self, board: str, surface: str = BOTTOM):
+        p = self.project
+        lid_off = surface == LID and not p.lid.enabled
+        if lid_off:                                     # posts under the lid need a lid
+            trial = copy.deepcopy(p)
+            trial.lid.enabled = True
+            m = mounts.new_mount(trial, board, surface)
+        else:
+            m = mounts.new_mount(p, board, surface)
+        if mounts.clamp_mount(p if not lid_off else trial, m, m.u, m.v) is None:
             self.statusBar().showMessage(f"The {mounts.label(m)} doesn't fit in this box. "
                                          "It's added anyway so you can see why.", 6000)
-        self.edit("Add posts", lambda p: p.mounts.append(copy.deepcopy(m)))
+        elif lid_off:
+            self.statusBar().showMessage("Posts under the lid need a lid, so the lid is turned on.",
+                                         6000)
+
+        def add(proj):
+            if lid_off:
+                proj.lid.enabled = True
+            proj.mounts.append(copy.deepcopy(m))
+        self.edit("Add posts under the lid" if surface == LID else "Add posts", add)
         self.tabs.setCurrentIndex(TAB_POSTS)
         self.select_mount(m.id)
+
+    def _move_mount_to(self, surface: str):
+        """Move the selected set between the floor and the underside of the lid."""
+        mount_id = self.selected_mount_id
+        if mount_id is None or surface is None:
+            return
+
+        def change(p):
+            m = p.mount(mount_id)
+            if m.surface == surface:
+                return
+            m.surface = surface
+            pos = mounts.clamp_mount(p, m, m.u, m.v)
+            if pos:
+                m.u, m.v = pos
+        self.edit("Move posts under the lid" if surface == LID else "Move posts to the floor",
+                  change)
 
     def remove_selected_mount(self):
         mount_id = self.selected_mount_id
@@ -2453,7 +2543,8 @@ class MainWindow(QMainWindow):
     def hole_at(self, origin, direction, mesh_distance) -> bool:
         return (self._hole_under(origin, direction, mesh_distance) is not None
                 or self._label_under(origin, direction, mesh_distance) is not None
-                or picking.mount_under_ray(self.project, origin, direction, mesh_distance) is not None)
+                or picking.mount_under_ray(self.project, origin, direction, mesh_distance,
+                                       self.viewer.lid_offset, self.viewer.show_lid) is not None)
 
     def drag_begin(self, origin, direction, mesh_distance) -> bool:
         hole = self._hole_under(origin, direction, mesh_distance)
@@ -2515,12 +2606,13 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"{name}: {', '.join(notes)}" if notes else name, 1500)
 
     def _mount_drag_begin(self, origin, direction, mesh_distance) -> bool:
-        m = picking.mount_under_ray(self.project, origin, direction, mesh_distance)
+        m = picking.mount_under_ray(self.project, origin, direction, mesh_distance,
+                                       self.viewer.lid_offset, self.viewer.show_lid)
         if m is None:
             return False
         self.tabs.setCurrentIndex(TAB_POSTS)
         self.select_mount(m.id)
-        hit = picking.mount_plane_hit(self.project, m, origin, direction)
+        hit = picking.mount_plane_hit(self.project, m, origin, direction, self.viewer.lid_offset)
         self._drag_count += 1
         self._drag = {"id": m.id, "du": m.u - hit[1], "dv": m.v - hit[2],
                       "key": f"drag:{self._drag_count}", "type": "mount"}
@@ -2531,7 +2623,7 @@ class MainWindow(QMainWindow):
         m = self.project.mount(drag["id"])
         if m is None:
             return
-        hit = picking.mount_plane_hit(self.project, m, origin, direction)
+        hit = picking.mount_plane_hit(self.project, m, origin, direction, self.viewer.lid_offset)
         if hit is None:
             return
         u, v = hit[1] + drag["du"], hit[2] + drag["dv"]

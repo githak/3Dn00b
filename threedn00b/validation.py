@@ -13,8 +13,9 @@ from dataclasses import dataclass
 from . import geometry, mounts, printers, text
 from .model import (SIDE_LABELS, ALONG_V, BACK, BOTTOM, BOX, CYLINDER, FRONT, LEFT, LID, MIN_EDGE, RIGHT,
                     SCREWS, SIDE, SNAP_BUMP, SURFACE_LABELS, VENT, Hole, Project, has_lip,
-                    THREADED, MAGNETS, MAGNET_SIZES, has_corner_columns, has_magnet_lid, has_screw_lid,
-                    has_sliding_lid, lid_column_radius, magnet_lid_thickness, magnet_pocket, has_snap_lid, has_threaded_lid,
+                    THREADED, SLIDING, MAGNETS, MAGNET_SIZES, has_corner_columns, has_magnet_lid, has_screw_lid,
+                    has_sliding_lid, lid_column_radius, magnet_lid_thickness, magnet_pocket,
+                    divider_place, is_divider_surface, surface_label, has_snap_lid, has_threaded_lid,
                     slide_engage, slide_groove, thread_sizes,
                     lid_ceiling, lid_pilot_depth, lid_column_positions, wall_corner_zone, clamp_hole, comfortable_margin,
                     compartment_depths, compartment_size, compartment_widths, divider_fillet,
@@ -491,6 +492,12 @@ def _check_holes(p: Project) -> list[Issue]:
     for hole in p.holes:
         name = hole_name(p, hole)
         where = SURFACE_LABELS.get(hole.surface, hole.surface).lower()
+        if is_divider_surface(hole.surface):
+            divider_issues = _check_divider_notch(p, hole, name, margin)
+            out += divider_issues
+            if not any(i.level == ERROR for i in divider_issues):
+                placed.append(hole)
+            continue
         if hole.surface not in valid_surfaces:
             if hole.surface == LID:
                 out.append(Issue(ERROR, f"{name} is on the lid, but the lid is turned off.",
@@ -557,6 +564,55 @@ def _check_holes(p: Project) -> list[Issue]:
     if p.holes:
         out.append(Issue(INFO, "Printed holes often come out 0.2 to 0.4 mm smaller than designed.",
                          "For screws or cables, make the hole a little bigger than needed."))
+    return out
+
+
+def _check_divider_notch(p: Project, hole: Hole, name: str, margin: float) -> list[Issue]:
+    """A cable notch in a divider, so a cable can go from one compartment to the next."""
+    place = divider_place(p, hole.surface)
+    if place is None:
+        return [Issue(ERROR, f"{name} is in a divider that isn't there any more.",
+                      "Move it to a wall or another divider, or remove it.", hole.id)]
+    if hole.kind != NOTCH:
+        return [Issue(ERROR, f"{name} is in a divider, where only cable notches can go.",
+                      "Make it a cable notch, or move it to a wall.", hole.id)]
+    label = surface_label(p, hole.surface)
+    where = label[0].lower() + label[1:]
+    if hole_limits(p, hole, MIN_EDGE) is None:
+        return [Issue(ERROR, f"{name} ({hole.size_label}) doesn't fit in {where}.",
+                      "Make it narrower or less deep, or the dividers taller.", hole.id)]
+    out = []
+    clearance = hole_edge_clearance(p, hole)
+    fix = clamp_hole(p, hole, margin)
+    fix_label = "Move to the nearest safe spot"
+    if clearance < MIN_EDGE:
+        out.append(Issue(ERROR, f"{name} runs off the end of {where}.",
+                         "Move it along the divider, or make it narrower or less deep.", hole.id,
+                         fix, fix_label))
+    elif clearance < margin - 1e-6:
+        out.append(Issue(WARNING, f"Only {_mm(clearance)} of material is left next to {name}.",
+                         f"Keep at least {_mm(margin)} so the divider doesn't break there.",
+                         hole.id, fix, fix_label))
+    if hole.height < hole.width - 1e-6:
+        out.append(Issue(WARNING, f"{name} is less deep than it is wide, so a round cable "
+                         "would stick out above the divider.",
+                         f"Make it at least {_mm(hole.width)} deep.", hole.id))
+    # Where another divider crosses, that divider still blocks the way.
+    axis, _ = place
+    xs, ys = divider_positions(p)
+    reach = hole.half_extents[0] + p.dividers.thickness / 2
+    limits = hole_limits(p, hole, margin)
+    for cross in (ys if axis == "x" else xs):
+        if abs(hole.u - cross) < reach + 0.5:
+            spots = [u for u in (cross - reach - 1.0, cross + reach + 1.0)
+                     if limits and limits[0] - 1e-9 <= u <= limits[1] + 1e-9]
+            best = min(spots, key=lambda u: abs(u - hole.u)) if spots else None
+            out.append(Issue(WARNING, f"{name} is where another divider crosses, so that divider "
+                             "still blocks the cable.", "Move it along the divider, into the "
+                             "middle of a compartment.", hole.id,
+                             (round(best, 2), hole.v) if best is not None else None,
+                             "Move it next to the crossing"))
+            break
     return out
 
 
@@ -733,7 +789,49 @@ def _check_dividers(p: Project) -> list[Issue]:
 
 def mount_name(p: Project, m) -> str:
     index = next((i for i, x in enumerate(p.mounts) if x.id == m.id), 0) + 1
-    return f"Posts {index} ({mounts.BOARDS[m.board].short})"
+    where = ", under the lid" if mounts.on_lid(m) else ""
+    return f"Posts {index} ({mounts.BOARDS[m.board].short}{where})"
+
+
+def _check_lid_mount(p: Project, m, name: str) -> list[Issue]:
+    """What only posts under the lid need: a lid that lifts off, a board with screw
+    holes, and room below for the board and its parts."""
+    if not p.lid.enabled:
+        return [Issue(ERROR, f"{name}: the posts are under the lid, but there's no lid.",
+                      "Turn the lid on, or move the posts to the floor.", mount_id=m.id)]
+    if p.lid.style in (SLIDING, THREADED):
+        what = "slides in" if p.lid.style == SLIDING else "screws on"
+        return [Issue(ERROR, f"{name}: posts under the lid don't work with a lid that {what}.",
+                      "Use a push-on, snap-on, screwed-down or magnetic lid, or move the posts "
+                      "to the floor.", mount_id=m.id)]
+    if mounts.has_guides(m):
+        return [Issue(ERROR, f"{name}: this board has no screw holes, so it can't hang under "
+                      "the lid.", "Move it to the floor.", mount_id=m.id)]
+    out = []
+    low, _ = mounts.reach(p, m)
+    what = "board and its parts" if mounts.board_size(m) else "posts"
+    if low < p.bottom + 1.0:
+        out.append(Issue(ERROR, f"{name}: the {what} would reach down to the floor.",
+                         "Make the posts shorter or the box taller.", mount_id=m.id))
+    elif has_dividers(p) and divider_top(p) > low:
+        xs, ys = divider_positions(p)
+        x0, x1, y0, y1 = mounts.footprint_box(m)
+        half = p.dividers.thickness / 2
+        if any(x0 - half < x < x1 + half for x in xs) or any(y0 - half < y < y1 + half for y in ys):
+            out.append(Issue(WARNING, f"{name}: the {what} would hit a divider when the lid is on.",
+                             "Use lower dividers, shorter posts, or move it into one compartment.",
+                             mount_id=m.id))
+    if mounts.BOARDS[m.board].fan:
+        out.append(Issue(INFO, f"{name}: the lid gets a round opening of "
+                         f"{_mm(mounts.fan_opening(m))} for the fan to blow through.",
+                         "Turn the fan so it blows the way you want: the arrow on its side shows "
+                         "which way.", mount_id=m.id))
+    for hole in p.holes:
+        if hole.surface == LID and any(point_near_opening(p, hole, x, y, mounts.post_radius(m))
+                                       for x, y in mounts.post_positions(m)):
+            out.append(Issue(WARNING, f"{hole_name(p, hole)} is over a post of {name}.",
+                             "Move the hole or the posts.", hole.id))
+    return out
 
 
 def _check_mounts(p: Project) -> list[Issue]:
@@ -758,6 +856,11 @@ def _check_mounts(p: Project) -> list[Issue]:
         top = mounts.board_bottom(p, m) + (mounts.BOARD_THICKNESS if size else 0.0)
         top = max(top, mounts.holder_top(p, m))          # corner guides reach above the board
         ceiling = lid_ceiling(p)
+        lid_mount = mounts.on_lid(m)
+        if lid_mount:
+            out += _check_lid_mount(p, m, name)
+            if not p.lid.enabled or p.lid.style in (SLIDING, THREADED) or guided:
+                continue                             # nothing else to check until that's fixed
         if mounts.is_custom(m) and not mounts.holes_on_board(m):
             what = "the hole is outside" if m.board == "custom1" else "the holes don't fit on"
             out.append(Issue(ERROR, f"{name}: {what} the board.",
@@ -767,7 +870,7 @@ def _check_mounts(p: Project) -> list[Issue]:
             out.append(Issue(ERROR, f"{name}: both holes are in the same place.",
                              "Set how far apart the holes are.", mount_id=m.id))
             continue
-        if top > ceiling:
+        if top > ceiling and not lid_mount:
             what = "board" if size else "posts"
             out.append(Issue(ERROR, f"{name}: the {what} would stick out of the top of the box.",
                              "Make the posts shorter or the box taller.", mount_id=m.id))
@@ -775,11 +878,21 @@ def _check_mounts(p: Project) -> list[Issue]:
         need = mounts.needed_clearance(p, m)
         fix = mounts.clamp_mount(p, m, m.u, m.v)
         fix_label = "Move to the nearest spot that fits"
-        if room < 0:
+        under_lip = lid_mount and has_lip(p)        # under the lid: measured inside its lip
+        if room < 0 and under_lip:
+            what = "board" if size else "posts"
+            out.append(Issue(ERROR, f"{name}: the {what} would hit the lid's lip.",
+                             "Move it further in, or turn it.", mount_id=m.id, fix=fix,
+                             fix_label=fix_label))
+        elif room < 0:
             what = "The board doesn't fit" if size else "A post runs into the wall"
             out.append(Issue(ERROR, f"{name}: {what[0].lower() + what[1:]} there.",
                              "Move it further in, or turn it.", mount_id=m.id, fix=fix,
                              fix_label=fix_label))
+        elif room < need - 1e-6 and under_lip:
+            out.append(Issue(WARNING, f"{name}: the board touches the lid's lip.",
+                             "Leave at least 1 mm of room so the lid goes on easily.",
+                             mount_id=m.id, fix=fix, fix_label=fix_label))
         elif room < need - 1e-6:
             what = "corner guides" if guided else "board"
             if need > 1.0:
@@ -805,7 +918,9 @@ def _check_mounts(p: Project) -> list[Issue]:
         r = mounts.post_radius(m)
         posts = mounts.post_positions(m)
         reach = r + 0.8 + divider_fillet(p)
-        if any(abs(x - dx) < reach for x, _ in posts for dx in xs) or \
+        if lid_mount:
+            pass                                    # dividers and floor holes: see _check_lid_mount
+        elif any(abs(x - dx) < reach for x, _ in posts for dx in xs) or \
                 any(abs(y - dy) < reach for _, y in posts for dy in ys):
             out.append(Issue(WARNING, f"{name}: a post stands on a divider.",
                              "Move the posts into a compartment.", mount_id=m.id))
@@ -818,7 +933,7 @@ def _check_mounts(p: Project) -> list[Issue]:
                                  "Move it into one compartment, or use lower dividers.",
                                  mount_id=m.id))
         for hole in p.holes:
-            if hole.surface == BOTTOM and any(
+            if not lid_mount and hole.surface == BOTTOM and any(
                     point_near_opening(p, hole, x, y, r) for x, y in posts):
                 out.append(Issue(WARNING, f"{hole_name(p, hole)} is under a post of {name}.",
                                  "Move the hole or the posts.", hole.id))
@@ -870,14 +985,31 @@ def _check_stacking(p: Project, a, b) -> list[Issue]:
     bx0, bx1, by0, by1 = mounts.footprint_box(b)
     if ax1 <= bx0 or bx1 <= ax0 or ay1 <= by0 or by1 <= ay0:
         return []
-    lower, upper = sorted((a, b), key=lambda m: mounts.board_bottom(p, m))
+    if mounts.on_lid(a) != mounts.on_lid(b):
+        floor_set, lid_set = (b, a) if mounts.on_lid(a) else (a, b)
+        room = mounts.reach(p, lid_set)[0] - mounts.reach(p, floor_set)[1]
+        if room < mounts.STACK_AIR - 1e-6:
+            return [Issue(ERROR, f"{mount_name(p, lid_set)} would run into {mount_name(p, floor_set)} "
+                          "when the lid is on.", "Make the posts shorter, or move one of them so "
+                          "they don't overlap.", mount_id=lid_set.id)]
+        if not mounts.BOARDS[floor_set.board].flat or not mounts.BOARDS[lid_set.board].flat:
+            return [Issue(INFO, f"{mount_name(p, lid_set)} is {_mm(room)} above "
+                          f"{mount_name(p, floor_set)} when the lid is on.",
+                          "Check that the tallest parts of both fit: their height varies between "
+                          "board versions.", mount_id=lid_set.id)]
+        return []
+    # Both on the floor, or both under the lid: "lower" is the one nearer its surface,
+    # and heights are measured from that surface (up from the floor, down from the lid).
+    lower, upper = sorted((a, b), key=lambda m: m.length)
     low_name, up_name = mount_name(p, lower), mount_name(p, upper)
+    lid = mounts.on_lid(a)
+    above, taller, sits = ("below", "longer", "hangs") if lid else ("above", "taller", "sits")
     if mounts.has_guides(upper):
         # Its supports and corner guides stand on the floor, all over its area.
         return [Issue(ERROR, f"{up_name} can't sit above {low_name}: its supports and corner "
                       "guides stand on the floor.", "Move one of them so they don't overlap.",
                       mount_id=upper.id)]
-    # Posts of the upper set stand on the floor: they must not need to go through the lower board.
+    # The posts of the farther set reach past the nearer board: not through it.
     corners = mounts.outline_corners(lower)
     if corners:
         x0, x1 = min(c[0] for c in corners), max(c[0] for c in corners)
@@ -886,27 +1018,28 @@ def _check_stacking(p: Project, a, b) -> list[Issue]:
         if upper.length > lower.length and any(
                 x0 - r < x < x1 + r and y0 - r < y < y1 + r for x, y in mounts.post_positions(upper)):
             return [Issue(ERROR, f"A post of {up_name} would have to go through the board of "
-                          f"{low_name}.", "Turn or move one of them so the posts stand beside "
-                          "the lower board.", mount_id=upper.id)]
+                          f"{low_name}.", "Turn or move one of them so the posts are beside the "
+                          "other board.", mount_id=upper.id)]
+    lower_board = mounts.BOARD_THICKNESS if mounts.board_size(lower) else 0.0
+    gap = upper.length - (lower.length + lower_board)       # between the two boards
     if not mounts.board_size(lower):
-        if mounts.board_size(upper) and mounts.board_bottom(p, upper) - mounts.board_top(p, lower) >= -1e-6:
+        if mounts.board_size(upper) and gap >= -1e-6:
             return []           # a single post under a board just supports it
         return [Issue(WARNING, f"{low_name} and {up_name} overlap.", "Move one of them.",
                       mount_id=b.id)]
-    gap = mounts.board_bottom(p, upper) - mounts.board_top(p, lower)
     need = mounts.room_above(lower)
     if gap < need - 1e-6:
         if gap <= 0:
             return [Issue(ERROR, f"{low_name} and {up_name} overlap at the same height.",
                           f"Move one of them, or make the posts of one at least {_mm(need - gap)} "
-                          "taller so it sits above the other.", mount_id=b.id)]
-        return [Issue(ERROR, f"{up_name} sits only {_mm(gap)} above {low_name}, which needs "
-                      f"{_mm(need)} of room above it.",
-                      f"Make the posts of {up_name} {_mm(need - gap)} taller.", mount_id=upper.id)]
+                          f"{taller} so it {sits} {above} the other.", mount_id=b.id)]
+        return [Issue(ERROR, f"{up_name} {sits} only {_mm(gap)} {above} {low_name}, which needs "
+                      f"{_mm(need)} of room {above} it.",
+                      f"Make the posts of {up_name} {_mm(need - gap)} {taller}.", mount_id=upper.id)]
     if not mounts.BOARDS[lower.board].flat:
         what = mounts.BOARDS[lower.board].tall_parts or "parts"
-        return [Issue(WARNING, f"{up_name} sits {_mm(gap)} above {low_name}. Check that the "
-                      f"{what} of {low_name} fit underneath.",
+        return [Issue(WARNING, f"{up_name} {sits} {_mm(gap)} {above} {low_name}. Check that the "
+                      f"{what} of {low_name} fit {'above it' if lid else 'underneath'}.",
                       "Their height varies between board versions; measure yours.",
                       mount_id=upper.id)]
     return []

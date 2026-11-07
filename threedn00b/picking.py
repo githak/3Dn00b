@@ -8,8 +8,9 @@ from __future__ import annotations
 import math
 
 from .model import (BACK, BOTTOM, BOX, FRONT, LEFT, LID, RIGHT, SIDE, Hole,
-                    Project, extent_limits, point_near_opening, surface_frame,
-                    surface_offset_mm, wall_limits)
+                    Project, divider_positions, divider_surfaces, extent_limits, has_dividers,
+                    hole_surfaces, point_near_opening, surface_frame, surface_offset_mm,
+                    wall_limits)
 
 SNAP_MM = 3.0
 SNAP_DEG = 5.0
@@ -31,6 +32,18 @@ def surface_at(project: Project, point, normal, part: str):
     v = z - h / 2
     if project.shape != BOX:
         return SIDE, math.degrees(math.atan2(x, -y)), v
+    if has_dividers(project):
+        xs, ys = divider_positions(project)
+        half = project.dividers.thickness / 2 + 0.05
+        names = iter(divider_surfaces(project))
+        for at in xs:
+            name = next(names)
+            if abs(x - at) <= half and abs(normal[0]) > 0.7:
+                return name, y, v
+        for at in ys:
+            name = next(names)
+            if abs(y - at) <= half and abs(normal[1]) > 0.7:
+                return name, x, v
     w, d, t = project.outer_width, project.outer_depth, project.wall
     walls = {
         FRONT: (-d / 2 - 0.05 <= y <= -d / 2 + t + 0.05, (0, -1), x),
@@ -163,8 +176,9 @@ def hole_under_ray(project: Project, origin, direction, mesh_distance: float | N
     on surfaces further back than that are hidden and can't be grabbed.
     """
     best, best_t = None, None
+    surfaces = hole_surfaces(project)
     for hole in project.holes:
-        if hole.surface not in project.surfaces() or (hole.surface == LID and not lid_visible):
+        if hole.surface not in surfaces or (hole.surface == LID and not lid_visible):
             continue
         hit = surface_hit(project, hole.surface, origin, direction, lid_offset)
         if hit is None or not hit[3]:
@@ -255,10 +269,11 @@ def snap_drag(project: Project, hole: Hole, u: float, v: float):
 # Screw posts: grabbed and moved on the plane of their tops.
 # ---------------------------------------------------------------------------
 
-def mount_plane_hit(project: Project, mount, origin, direction):
-    """Where a ray meets the plane of a set's post tops: (distance, x, y) or None."""
-    from .mounts import board_bottom
-    z = board_bottom(project, mount)
+def mount_plane_hit(project: Project, mount, origin, direction, lid_offset: float = 0.0):
+    """Where a ray meets the plane of a set's post ends: (distance, x, y) or None.
+    Posts under the lid are shown with the lid, `lid_offset` higher."""
+    from .mounts import on_lid, post_end
+    z = post_end(project, mount) + (lid_offset if on_lid(mount) else 0.0)
     if abs(direction[2]) < 1e-9:
         return None
     t = (z - origin[2]) / direction[2]
@@ -267,12 +282,15 @@ def mount_plane_hit(project: Project, mount, origin, direction):
     return t, origin[0] + t * direction[0], origin[1] + t * direction[1]
 
 
-def mount_under_ray(project: Project, origin, direction, mesh_distance: float | None):
+def mount_under_ray(project: Project, origin, direction, mesh_distance: float | None,
+                    lid_offset: float = 0.0, lid_visible: bool = True):
     """The set of posts (or its board outline) the mouse is pointing at, if any."""
     from . import mounts
     best, best_t = None, None
     for m in project.mounts:
-        hit = mount_plane_hit(project, m, origin, direction)
+        if mounts.on_lid(m) and not lid_visible:
+            continue
+        hit = mount_plane_hit(project, m, origin, direction, lid_offset)
         if hit is None:
             continue
         t, x, y = hit

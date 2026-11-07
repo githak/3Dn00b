@@ -2761,3 +2761,233 @@ def test_magnet_lid_round_trip(tmp_path):
     data["project"]["lid"]["magnet"] = "7x7"
     with pytest.raises(project_io.ProjectFileError):
         project_io.from_dict(data)
+
+
+# ---- posts under the lid ----------------------------------------------------------
+
+from threedn00b import picking  # noqa: E402
+from threedn00b.model import PUSH_ON, SCREWED as SCREWED_LID  # noqa: E402
+
+
+def posts_lid_box(**kw):
+    p = default_project(BOX)
+    p.width, p.depth, p.height = 110.0, 80.0, 60.0
+    p.lid.enabled = True
+    for k, v in kw.items():
+        setattr(p.lid, k, v)
+    return p
+
+
+@pytest.mark.parametrize("style", [PUSH_ON, SCREWED_LID, MAGNETS])
+def test_posts_hang_under_the_lid(style):
+    p = posts_lid_box(style=style)
+    if style == MAGNETS:
+        p.lid.thickness = magnet_lid_thickness(p)
+    m = mounts.new_mount(p, "rpi-zero", LID)
+    m.length = 6.0
+    p.mounts = [m]
+    assert not [i.message for i in validation.check(p) if i.level != "info"]
+    parts = geometry.build_parts(p)
+    assert geometry.piece_count(parts.lid) == 1 and geometry.piece_count(parts.body) == 1
+    h = p.outer_height
+    r = mounts.post_radius(m)
+    for x, y in mounts.post_positions(m):
+        # The post reaches 6 mm down from the lid, its screw hole stops at the lid ...
+        ring = x + (r - 0.4)
+        hit = parts.lid.ray_cast([ring, y, -5], [ring, y, h + 20])
+        assert hit[0].position[2] == pytest.approx(h - 6.0, abs=0.02)
+        hit = parts.lid.ray_cast([x, y, -5], [x, y, h + 20])
+        assert hit[0].position[2] == pytest.approx(h, abs=0.02)
+        # ... and nothing of it is in the box.
+        assert not parts.body.ray_cast([ring, y, p.bottom + 0.5], [ring, y, h - 0.5])
+    assert mounts.board_top(p, m) == pytest.approx(h - 6.0)
+    assert mounts.reach(p, m) == pytest.approx((h - 6.0 - 1.6 - 4.0, h))
+
+
+def test_posts_under_the_lid_checks():
+    p = posts_lid_box()
+    m = mounts.new_mount(p, "rpi-zero", LID)
+    p.mounts = [m]
+    p.lid.enabled = False
+    assert "but there's no lid" in messages(validation.check(p))
+    p.lid.enabled, p.lid.style = True, "sliding"
+    assert "lid that slides in" in messages(validation.check(p))
+    p.lid.style = PUSH_ON
+    m.length = 54.0                                   # board and parts down to the floor
+    assert "reach down to the floor" in messages(validation.check(p))
+    m.length = 6.0
+    m.u = p.inner_width / 2 - 65 / 2 - 1.0            # in the lid's lip
+    issue = next(i for i in validation.check(p) if i.mount_id)
+    assert "lid's lip" in issue.message and issue.fix is not None
+    m.u, m.v = issue.fix
+    assert not validation.has_errors(validation.check(p))
+    esp = mounts.new_mount(p, "esp32-s3", LID)        # no screw holes: it would fall off
+    p.mounts = [esp]
+    assert "can't hang under the lid" in messages(validation.check(p))
+
+
+def test_board_under_the_lid_and_board_on_the_floor():
+    p = posts_lid_box()
+    top = mounts.new_mount(p, "rpi-zero", LID)
+    floor = mounts.new_mount(p, "rpi-zero")
+    top.length, floor.length = 5.0, 45.0              # lid board's parts down to 49.4, floor's up to 52.6
+    p.mounts = [top, floor]
+    assert "would run into" in messages(validation.check(p))
+    floor.length = 5.0                                 # now 37 mm apart
+    issues = validation.check(p)
+    assert not validation.has_errors(issues)
+    low, _ = mounts.reach(p, top)
+    _, high = mounts.reach(p, floor)
+    assert low - high > mounts.STACK_AIR
+
+
+def test_two_sets_under_the_lid():
+    p = posts_lid_box()
+    near = mounts.new_mount(p, "pico", LID)           # the Zero's posts are beside the Pico
+    far = mounts.new_mount(p, "rpi-zero", LID)
+    near.length, far.length = 4.0, 8.0                 # the Zero hangs 2.4 mm below the Pico
+    p.mounts = [near, far]
+    msg = messages(validation.check(p))
+    assert "hangs only" in msg and "below" in msg
+    far.length = 12.0
+    assert not validation.has_errors(validation.check(p))
+
+
+def test_fans_on_the_floor_and_under_the_lid():
+    assert sorted(k for k, b in mounts.BOARDS.items() if b.fan) == ["fan30", "fan40", "fan50",
+                                                                    "fan60", "fan80"]
+    spacing = {"fan30": 24.0, "fan40": 32.0, "fan50": 40.0, "fan60": 50.0, "fan80": 71.5}
+    for key, apart in spacing.items():
+        xs = sorted({round(x, 3) for x, _ in mounts.BOARDS[key].holes})
+        assert xs[1] - xs[0] == pytest.approx(apart)
+    p = posts_lid_box()
+    fan = mounts.new_mount(p, "fan40", LID)
+    fan.length = 3.0
+    floor_fan = mounts.new_mount(p, "fan30")
+    floor_fan.u, floor_fan.length = -30.0, 3.0
+    fan.u = 25.0
+    p.mounts = [fan, floor_fan]
+    issues = validation.check(p)
+    assert not validation.has_errors(issues)
+    assert "opening of 36 mm" in messages(issues)
+    assert mounts.fan_opening(fan) == 36.0 and mounts.max_screw_length(fan) == 12.5
+    parts = geometry.build_parts(p)
+    h = p.outer_height
+    # Air goes through the lid over the fan, and through the floor under the floor fan.
+    assert not parts.lid.ray_cast([fan.u, fan.v, h + 10], [fan.u, fan.v, h - 1])
+    assert not parts.body.ray_cast([floor_fan.u, floor_fan.v, -5], [floor_fan.u, floor_fan.v, 5])
+    edge = fan.u + 18.0 + 0.6                          # just outside the opening: lid
+    assert parts.lid.ray_cast([edge, fan.v, h + 10], [edge, fan.v, h - 1])
+    assert geometry.piece_count(parts.lid) == 1 and geometry.piece_count(parts.body) == 1
+
+
+def test_lid_posts_save_and_load(tmp_path):
+    p = posts_lid_box()
+    p.mounts = [mounts.new_mount(p, "rpi-zero", LID)]
+    path = tmp_path / "lid-posts.3dn00b"
+    project_io.save_project(p, path)
+    assert project_io.load_project(path) == p
+    data = project_io.to_dict(p)
+    assert data["version"] >= 19
+    data["project"]["mounts"][0]["surface"] = "wall"
+    with pytest.raises(project_io.ProjectFileError):
+        project_io.from_dict(data)
+
+
+def test_lid_posts_are_not_in_the_floor_test_piece():
+    p = posts_lid_box()
+    m = mounts.new_mount(p, "rpi-zero", LID)
+    p.mounts = [m]
+    assert geometry.fit_test_openings_band(p) is None        # nothing on the floor to test
+
+
+def test_grabbing_posts_under_the_lid():
+    p = posts_lid_box()
+    m = mounts.new_mount(p, "rpi-zero", LID)
+    m.length = 6.0
+    p.mounts = [m]
+    offset = 20.0                                       # the lid is shown lifted this much
+    z = p.outer_height - 6.0 + offset
+    hit = picking.mount_plane_hit(p, m, (m.u, m.v, z + 50), (0.0, 0.0, -1.0), offset)
+    assert hit[0] == pytest.approx(50.0)
+    assert picking.mount_under_ray(p, (m.u, m.v, z + 50), (0.0, 0.0, -1.0), None, offset) is m
+    assert picking.mount_under_ray(p, (m.u, m.v, z + 50), (0.0, 0.0, -1.0), None, offset,
+                                   lid_visible=False) is None
+
+
+# ---- cable notches in dividers ----------------------------------------------------
+
+from threedn00b.model import (divider_place, divider_surfaces, hole_surfaces,  # noqa: E402
+                              is_divider_surface, surface_label)
+
+
+def tray_with_notch(surface="divider-x1", u=20.0, width=6.0, depth=8.0):
+    p = default_project("tray")                        # 3 x 2 compartments, 25 mm tall
+    hole = Hole(surface=surface, kind=NOTCH, width=width, height=depth, u=u)
+    hole.v = notch_v(p, hole)
+    p.holes = [hole]
+    return p, hole
+
+
+def test_divider_surfaces_and_names():
+    p = default_project("tray")
+    assert divider_surfaces(p) == ["divider-x1", "divider-x2", "divider-y1"]
+    assert surface_label(p, "divider-y1") == "Side-to-side divider 1"
+    p.dividers.deep = 1
+    assert surface_label(p, "divider-x2") == "Divider 2 (between compartments 2 and 3)"
+    assert divider_place(p, "divider-y1") is None and is_divider_surface("divider-y1")
+    assert set(hole_surfaces(p)) == set(p.surfaces()) | {"divider-x1", "divider-x2"}
+
+
+@pytest.mark.parametrize("surface,u", [("divider-x1", 20.0), ("divider-y1", -40.0)])
+def test_divider_notch_cuts_down_from_the_top(surface, u):
+    p, hole = tray_with_notch(surface, u)
+    assert not [i.message for i in validation.check(p) if i.level != "info"]
+    body = geometry.build_body(p)
+    assert geometry.piece_count(body) == 1
+    axis, at = divider_place(p, surface)
+    top = divider_top(p)
+
+    def floor_of_notch(along):
+        x, y = (at, along) if axis == "x" else (along, at)
+        return body.ray_cast([x, y, top + 10], [x, y, 0])[0].position[2]
+    assert floor_of_notch(u) == pytest.approx(top - 8.0, abs=0.02)        # 8 mm deep
+    assert floor_of_notch(u + 2.0) > top - 8.0 + 0.3                     # round bottom
+    assert floor_of_notch(u + 4.0) == pytest.approx(top, abs=0.02)        # 6 mm wide
+
+
+def test_divider_notch_checks():
+    p, hole = tray_with_notch(u=0.0)                   # where the side-to-side divider crosses
+    issue = next(i for i in validation.check(p) if i.hole_id)
+    assert "another divider crosses" in issue.message and issue.fix is not None
+    hole.u, hole.v = issue.fix
+    assert not [i for i in validation.check(p) if i.hole_id]
+    hole.height = 30.0                                 # deeper than the divider is tall
+    assert "doesn't fit in front-to-back divider 1" in messages(validation.check(p))
+    hole.height = 8.0
+    hole.u = 46.0                                      # the wall is at 48.4
+    assert "runs off the end" in messages(validation.check(p))
+    p.dividers.across = 1                              # that divider is gone
+    assert "isn't there any more" in messages(validation.check(p))
+
+
+def test_divider_notch_follows_the_divider_top():
+    p, hole = tray_with_notch()
+    p.dividers.height = 15.0
+    fix_notches(p)
+    assert p.outer_height / 2 + hole.v + hole.height / 2 == pytest.approx(p.bottom + 15.0)
+    body = geometry.build_body(p)
+    _, at = divider_place(p, "divider-x1")
+    assert body.ray_cast([at, hole.u, 40], [at, hole.u, 0])[0].position[2] == pytest.approx(
+        p.bottom + 15.0 - 8.0, abs=0.02)
+
+
+def test_double_click_on_a_divider():
+    p = default_project("tray")
+    _, at = divider_place(p, "divider-x1")
+    t = p.dividers.thickness
+    found = picking.surface_at(p, (at + t / 2, 10.0, 15.0), (1.0, 0.0, 0.0), "body")
+    assert found == ("divider-x1", 10.0, 15.0 - p.outer_height / 2)
+    _, y = divider_place(p, "divider-y1")
+    found = picking.surface_at(p, (-30.0, y - t / 2, 12.0), (0.0, -1.0, 0.0), "body")
+    assert found[0] == "divider-y1" and found[1] == pytest.approx(-30.0)

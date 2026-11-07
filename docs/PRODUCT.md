@@ -408,6 +408,28 @@ Defaults I chose myself, which are easy to change:
     library path 3Dn00b's AppImage sets for itself (it would load the wrong libraries).
     Tested with a real PrusaSlicer: found through its menu entry and started with the
     exported body and lid.
+- Posts under the lid and notches in dividers (0.33), asked for by the project owner:
+  - Posts under the lid: each set of posts is on the floor or under the lid ("Put it" when
+    adding, "Where" for the selected set). Posts under the lid hang from its underside and
+    are part of the lid, which prints upside down, so they print standing up; the screw
+    hole is at the free end and stops at the lid. They work with lids that lift straight
+    off (push-on, snap-on, screwed down, magnetic); a sliding or screw-on lid, a board
+    without screw holes (it would fall off) or no lid at all is an error, and adding posts
+    under the lid turns the lid on. The board must stay inside the lid's lip and clear of
+    the corner columns; its parts must not reach the floor or a divider, nor run into a
+    board on the floor below (1 mm of air between their parts); two sets under the lid are
+    checked like stacked boards, measured down from the lid. Lid holes over a post are
+    warned about. The 3D view draws them with the lid, and they can be dragged there.
+  - Fans: 30, 40, 50, 60 and 80 mm fans join the board list (holes 24, 32, 40, 50 and
+    71.5 mm apart; 10, 10, 10, 15 and 25 mm thick), on M3 posts, screwed through the frame.
+    On the floor or under the lid each gets a round opening there, as big as the fan allows
+    with 1 mm of plastic around the posts (25, 36, 46, 56, 76 mm).
+  - Cable notches in dividers: a cable notch can go in a divider too ("Where" lists the
+    dividers, or double-click one in the 3D view), down from the divider's top and right
+    through it, so a cable can go from one compartment to the next. It stays clear of the
+    walls (the rounded joints and the lid's lip), keeps up with the divider's height, is
+    an error if its divider is gone (fewer compartments) and a warning, with a fix, where
+    another divider crosses and would still block the cable. Project format 19.
 - 0.32.1: the About box says "Vibe-coded by Hakon Sporck" with a link to the project page
   (github.com/githak/3Dn00b). Before the repository went public, the workflows were made
   read-only except the job that publishes a release.

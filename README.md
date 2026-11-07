@@ -8,7 +8,7 @@ Software for people getting into 3D printing and want to start with something ea
 sizes in millimetres, add holes and a lid, and export files your slicer can
 print. No sketches, no constraints, no feature trees.
 
-## What it can do (version 0.32.1)
+## What it can do (version 0.33.0)
 
 - **Templates** to start from, already sized to fit. Pick one under **What are you making?**
   in the Shape step, then change anything you like; Undo takes you back.
@@ -67,15 +67,21 @@ print. No sketches, no constraints, no feature trees.
 - **Cable notches**: a notch down from the top of a wall, round at the bottom, so a
   cable can come out with the lid on. A push-on or snap-on lid gets a matching notch
   in its lip; screwed-down lids and boxes without a lid work too. Common cable sizes
-  are built in.
+  are built in. A notch can also go in a **divider**, so a cable runs from one
+  compartment to the next: a circuit board in one and its power supply in another,
+  or a light kept apart from a camera.
 - **Fix it in place** (Shape step): **screw tabs** at the bottom to screw it down,
   and/or **keyhole slots** in the back to hang it on two screws in a wall. Pick the
   screw size; the keyholes go as far apart as fits, or as far apart as the screws
   already in your wall. The checks tell you how far apart to put the screws.
-- **Screw posts for circuit boards**: pick a board (Raspberry Pi Zero / Zero 2 W,
+- **Screw posts for circuit boards and fans**: pick a board (Raspberry Pi Zero / Zero 2 W,
   3 / 4 / 5, 3 A+, Pico / Pico 2, Arduino Uno R3 / R4, Mega 2560 / Giga R1, Nano,
-  ESP32-S3-DevKitC-1, or your own board with 1, 2 or 4 holes) and all its posts
-  appear in the right pattern. A board with no screw holes (the ESP32-S3-DevKitC-1)
+  ESP32-S3-DevKitC-1, a 30 to 80 mm fan, or your own board with 1, 2 or 4 holes) and all
+  its posts appear in the right pattern, **on the floor or under the lid**. Posts under
+  the lid hang from its underside and are printed with it, for a board or a fan on the
+  inside of the lid; the checks make sure it clears the lid's lip, the corner columns,
+  and whatever is on the floor below. A fan gets a round opening to blow through, in the
+  floor or the lid it is on. A board with no screw holes (the ESP32-S3-DevKitC-1)
   rests on supports instead, with a guide at each corner that stops it sliding. Choose the screw size (M1 to M4) and how tall the
   posts are; the screw cuts its own thread into the post, or tick **Heat-set
   inserts** for brass threads you melt in with a soldering iron (M2 to M4; the
@@ -154,7 +160,7 @@ libraries 3Dn00b needs; nothing is downloaded while installing.
 ### Debian, Ubuntu, Linux Mint (PC): the .deb
 
 ```bash
-sudo apt install ./3dn00b_0.32.1-1_amd64.deb
+sudo apt install ./3dn00b_0.33.0-1_amd64.deb
 ```
 
 3Dn00b appears in your applications menu, `.3dn00b` project files open in it, and
@@ -164,7 +170,7 @@ it needs. To remove it: `sudo apt remove 3dn00b`.
 ### Raspberry Pi 4 and 5, other ARM computers: the arm64 .deb
 
 ```bash
-sudo apt install ./3dn00b_0.32.1-1_arm64.deb
+sudo apt install ./3dn00b_0.33.0-1_arm64.deb
 ```
 
 For Raspberry Pi OS Trixie (the current one, since late 2025), Debian 13 and Ubuntu
@@ -175,7 +181,7 @@ enough; the 3D view uses the Pi's graphics chip.
 ### Fedora (and other RPM systems): the .rpm
 
 ```bash
-sudo dnf install ./3dn00b-0.32.1-1.x86_64.rpm
+sudo dnf install ./3dn00b-0.33.0-1.x86_64.rpm
 ```
 
 For Fedora 40 or newer and openSUSE Tumbleweed (use `sudo zypper install` there).
@@ -187,8 +193,8 @@ One file that runs without installing, on most Linux systems from the last few y
 16, Arch, Manjaro…). It brings its own Python too.
 
 ```bash
-chmod +x 3Dn00b-0.32.1-x86_64.AppImage
-./3Dn00b-0.32.1-x86_64.AppImage
+chmod +x 3Dn00b-0.33.0-x86_64.AppImage
+./3Dn00b-0.33.0-x86_64.AppImage
 ```
 
 Or right-click it in your file manager, allow it to run as a program, and

@@ -16,7 +16,7 @@ from PySide6.QtWidgets import QLabel
 from .. import geometry, measure, mounts
 from . import theme
 from ..model import (BOTTOM, LID, RECT, SIDE, VENT, Hole, Project, hole_center_3d,
-                     corner_rounding, surface_frame, vent_openings)
+                     corner_rounding, hole_surfaces, is_divider_surface, surface_frame, vent_openings)
 
 # Soft two-sided lighting: a light near the camera plus a fill light and ambient,
 # so the inside of the box and faces turned away are still readable.
@@ -226,9 +226,12 @@ class Viewer(gl.GLViewWidget):
         for item in self._marker_items:
             self.removeItem(item)
         self._marker_items.clear()
+        surfaces = hole_surfaces(project)
         for hole in project.holes:
             if hole.surface == LID and ("lid" not in self._solids):
                 continue
+            if hole.surface not in surfaces:
+                continue                       # on a divider that isn't there any more
             if hole.id == selected_id:
                 color, width = SELECTED_COLOR, 4
             elif hole.id in problem_ids:
@@ -324,13 +327,17 @@ class Viewer(gl.GLViewWidget):
             self.removeItem(item)
         self._mount_items.clear()
         for m in project.mounts:
+            lid = mounts.on_lid(m)
+            if lid and "lid" not in self._solids:
+                continue                       # shown with the lid; the lid is hidden
             if m.id == selected_id:
                 color, width = SELECTED_COLOR, 3.5
             elif m.id in problem_ids:
                 color, width = PROBLEM_COLOR, 3
             else:
                 color, width = BOARD_COLOR, 2
-            z = mounts.board_bottom(project, m) + 0.05
+            # Where the board is screwed on: on the posts' tops, or under their ends.
+            z = mounts.post_end(project, m) + (self._lid_offset - 0.05 if lid else 0.05)
             lines = []
             corners = mounts.board_corners(m)
             if corners:
@@ -538,6 +545,7 @@ def _hole_rings(project: Project, hole, out: float = 0.0) -> list[np.ndarray]:
         # Also show it on the inside floor, which is what you usually see.
         rings.append(ring + np.array([0, 0, project.bottom + 0.6 + out]))
     elif hole.surface != LID:
-        # Wall holes: also outline on the inside face.
-        rings.append(ring - np.array(n) * (project.wall + 0.6 + out))
+        # Wall holes: also outline on the inside face (a divider's other face).
+        depth = project.dividers.thickness if is_divider_surface(hole.surface) else project.wall
+        rings.append(ring - np.array(n) * (depth + 0.6 + out))
     return rings

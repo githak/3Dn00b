@@ -269,7 +269,7 @@ class Mount:
     """
     board: str = "rpi-ab"          # key of mounts.BOARDS
     screw: str = "M2.5"            # key of mounts.SCREWS
-    length: float = 6.0            # height of the posts above the floor
+    length: float = 6.0            # how far the posts reach out from the floor (or the lid)
     u: float = 0.0                 # centre of the set: left/right
     v: float = 0.0                 # centre of the set: towards the back
     rotation: int = 0              # 0, 90, 180 or 270 degrees, seen from above
@@ -284,6 +284,7 @@ class Mount:
     # this much room plus a little air. Negative = the board's usual value.
     parts_height: float = -1.0
     inserts: bool = False          # heat-set inserts in the posts instead of plain holes
+    surface: str = BOTTOM          # BOTTOM: posts stand on the floor; LID: they hang under the lid
 
 
 # Text on the outside of a surface: standing out (raised), cut in (engraved), or cut
@@ -490,7 +491,10 @@ def has_frame(project: Project, hole: Hole) -> bool:
 
 
 def notch_v(project: Project, hole: Hole) -> float:
-    """Where a cable notch's middle is (v): it reaches down from the top of the wall."""
+    """Where a cable notch's middle is (v): it reaches down from the top of the wall, or
+    of the divider it is in."""
+    if is_divider_surface(hole.surface):
+        return divider_top(project) - project.outer_height / 2 - hole.height / 2
     return project.outer_height / 2 - hole.height / 2
 
 
@@ -727,14 +731,71 @@ def lip_wall(project: Project) -> float:
     return max(1.2, project.wall)
 
 
+# A divider can hold cable notches too. Its "surface" is named after the dividers'
+# direction and number: "divider-x1" is the first divider from the left (it runs from
+# front to back, at an x position), "divider-y1" the first from the front.
+DIVIDER_PREFIX = "divider-"
+
+
+def divider_surfaces(project: Project) -> list[str]:
+    """The dividers that are there now, as surfaces for cable notches."""
+    if not has_dividers(project):
+        return []
+    xs, ys = divider_positions(project)
+    return ([f"{DIVIDER_PREFIX}x{i + 1}" for i in range(len(xs))]
+            + [f"{DIVIDER_PREFIX}y{i + 1}" for i in range(len(ys))])
+
+
+def is_divider_surface(surface: str) -> bool:
+    return surface.startswith(DIVIDER_PREFIX)
+
+
+def divider_place(project: Project, surface: str) -> tuple[str, float] | None:
+    """For a divider surface: ("x", its x position) or ("y", its y position); None when
+    that divider isn't there (any more)."""
+    if not is_divider_surface(surface) or surface not in divider_surfaces(project):
+        return None
+    axis, number = surface[len(DIVIDER_PREFIX)], int(surface[len(DIVIDER_PREFIX) + 1:])
+    xs, ys = divider_positions(project)
+    return axis, (xs if axis == "x" else ys)[number - 1]
+
+
+def hole_surfaces(project: Project) -> tuple[str, ...]:
+    """Everywhere a hole can be now: the surfaces, and the dividers (for cable notches)."""
+    return tuple(project.surfaces()) + tuple(divider_surfaces(project))
+
+
+def surface_label(project: Project, surface: str) -> str:
+    """The name of a surface for people: "Front wall", "Divider 2 (between compartments 2
+    and 3)" ..."""
+    if not is_divider_surface(surface):
+        return SURFACE_LABELS.get(surface, surface)
+    axis, number = surface[len(DIVIDER_PREFIX)], surface[len(DIVIDER_PREFIX) + 1:]
+    xs, ys = divider_positions(project) if has_dividers(project) else ([], [])
+    if xs and ys:
+        return f"{'Front-to-back' if axis == 'x' else 'Side-to-side'} divider {number}"
+    if number.isdigit():
+        return f"Divider {number} (between compartments {number} and {int(number) + 1})"
+    return f"Divider {number}"
+
+
 def surface_frame(project: Project, surface: str):
     """Return (center, normal, right, up) vectors for a flat surface.
 
     `center` is on the outside face of the surface. For the round wall the
-    frame depends on the angle, see side_frame().
+    frame depends on the angle, see side_frame(). A divider's frame is like the
+    right wall's (u from front to back) or the front wall's (u from left to right),
+    on the divider's right or front face.
     """
     w, d, h = project.outer_width, project.outer_depth, project.outer_height
     zc = h / 2
+    place = divider_place(project, surface) if is_divider_surface(surface) else None
+    if place is not None:
+        t = project.dividers.thickness
+        axis, at = place
+        if axis == "x":
+            return (at + t / 2, 0, zc), (1, 0, 0), (0, 1, 0), (0, 0, 1)
+        return (0, at - t / 2, zc), (0, -1, 0), (1, 0, 0), (0, 0, 1)
     frames = {
         FRONT: ((0, -d / 2, zc), (0, -1, 0), (1, 0, 0), (0, 0, 1)),
         BACK: ((0, d / 2, zc), (0, 1, 0), (-1, 0, 0), (0, 0, 1)),
@@ -785,6 +846,8 @@ def extent_limits(project: Project, surface: str, half_u: float, half_v: float,
     the bounding rectangle; rounded corners are checked by flat_clearance().
     A cable notch (`notch`) only moves sideways: it always reaches the top.
     """
+    if is_divider_surface(surface):
+        return _divider_notch_limits(project, surface, half_u, half_v, margin) if notch else None
     if surface not in WALL_SURFACES and notch:
         return None
     if surface in WALL_SURFACES:
@@ -810,6 +873,31 @@ def extent_limits(project: Project, surface: str, half_u: float, half_v: float,
     if u_lo > u_hi + 1e-9 or v_lo > v_hi + 1e-9:
         return None
     return u_lo, u_hi, v_lo, v_hi
+
+
+def divider_end_zone(project: Project) -> float:
+    """How far from the outer walls a notch in a divider must stay: clear of the rounded
+    joint, and of the gap the divider has for a lid's lip."""
+    zone = divider_fillet(project)
+    if has_lip(project):
+        zone += lip_outer_offset(project) + lip_wall(project)
+    return zone
+
+
+def _divider_notch_limits(project: Project, surface: str, half_u: float, half_v: float,
+                          margin: float):
+    place = divider_place(project, surface)
+    if place is None:
+        return None
+    top = divider_top(project)
+    if top - 2 * half_v < project.bottom + divider_fillet(project) + margin - 1e-9:
+        return None                                   # so deep it would reach the floor
+    v = top - half_v - project.outer_height / 2
+    span = project.inner_depth if place[0] == "x" else project.inner_width
+    half = span / 2 - divider_end_zone(project) - half_u - margin
+    if half < -1e-9:
+        return None
+    return -half, half, v, v
 
 
 def _flat_half_extents(project: Project, surface: str):
@@ -868,6 +956,14 @@ def hole_edge_clearance(project: Project, hole: Hole) -> float:
     hu, hv = hole.half_extents
     if hole.surface in (BOTTOM, LID):
         return _flat_hole_clearance(project, hole, hole.u, hole.v)
+    if is_divider_surface(hole.surface):
+        place = divider_place(project, hole.surface)
+        if place is None:
+            return -1.0
+        z = project.outer_height / 2 + hole.v
+        span = project.inner_depth if place[0] == "x" else project.inner_width
+        half = span / 2 - divider_end_zone(project)
+        return min(z - hv - (project.bottom + divider_fillet(project)), half - abs(hole.u) - hu)
     z = project.outer_height / 2 + hole.v
     z_lo = project.bottom + inside_fillet(project)
     z_hi = wall_top_free(project)

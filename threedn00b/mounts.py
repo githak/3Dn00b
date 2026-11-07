@@ -9,8 +9,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from .model import (SCREWS, Mount, Project, flat_clearance, has_lip, lid_column_radius, post_diameter,
-                    lid_column_positions, lip_outer_offset, lip_wall)
+from .model import (BOTTOM, LID, SCREWS, Mount, Project, flat_clearance, has_lip, lid_column_radius,
+                    post_diameter, lid_column_positions, lip_outer_offset, lip_wall)
 
 BOARD_THICKNESS = 1.6     # standard circuit board thickness
 STACK_AIR = 1.0           # extra room between a board's tallest part and the board above
@@ -44,6 +44,14 @@ class Board:
     tall_parts: str = ""         # what the tallest parts are, for messages
     short: str = ""              # short name for messages
     guides: Guides | None = None  # no screw holes: supports and corner guides hold it
+    fan: bool = False            # a fan: it gets a round air opening in the floor or lid
+
+
+def _fan(size: float, spacing: float, thickness: float) -> "Board":
+    h = spacing / 2
+    return Board(f"Fan {size:g} × {size:g} mm", (size, size),
+                 ((-h, -h), (h, -h), (-h, h), (h, h)), "M3", parts_height=thickness - BOARD_THICKNESS,
+                 tall_parts="fan", short=f"{size:g} mm fan", fan=True)
 
 
 def _from_corner(width, depth, holes):
@@ -99,6 +107,12 @@ BOARDS = {
                                                  (55.0, 18.4)]),
                       "M3", parts_height=4.0, flat=True, tall_parts="module and USB sockets",
                       short="ESP32-S3 DevKitC-1", guides=Guides(along_length=4.0, along_end=1.5)),
+    # Fans, in the common sizes: holes in a square (30 mm fans: 24 mm apart, 40: 32, 50: 40,
+    # 60: 50, 80: 71.5), screwed through the frame into the posts. Mounted on the floor or
+    # under the lid, each gets a round opening there to blow through.
+    "fan30": _fan(30.0, 24.0, 10.0), "fan40": _fan(40.0, 32.0, 10.0),
+    "fan50": _fan(50.0, 40.0, 10.0), "fan60": _fan(60.0, 50.0, 15.0),
+    "fan80": _fan(80.0, 71.5, 25.0),
     "custom": Board("Custom board (4 holes)", None, (), "M3", parts_height=10.0,
                     tall_parts="parts", short="custom board"),
     "custom2": Board("Custom board (2 holes)", None, (), "M3", parts_height=10.0,
@@ -210,14 +224,36 @@ def post_radius(m: Mount) -> float:
     return post_diameter(m.screw, m.inserts) / 2
 
 
+def on_lid(m: Mount) -> bool:
+    """Do the posts hang under the lid (rather than stand on the floor)?"""
+    return m.surface == LID
+
+
+def post_end(project: Project, m: Mount) -> float:
+    """Height (z) of the free end of the posts, where the board is screwed on: their top
+    on the floor, their bottom under the lid."""
+    return project.outer_height - m.length if on_lid(m) else project.bottom + m.length
+
+
+def thickness(m: Mount) -> float:
+    """How thick the board is where it is screwed on (a fan: its whole frame)."""
+    if not board_size(m):
+        return 0.0
+    return BOARD_THICKNESS + (parts_height(m) if BOARDS[m.board].fan else 0.0)
+
+
 def board_bottom(project: Project, m: Mount) -> float:
-    """Height (z) where the board rests: on top of the posts."""
+    """Height (z) of the underside of the board: on top of the posts, or below the ends
+    of posts under the lid."""
+    if on_lid(m):
+        return post_end(project, m) - (BOARD_THICKNESS if board_size(m) else 0.0)
     return project.bottom + m.length
 
 
 def max_screw_length(m: Mount) -> float:
-    """Longest screw that fits: through the board and down the post, not into the floor."""
-    return math.floor((m.length + (BOARD_THICKNESS if board_size(m) else 0.0) - 0.5) * 2) / 2
+    """Longest screw that fits: through the board and into the post, not into the floor
+    or the lid."""
+    return math.floor((m.length + thickness(m) - 0.5) * 2) / 2
 
 
 def parts_height(m: Mount) -> float:
@@ -233,6 +269,14 @@ def room_above(m: Mount) -> float:
 def board_top(project: Project, m: Mount) -> float:
     """Height (z) of the top surface of the board (or of the posts, for a single post)."""
     return board_bottom(project, m) + (BOARD_THICKNESS if board_size(m) else 0.0)
+
+
+def reach(project: Project, m: Mount) -> tuple[float, float]:
+    """(Lowest, highest) z the posts, the board and its parts take up. Parts stand up
+    from a board on the floor, and hang down from a board under the lid."""
+    if on_lid(m):
+        return board_bottom(project, m) - parts_height(m), project.outer_height
+    return project.bottom, board_top(project, m) + parts_height(m)
 
 
 def holder_top(project: Project, m: Mount) -> float:
@@ -260,11 +304,12 @@ def clearance(project: Project, m: Mount, u: float | None = None, v: float | Non
     """
     du = 0.0 if u is None else u - m.u
     dv = 0.0 if v is None else v - m.v
+    surface = LID if on_lid(m) else BOTTOM        # under the lid: inside its lip, if it has one
     corners = outline_corners(m)
     if corners:
-        return min(flat_clearance(project, "bottom", x + du, y + dv) for x, y in corners)
+        return min(flat_clearance(project, surface, x + du, y + dv) for x, y in corners)
     r = post_radius(m)
-    return min(flat_clearance(project, "bottom", x + du, y + dv) - r for x, y in post_positions(m))
+    return min(flat_clearance(project, surface, x + du, y + dv) - r for x, y in post_positions(m))
 
 
 COLUMN_ROOM = 0.5      # room kept between a board and a lid screw column
@@ -296,6 +341,8 @@ def column_clearance(project: Project, m: Mount, u: float | None = None,
 def needed_clearance(project: Project, m: Mount) -> float:
     """Room needed around the set: a little air, plus the lid's lip if the board reaches it."""
     need = 1.0 if board_size(m) else 0.0
+    if on_lid(m):
+        return need                                # clearance() already keeps inside the lip
     if has_lip(project) and board_size(m):
         top = max(board_top(project, m), holder_top(project, m))
         if top > project.outer_height - project.lid.lip_height - project.lid.gap:
@@ -334,10 +381,20 @@ def clamp_mount(project: Project, m: Mount, u: float, v: float) -> tuple[float, 
     return (round(best[1], 2), round(best[2], 2)) if best else None
 
 
-def new_mount(project: Project, board: str) -> Mount:
-    """A new set of posts, placed in the middle of the floor."""
+def fan_opening(m: Mount) -> float:
+    """Diameter of the air opening a fan needs (0 for anything else): as big as the fan
+    allows, with 1 mm of plastic left around the posts."""
+    spec = BOARDS[m.board]
+    if not spec.fan:
+        return 0.0
+    corner = max(math.hypot(x, y) for x, y in spec.holes)
+    return round(min(spec.size[0] - 4.0, 2 * (corner - post_radius(m) - 1.0)), 1)
+
+
+def new_mount(project: Project, board: str, surface: str = BOTTOM) -> Mount:
+    """A new set of posts, placed in the middle of the floor (or under the lid)."""
     spec = BOARDS[board]
-    m = Mount(board=board, screw=spec.screw)
+    m = Mount(board=board, screw=spec.screw, surface=surface)
     if board in CUSTOM_STARTS:
         m.board_width, m.board_depth, m.spacing_x, m.spacing_y = CUSTOM_STARTS[board]
     pos = clamp_mount(project, m, 0.0, 0.0)
